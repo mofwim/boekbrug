@@ -50,7 +50,7 @@ import DateFieldNL from '@/components/ui/DateFieldNL'
 import { useInvoiceReconciliation } from '@/hooks/useInvoiceReconciliation'
 import type { InvoiceRecon } from '@/lib/bank-reconciliation'
 import { ReconBadge } from '@/components/invoice/InvoiceRow'
-import { useState, useEffect, useRef, useMemo, useCallback, type ReactNode } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback, type ReactNode, type CSSProperties } from 'react'
 // [FOCUS-KOP] Where a deep-linked row must come to rest — see the header of that file.
 import { landRowUnderChrome } from '@/lib/focus-scroll'
 import { createClient } from '@/lib/supabase'
@@ -155,6 +155,20 @@ import { telWoord, vervoeg } from '@/lib/nl-plural'
 const FONT     = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', 'SF Mono', monospace"
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
+
+// [KNOPPEN-OP-ORDE] One geometry for every pill on this screen: the toolbar's four and the card's
+// action row. The owner called the old mix chaos, and it was — five fills, three heights, a row
+// whose first line hugged one edge and whose second hugged the other — because each button had
+// been added on its own day with its own pixels. A pill is a pill now; only its FILL says what it
+// is: primary for the one action that moves the books or the money, outlined for everything else,
+// amber where a figure needs the owner's eye.
+const PILL: CSSProperties = {
+  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+  minHeight: 40, padding: '8px 14px', boxSizing: 'border-box',
+  borderRadius: R.full, fontSize: 13, fontWeight: 600, lineHeight: 1.2, fontFamily: FONT, cursor: 'pointer',
+}
+const PILL_OUTLINED: CSSProperties = { ...PILL, background: '#fff', border: '1px solid #DADCE0', color: M3.primary }
+const PILL_PRIMARY: CSSProperties = { ...PILL, background: M3.primary, border: '1px solid transparent', color: M3.onPrimary }
 
 // [STATUS] Woord en kleur komen uit src/lib/invoice-status.ts. Dit was kopie tien van elf, en
 // het was de enige die 'received' "Te betalen" noemde — het bruikbaarste woord van de vier die in
@@ -2249,16 +2263,13 @@ export default function IncomingManageClient({
               Layout lives in globals.css (.inko-actions), not inline: the media
               query has to be able to win, and an inline style outranks a class. */}
           <div className="inko-actions">
+            {/* [KNOPPEN-OP-ORDE] The bulk pair in a wrapper of its own, for the same measured
+                reason .inko-run needed one (see globals.css): on a phone the pair takes a line and
+                splits it evenly; above the breakpoint all four sit at natural width on one row.
+                Outlined at rest like its neighbours, filled only while selecting. */}
+            <div className="inko-bulk">
             <button onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}
-              style={{
-                background: selectMode ? M3.primary : M3.primaryContainer,
-                border: `1px solid ${selectMode ? M3.primary : '#A8C7FA'}`,
-                borderRadius: R.full, padding: '8px 16px', cursor: 'pointer',
-                fontSize: 13, fontWeight: 600, fontFamily: FONT,
-                color: selectMode ? M3.onPrimary : M3.onPrimaryContainer,
-                display: 'flex', alignItems: 'center', gap: 6,
-                boxShadow: selectMode ? 'none' : EL1,
-              }}>
+              style={selectMode ? PILL_PRIMARY : PILL_OUTLINED}>
               <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>
                 {selectMode ? 'close' : 'checklist'}
               </span>
@@ -2270,15 +2281,12 @@ export default function IncomingManageClient({
                 what the owner meant, on the money core. */}
             {!selectMode && (
               <button onClick={() => { setSelectPurpose('undo'); setSelectMode(true) }}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px',
-                  borderRadius: R.full, background: '#fff', border: `1px solid ${M3.surfaceVariant}`,
-                  fontSize: 13, fontWeight: 600, fontFamily: FONT, color: '#3c4043', cursor: 'pointer',
-                }}>
+                style={PILL_OUTLINED}>
                 <span className="material-symbols-outlined icon-dir" style={{ fontSize: 18 }} aria-hidden>undo</span>
                 {t('inkoop.meerdereAnnuleren')}
               </button>
             )}
+            </div>
             {/* [KOP-KLEINER] De Verificatie-snelkoppeling stond hier: een rond inbox-icoontje naar
                 /dashboard/incoming. De onderbalk heeft datzelfde doel al staan, met hetzelfde icoon
                 en dezelfde bestemming, en die balk verlaat het scherm nooit. Twee knoppen naar één
@@ -2304,12 +2312,9 @@ export default function IncomingManageClient({
             className="inko-match"
             title={t('ink.matchenUitleg')}
             style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '8px 16px',
-              borderRadius: R.full, border: 'none',
+              ...PILL_PRIMARY,
               background: matchBusy ? M3.surfaceVariant : M3.primary,
               color: matchBusy ? '#9AA0A6' : M3.onPrimary,
-              fontSize: 13, fontWeight: 600, fontFamily: FONT,
               cursor: matchBusy ? 'default' : 'pointer',
               boxShadow: matchBusy ? 'none' : EL1,
             }}
@@ -2344,12 +2349,8 @@ export default function IncomingManageClient({
             className="inko-audit"
             title={t('ink.narekenenUitleg')}
             style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '8px 16px',
-              borderRadius: R.full, border: `1px solid ${M3.outline}`,
-              background: '#fff',
-              color: auditBusy ? '#9AA0A6' : M3.onSurfaceVariant,
-              fontSize: 13, fontWeight: 600, fontFamily: FONT,
+              ...PILL_OUTLINED,
+              color: auditBusy ? '#9AA0A6' : M3.primary,
               cursor: auditBusy ? 'default' : 'pointer',
             }}
           >
@@ -2936,12 +2937,10 @@ export default function IncomingManageClient({
                 || isAutoVerified(inv) || isVerwerkt || isPrepared || !!incasso
 
               return (
-                // [ROW-UNIT] De kaart en zijn prullenbak zijn nu buren, geen ouder en kind. De
-                // knop stond ín de kaart en concurreerde daar met de tekst om breedte; ernaast
-                // hoort hij zichtbaar bij deze rij (hij staat op zijn hoogte, beweegt met hem
-                // mee, en zijn aria-label noemt het factuurnummer) zonder een pixel van de
-                // inhoud af te snoepen. flex-start + marginTop houdt hem op de hoogte van de
-                // kopregel, ook wanneer de kaart uitklapt en meters hoog wordt.
+                // [ROW-UNIT] One card per row. The bin stood beside the card as its neighbour,
+                // on the height of the header; the owner asked for it among the actions, so it
+                // stands at the end of the action row now ([KNOPPEN-OP-ORDE]) and this wrapper
+                // holds the card alone. Its aria-label still names the invoice number.
                 <div
                   key={inv.id}
                   className="inv-card inv-card--acties"
@@ -3537,36 +3536,44 @@ export default function IncomingManageClient({
                       aria-controls={`inv-detail-${inv.id}`}
                       aria-label={expanded ? t('ink.detailsVerbergen') : t('ink.detailsTonen')}
                       title={expanded ? t('ink.detailsVerbergen') : t('ink.detailsTonen')}
+                      // [KNOPPEN-OP-ORDE] No auto margin: it pushed the rest of the row to the far
+                      // edge on the first line while every wrapped line started at the near one —
+                      // the "chaos" the owner named. The row flows from the start now, chevron
+                      // first, then the actions in one order, the bin last.
                       style={{
-                        marginInlineEnd: 'auto', flexShrink: 0, width: 36, height: 36,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        border: `1px solid ${M3.surfaceVariant}`, borderRadius: R.full,
-                        background: expanded ? M3.primaryContainer : '#fff', color: M3.primary,
-                        cursor: 'pointer', fontFamily: FONT, padding: 0,
+                        ...PILL_OUTLINED, flexShrink: 0, width: 40, padding: 0,
+                        background: expanded ? M3.primaryContainer : '#fff',
                       }}
                     >
                       <span className="material-symbols-outlined" style={{ fontSize: 20 }} aria-hidden>
                         {expanded ? 'expand_less' : 'expand_more'}
                       </span>
                     </button>
-                    {/* [AMOUNT-CORRECTION] The way out that did not exist. Until now a confirmed
-                        invoice whose amounts were misread could only be archived (which hides a
-                        real purchase) or handed to the accountant. Offered only where a
-                        correction is actually allowed: an unpaid invoice with no money booked
-                        against it — the same two conditions the server re-checks. Shown for
-                        every such row, not only the flagged ones: the reader can be wrong
-                        without any gate noticing, and the owner has the paper. */}
-                    {inv.status === 'received' && !(inv.amount_paid && inv.amount_paid > 0.005) && (
+                    {/* [PAY-SAFE] Prepare payment — only for unpaid rows. Opens
+                        the QR + copy sheet. No DB write; pure preparation.
+                        [AUTO-INCASSO] …and never on an invoice the bank collects. This button
+                        pre-fills the supplier's IBAN and amount in the owner's banking app,
+                        which on an already-collected invoice is a second payment with one tap
+                        and no warning anywhere. */}
+                    {inv.status === 'received' && !incasso && payable && (
                       <button
-                        onClick={() => openCorrection(inv)}
-                        style={{
-                          padding: '8px 14px', borderRadius: R.full, border: 'none', cursor: 'pointer',
-                          fontSize: 13, fontWeight: 600,
-                          background: mathProblem || signConflict ? M3.warningContainer : M3.surfaceVariant,
-                          color: mathProblem || signConflict ? '#7C5800' : '#3c4043',
-                        }}
-                      >
-                        {t('inkoop.bedragenCorrigeren')}
+                        // [CREDIT-SAFE] The QR sheet is the path real money leaves by: it
+                        // pre-fills the supplier's IBAN and the amount in the owner's bank app.
+                        // On CR0301267 it offered € 33,87 to a supplier who owed it back.
+                        onClick={e => { e.stopPropagation(); payGuarded(inv, stance, () => setPrepareCtx(inv)) }}
+                        style={PILL_PRIMARY}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>qr_code_2</span>
+                        {t('inkoop.betalen')}
+                      </button>
+                    )}
+                    {inv.pdf_url && (
+                      <button
+                        onClick={e => { e.stopPropagation(); openPdf(inv.id) }}
+                        style={PILL_OUTLINED}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>
+                          picture_as_pdf
+                        </span>
+                        {t('ink.bekijkPdf')}
                       </button>
                     )}
                     {/* [REREAD-CONFIRMED] "Opnieuw inlezen" — the other way out, and on most
@@ -3581,17 +3588,29 @@ export default function IncomingManageClient({
                       <button
                         onClick={e => { e.stopPropagation(); void runReread(inv) }}
                         disabled={rereadingId === inv.id}
-                        style={{
-                          fontSize: 13, color: M3.primary, background: '#fff',
-                          border: `1px solid ${M3.surfaceVariant}`, borderRadius: R.full,
-                          padding: '8px 16px', cursor: rereadingId === inv.id ? 'default' : 'pointer',
-                          fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4,
-                        }}
+                        style={{ ...PILL_OUTLINED, cursor: rereadingId === inv.id ? 'default' : 'pointer' }}
                       >
-                        <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
+                        <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>
                           {rereadingId === inv.id ? 'hourglass_empty' : 'refresh'}
                         </span>
                         {rereadingId === inv.id ? t('ink.opnieuwBezig') : t('ink.opnieuwInlezenKnop')}
+                      </button>
+                    )}
+                    {/* [AMOUNT-CORRECTION] The way out that did not exist. Until now a confirmed
+                        invoice whose amounts were misread could only be archived (which hides a
+                        real purchase) or handed to the accountant. Offered only where a
+                        correction is actually allowed: an unpaid invoice with no money booked
+                        against it — the same two conditions the server re-checks. Shown for
+                        every such row, not only the flagged ones: the reader can be wrong
+                        without any gate noticing, and the owner has the paper. */}
+                    {inv.status === 'received' && !(inv.amount_paid && inv.amount_paid > 0.005) && (
+                      <button
+                        onClick={() => openCorrection(inv)}
+                        style={mathProblem || signConflict
+                          ? { ...PILL, background: M3.warningContainer, border: '1px solid #E0C48A', color: '#7C5800' }
+                          : PILL_OUTLINED}
+                      >
+                        {t('inkoop.bedragenCorrigeren')}
                       </button>
                     )}
                     {/* [ORIGINEEL] "Origineel toevoegen" — the answer the client never had.
@@ -3608,13 +3627,7 @@ export default function IncomingManageClient({
                         the accountant) already confirmed. Shown only where the slot is empty. */}
                     {!inv.document_id && (
                       <label
-                        style={{
-                          fontSize: 13, color: M3.primary, background: '#fff',
-                          border: `1px solid ${M3.surfaceVariant}`, borderRadius: R.full,
-                          padding: '8px 16px', cursor: attachingId === inv.id ? 'default' : 'pointer',
-                          fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4,
-                          opacity: attachingId === inv.id ? 0.6 : 1,
-                        }}
+                        style={{ ...PILL_OUTLINED, cursor: attachingId === inv.id ? 'default' : 'pointer', opacity: attachingId === inv.id ? 0.6 : 1 }}
                         onClick={e => e.stopPropagation()}
                       >
                         <input
@@ -3628,7 +3641,7 @@ export default function IncomingManageClient({
                             if (f) void attachOriginal(inv, f)
                           }}
                         />
-                        <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
+                        <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>
                           {attachingId === inv.id ? 'hourglass_empty' : 'attach_file'}
                         </span>
                         {attachingId === inv.id ? t('ink.bezigToevoegen') : t('ink.origineelToevoegen')}
@@ -3646,38 +3659,30 @@ export default function IncomingManageClient({
                       <button
                         onClick={e => { e.stopPropagation(); openMovePayment(inv) }}
                         disabled={moveLoadingId === inv.id}
-                        style={{ fontSize: 13, color: M3.primary, background: '#fff', border: `1px solid ${M3.surfaceVariant}`, borderRadius: R.full, padding: '8px 16px', cursor: moveLoadingId === inv.id ? 'default' : 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
+                        style={{ ...PILL_OUTLINED, cursor: moveLoadingId === inv.id ? 'default' : 'pointer' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>
                           {moveLoadingId === inv.id ? 'hourglass_empty' : 'swap_horiz'}
                         </span>
                         {moveLoadingId === inv.id ? t('ink.bezig') : t('inkoop.betalingVerplaatsen')}
                       </button>
                     )}
-                    {/* [PAY-SAFE] Prepare payment — only for unpaid rows. Opens
-                        the QR + copy sheet. No DB write; pure preparation.
-                        [AUTO-INCASSO] …and never on an invoice the bank collects. This button
-                        pre-fills the supplier's IBAN and amount in the owner's banking app,
-                        which on an already-collected invoice is a second payment with one tap
-                        and no warning anywhere. */}
-                    {inv.status === 'received' && !incasso && payable && (
+                    {/* [INVOICE-REMOVE] Verwijderen — the last pill of the row, where the owner
+                        asked for it. An inkoopfactuur that is not yours (wrong supplier, a double,
+                        a scan of nothing) must be removable without a support ticket. It archives:
+                        out of costs, voorbelasting and the accountant's desk, kept seven years,
+                        one tap back under Inkomend › Genegeerd. Hidden while selecting for a
+                        bundled payment. */}
+                    {!selectMode && (
                       <button
-                        // [CREDIT-SAFE] The QR sheet is the path real money leaves by: it
-                        // pre-fills the supplier's IBAN and the amount in the owner's bank app.
-                        // On CR0301267 it offered € 33,87 to a supplier who owed it back.
-                        onClick={e => { e.stopPropagation(); payGuarded(inv, stance, () => setPrepareCtx(inv)) }}
-                        style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 600, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>qr_code_2</span>
-                        {t('inkoop.betalen')}
-                      </button>
-                    )}
-                    {inv.pdf_url && (
-                      <button
-                        onClick={e => { e.stopPropagation(); openPdf(inv.id) }}
-                        style={{ fontSize: 13, color: M3.primary, background: M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>
-                          picture_as_pdf
-                        </span>
-                        {t('ink.bekijkPdf')}
+                        onClick={e => { e.stopPropagation(); handleRemoveRequest(inv) }}
+                        disabled={processingId === inv.id}
+                        aria-label={t('ink.verwijderFactuur', { number: inv.invoice_number ?? '' })}
+                        title={t('lijst.verwijderen')}
+                        style={{ ...PILL_OUTLINED, width: 40, padding: 0, color: '#9AA0A6', cursor: processingId === inv.id ? 'default' : 'pointer', transition: 'background 0.15s, color 0.15s' }}
+                        onMouseEnter={e => { e.currentTarget.style.background = M3.errorContainer; e.currentTarget.style.color = M3.error }}
+                        onMouseLeave={e => { e.currentTarget.style.background = '#fff'; e.currentTarget.style.color = '#9AA0A6' }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 19 }} aria-hidden>delete</span>
                       </button>
                     )}
                   </div>
@@ -3855,31 +3860,6 @@ export default function IncomingManageClient({
                   )}
                 </div>
 
-                {/* [INVOICE-REMOVE] Verwijderen — naast de kaart, niet erin. Een inkoopfactuur die
-                    niet van jou is (verkeerde leverancier, een dubbele, een scan van niets) hoort
-                    weg te kunnen zonder een vraag aan support. Het archiveert: uit kosten,
-                    voorbelasting en de werkplek van de boekhouder, zeven jaar bewaard, en met één
-                    tik terug onder Inkomend › Genegeerd. Verborgen tijdens het selecteren voor een
-                    gebundelde betaling. */}
-                {!selectMode && (
-                  <button
-                    onClick={e => { e.stopPropagation(); handleRemoveRequest(inv) }}
-                    disabled={processingId === inv.id}
-                    aria-label={t('ink.verwijderFactuur', { number: inv.invoice_number ?? '' })}
-                    title={t('lijst.verwijderen')}
-                    style={{
-                      flexShrink: 0, marginTop: 12, width: 36, height: 36, borderRadius: R.full,
-                      border: 'none', background: 'transparent', color: '#9AA0A6',
-                      cursor: processingId === inv.id ? 'default' : 'pointer',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      transition: 'background 0.15s, color 0.15s',
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.background = M3.errorContainer; e.currentTarget.style.color = M3.error }}
-                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9AA0A6' }}
-                  >
-                    <span className="material-symbols-outlined" style={{ fontSize: 19 }} aria-hidden>delete</span>
-                  </button>
-                )}
                 </div>
               )
             })}
