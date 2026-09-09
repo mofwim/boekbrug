@@ -463,6 +463,31 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // ── [CREDITNOTA-EXTERN] The invoice a standalone creditnota corrects, in its OWN write ──
+    //
+    // Same shape as the country above, same reason: creditnota_external_reference.sql is newer
+    // than some installations, and one unknown column in the INSERT would cost the creditnota.
+    // The document stands; the reference is a separate update that may fail, loudly, naming the
+    // migration — and the send door then refuses the standalone creditnota until it is there.
+    if (soort === 'creditnota') {
+      const verwezenNummer = typeof body.credited_invoice_number === 'string' ? body.credited_invoice_number.trim() : ''
+      const verwezenDatum =
+        typeof body.credited_invoice_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.credited_invoice_date)
+          ? body.credited_invoice_date
+          : null
+      if (verwezenNummer) {
+        const { error: refErr } = await pipeline
+          .from('invoices')
+          .update({ credited_invoice_number: verwezenNummer, credited_invoice_date: verwezenDatum } as never)
+          .eq('id', factuur.id)
+          .eq('sender_id', ownerId)
+        if (refErr) {
+          console.warn('[CREDITNOTA-EXTERN] de verwijzing naar de gecrediteerde factuur kon niet worden opgeslagen — pas ' +
+            'supabase/migrations/creditnota_external_reference.sql toe', { invoiceId: factuur.id, error: refErr.message })
+        }
+      }
+    }
+
     // ── De regels ────────────────────────────────────────────────────────────
     const bron = body.lines as Array<Record<string, unknown>>
     // [UNIT] `unit` komt uit migratie invoice_line_unit.sql en gaat via dezelfde terugval

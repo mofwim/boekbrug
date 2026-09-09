@@ -52,6 +52,8 @@ import type { MessageKey } from '@/lib/i18n/messages'
 import { KOR_RATE_HINT } from '@/lib/kor-invoice'
 import { hasReverseChargeLine, storedVatTreatment } from '@/lib/line-vat-treatment'
 import { checkEuZeroRatedInvoice, countryNameNl, normalizeCountry } from '@/lib/client-country'
+// [CREDITNOTA-EXTERN] The door's own rule for a standalone creditnota, asked here first.
+import { checkStandaloneCreditnota } from '@/lib/creditnota'
 import { M3, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 // [PRIJS-MODUS] Typen met of zonder btw — één pure omrekening, gedeeld met het bewerkscherm.
 // Wat er wordt OPGESLAGEN blijft ex-btw; dit is een invoerstand, geen opslagformaat.
@@ -534,6 +536,11 @@ function NewInvoicePageContent() {
   const [clientBtw, setClientBtw]         = useState(aiClientBtw)
   // [KLANT-LAND] The customer's country code; empty reads as the Netherlands everywhere.
   const [clientCountry, setClientCountry] = useState(aiClientCountry)
+  // [CREDITNOTA-EXTERN] A standalone creditnota names the invoice it corrects — one issued outside
+  // BoekBrug, so there is no row to link: number and date are typed here, printed on the document
+  // and carried in the e-factuur (art. 219 Richtlijn 2006/112/EG).
+  const [creditedNumber, setCreditedNumber] = useState('')
+  const [creditedDate, setCreditedDate]     = useState('')
   // [KLANT-EXTRA] Twee vrije regels direct onder de klantnaam op het document — "t.a.v. …", een
   // afdeling of het inkoopordernummer dat de klant op de factuur wil zien staan. Per document,
   // niet per klant: een inkoopordernummer verschilt per factuur.
@@ -1151,6 +1158,15 @@ function NewInvoicePageContent() {
       setError(t('nieuw.fout.euZonderBtw', { land: countryNameNl(euNul.country) }))
       return
     }
+    // [CREDITNOTA-EXTERN] A creditnota is only an invoice-equivalent when it names the invoice it
+    // corrects (art. 219). The send door refuses a standalone one without the number; asked here
+    // first, where the field is one tap away — on a draft too, like the address above: a draft
+    // saved without it is a draft refused later, at the one irreversible button.
+    const verwijzing = checkStandaloneCreditnota({ invoiceType, originalInvoiceId: null, creditedNumber })
+    if (!verwijzing.ok) {
+      setError(t('nieuw.fout.creditVerwijzing'))
+      return
+    }
 
     // [MIN-REGEL] A negative aantal is a CREDIT line — a return settled on this invoice instead of
     // on a separate creditnota, exactly as a wholesaler writes it. Zero is still a mistake, and the
@@ -1245,6 +1261,9 @@ function NewInvoicePageContent() {
         client_extra_line4: clientExtra4,
         // [BOEK-031] creditnota is standalone — original_invoice_id = null always — May 2026
         replaces_id: invoiceType === 'creditnota' ? null : (replacesId || null),
+        // [CREDITNOTA-EXTERN] The invoice this standalone creditnota corrects, as typed.
+        credited_invoice_number: invoiceType === 'creditnota' ? (creditedNumber.trim() || null) : null,
+        credited_invoice_date: invoiceType === 'creditnota' ? (creditedDate || null) : null,
         // [KORTING] Ruwe invoer; de server valideert opnieuw met dezelfde parseDiscount. Het scherm
         // is de kant die je niet in de hand hebt.
         discount_type: invoiceType === 'creditnota' ? null : discountType,
@@ -1545,6 +1564,13 @@ function NewInvoicePageContent() {
                 <Link href="/dashboard/facturen" style={{ color: '#1967D2', textDecoration: 'underline', fontWeight: 600 }}>{t('nieuw.credit.linkTekst')}</Link>
                 {' '}{t('nieuw.credit.linkNa')}
               </p>
+              {/* [CREDITNOTA-EXTERN] The invoice this creditnota corrects — named, or the document
+                  is not a creditnota at all (art. 219). Printed on the PDF, carried in the e-factuur. */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
+                <OutlinedInput value={creditedNumber} onChange={e => setCreditedNumber(e.target.value)} placeholder="2026-0123" label={t('nieuw.credit.verwijzingNummer')} focusColor={cfg.focusColor} required />
+                <DateField value={creditedDate} label={t('nieuw.credit.verwijzingDatum')} focusColor={cfg.focusColor} onChange={iso => setCreditedDate(iso)} />
+              </div>
+              <p style={{ fontSize: 12, color: '#B3261E', margin: '6px 0 0', lineHeight: 1.5, opacity: 0.9 }}>{t('nieuw.credit.verwijzingHint')}</p>
             </div>
           </div>
         )}

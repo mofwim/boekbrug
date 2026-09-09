@@ -49,6 +49,8 @@ import { ublAttachmentForInvoice } from '@/lib/ubl-for-email'
 import { checkKorInvoice } from '@/lib/kor-invoice'
 import { checkReverseChargeInvoice } from '@/lib/reverse-charge-invoice'
 import { checkEuZeroRatedInvoice } from '@/lib/client-country'
+// [CREDITNOTA-EXTERN] A standalone creditnota names the invoice it corrects, or does not go out.
+import { checkStandaloneCreditnota, creditReferenceOf } from '@/lib/creditnota'
 // [FACTUUR-DATUMS] Een vervaldatum vóór de factuurdatum — laatste kans vóór het nummer.
 import { checkInvoiceDates } from '@/lib/invoice-dates'
 import { generateInvoiceNumber, type InvoiceNumberType } from '@/lib/invoice-numbering'
@@ -483,6 +485,21 @@ export async function POST(request: NextRequest) {
       if (!euCheck.ok) {
         return NextResponse.json({ error: euCheck.error, code: euCheck.code }, { status: 400 })
       }
+
+      // [CREDITNOTA-EXTERN] Art. 219 Richtlijn 2006/112/EG — a creditnota that names no invoice is
+      // not one. The linked flow carries original_invoice_id; a standalone creditnota must carry
+      // the number the owner typed. Before the number, like every check here. Skipped on an
+      // installation whose row does not know the column yet: nothing could have been typed there.
+      if ('credited_invoice_number' in invoice) {
+        const verwijzing = checkStandaloneCreditnota({
+          invoiceType: finalType,
+          originalInvoiceId: (invoice as { original_invoice_id?: string | null }).original_invoice_id,
+          creditedNumber: (invoice as { credited_invoice_number?: string | null }).credited_invoice_number,
+        })
+        if (!verwijzing.ok) {
+          return NextResponse.json({ error: verwijzing.error, code: verwijzing.code }, { status: 400 })
+        }
+      }
     }
 
     // ── 7b. [FACTUUR-BIJLAGE] De eigen bijlage, VOOR het nummer ──────────────
@@ -783,6 +800,30 @@ export async function POST(request: NextRequest) {
     // invoice 'sent' (verstuurd) with NO PDF, NO email, NO signal — the customer got nothing and the
     // owner had no idea. Retry once (catches the common transient), and on persistent failure make
     // the failure LOUD (an owner notification) instead of a silent false 'verstuurd'.
+    // [CREDITNOTA-EXTERN] The reference a creditnota prints (art. 219): the linked original's
+    // number and date, or the external ones the owner typed for a standalone creditnota. Resolved
+    // here because the mailed PDF is rendered from the row as read, and the row holds an id, not
+    // a number.
+    let creditRef: { originalNumber: string | null; originalDate: string | null } = { originalNumber: null, originalDate: null }
+    if (finalType === 'creditnota') {
+      const rij = invoice as { original_invoice_id?: string | null; credited_invoice_number?: string | null; credited_invoice_date?: string | null }
+      let linked: { invoice_number: string | null; invoice_date: string | null } | null = null
+      if (rij.original_invoice_id) {
+        const { data: origineel } = await supabase
+          .from('invoices')
+          .select('invoice_number, invoice_date')
+          .eq('id', rij.original_invoice_id)
+          .eq('sender_id', ownerId)
+          .maybeSingle()
+        linked = origineel ?? null
+      }
+      creditRef = creditReferenceOf({
+        linkedNumber: linked?.invoice_number,
+        linkedDate: linked?.invoice_date,
+        creditedNumber: rij.credited_invoice_number,
+        creditedDate: rij.credited_invoice_date,
+      })
+    }
     let pdfBuffer: Buffer | null = null
     for (let attempt = 0; attempt < 2 && !pdfBuffer; attempt++) {
       try {
@@ -797,6 +838,9 @@ export async function POST(request: NextRequest) {
             // PDF in the customer's mailbox would not.
             ...(leverdatumBijVerzending ? { delivery_date: leverdatumBijVerzending } : {}),
             status: resend ? invoice.status : 'sent',
+            // [CREDITNOTA-EXTERN] undefined on a factuur — the PDF prints the line only for a creditnota.
+            original_invoice_number: creditRef.originalNumber ?? undefined,
+            original_invoice_date: creditRef.originalDate ?? undefined,
           },
           lines ?? [],
           profile ?? {}
