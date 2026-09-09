@@ -3896,6 +3896,34 @@ test("[FEEDBACK] the report is on every page, and a failed one is never thanked 
   );
 });
 
+// ── [FEEDBACK-MIDDEN] The report dialog is centred, and the overlay keeps the bar clear ──
+//
+// The owner asked for the dialog to stop sitting on the bottom edge. Moving it is one line; keeping
+// it OFF the BottomNav while it moves is the part that can regress: the bar (z-index 2000) paints
+// ABOVE this overlay (60), and this exact panel once lost its send button behind it — measured, see
+// [FEEDBACK-SEND] in the component. tests/render/feedback-dialog.test.tsx renders the open dialog
+// and reads the HTML; this holds the source, which is where the next "small style tidy-up" lands.
+test("[FEEDBACK-MIDDEN] the report dialog is centred above the bar, never glued to the bottom edge", () => {
+  const ui = code("src/components/feedback/FeedbackButton.tsx");
+  const dialog = ui.slice(ui.indexOf('role="dialog"'));
+  assert.ok(dialog.length > 0, "the dialog exists");
+  assert.match(dialog, /alignItems: 'center', justifyContent: 'center'/, "the overlay centres the panel");
+  assert.doesNotMatch(dialog, /alignItems: 'flex-end'/, "…and no longer parks it on the bottom edge");
+  // The bar is reserved on the OVERLAY, and the panel is capped to the box the overlay leaves — so
+  // it cannot reach behind the bar however long the message gets. Both halves, or neither works.
+  assert.match(dialog, /padding: 16, paddingBottom: sheetPaddingBottom\(16\)/,
+    "the overlay keeps the BottomNav clear with the helper every sheet uses");
+  assert.match(dialog, /maxHeight: '100%', overflowY: 'auto'/,
+    "the panel is capped to the overlay's box and scrolls inside it");
+  assert.doesNotMatch(dialog, /borderRadius: '16px 16px 0 0'/, "square bottom corners are a sheet's shape, not a dialog's");
+  assert.match(dialog, /borderRadius: 16,/);
+  // The BottomNav really is above this overlay. If that ever flips the reservation is dead weight
+  // and this gate's reasoning is wrong — so it is pinned, not assumed.
+  const navZ = Number((code("src/components/nav/BottomNav.tsx").match(/zIndex: (\d+)/) ?? [])[1]);
+  const overlayZ = Number((dialog.match(/zIndex: (\d+)/) ?? [])[1]);
+  assert.ok(navZ > overlayZ, `the BottomNav (${navZ}) paints above the feedback overlay (${overlayZ}) — the reason this gate exists`);
+});
+
 // ── [OFFERTE-BEWERKBAAR] A quote may be changed until it becomes an invoice ──
 //
 // `status === 'draft'` was answering two different questions with one flag, and it was the wrong
@@ -16397,16 +16425,17 @@ test("[BLAD-SCROLL] a sheet never overrides the measured height of its own class
     return out;
   };
 
-  // Een overschrijving MET reden mag, en dat onderscheid is de poort waard. FeedbackButton zet
-  // 85dvh omdat daar het toetsenbord bij moet: met het invoerveld open krimpt het zichtbare
-  // scherm, en 88dvh laat de verzendknop erachter verdwijnen. Die redenering staat uitgeschreven
-  // bij de regel zelf, mét meting (393×830, knop op 814px, balk vanaf 766px).
+  // Een overschrijving MET reden mag, en dat onderscheid is de poort waard. FeedbackButton is a
+  // centred dialog (since 9 September 2026 — [FEEDBACK-MIDDEN]): its panel is capped at 100% of the
+  // box the overlay leaves above the BottomNav, because the class's 88dvh does not know the bar
+  // exists and a flex item taller than its box loses its top edge. The reasoning stands at the
+  // rule itself, with the measurement that started it (393×830, knop op 814px, balk vanaf 766px).
   //
   // Een poort die zo'n regel zou wegdwingen maakt de code slechter, niet beter. Dus staat hij hier
   // met naam en reden — en een nieuwe uitzondering kost dezelfde moeite: hem hier opschrijven.
   const MET_REDEN = new Map<string, string>([
     ["src/components/feedback/FeedbackButton.tsx",
-     "85dvh laat ruimte voor het toetsenbord; 88dvh zet de verzendknop erachter. Gemeten."],
+     "100% of the overlay's box above the BottomNav; the class's 88dvh does not know the bar exists. See [FEEDBACK-MIDDEN]."],
   ]);
 
   const overtreders: string[] = [];
