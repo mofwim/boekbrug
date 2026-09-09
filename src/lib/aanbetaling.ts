@@ -30,13 +30,16 @@
 
 import { round2 } from "./invoice-totals";
 import { applyDiscount, discountLabel, lineNetEx, type Discount, type DiscountLine } from "./invoice-discount";
+import { storedVatTreatment, type StoredVatTreatment } from "./line-vat-treatment";
 
 export interface DepositLine {
   description: string;
   quantity: number;
   unit_price: number;
   btw_rate: number;
-  vat_treatment: "exempt" | null;
+  // [VERLEGD-VERKOOP] The treatment travels with the money: a deposit on a verlegde offerte is
+  // itself verlegd, or the deposit invoice charges btw the customer was told to account for.
+  vat_treatment: StoredVatTreatment | null;
 }
 
 export interface OfferteSource {
@@ -54,19 +57,23 @@ export function parseDepositPercent(raw: unknown): number | null {
   return n >= 1 && n <= 99 ? n : null;
 }
 
-interface RateGroup { rate: number; exempt: boolean; net: number }
+interface RateGroup { rate: number; treatment: StoredVatTreatment | null; net: number }
 
-/** One group per (rate, exemption): an exempt 0% and a taxed 0% are different money on the aangifte. */
-const groupKey = (rate: number, exempt: boolean): string => `${rate}|${exempt ? 1 : 0}`;
+/** One group per (rate, treatment): exempt 0%, verlegd 0% and taxed 0% are different money on the aangifte. */
+const groupKey = (rate: number, treatment: StoredVatTreatment | null): string => `${rate}|${treatment ?? ""}`;
+
+/** The bracket on a line text that says which group the money belongs to. */
+const groupSuffix = (g: RateGroup): string =>
+  g.treatment === "exempt" ? "(vrijgesteld)" : g.treatment === "reverse_charge" ? "(btw verlegd)" : `(${g.rate}% btw)`;
 
 /** The offerte's rate groups, net after the LINE discounts only. */
 function groupsOf(src: OfferteSource): Map<string, RateGroup> {
   const groups = new Map<string, RateGroup>();
   for (const l of src.lines) {
     const rate = Number(l.btw_rate) || 0;
-    const exempt = l.vat_treatment === "exempt";
-    const key = groupKey(rate, exempt);
-    const g = groups.get(key) ?? { rate, exempt, net: 0 };
+    const treatment = storedVatTreatment(l.vat_treatment);
+    const key = groupKey(rate, treatment);
+    const g = groups.get(key) ?? { rate, treatment, net: 0 };
     g.net += lineNetEx(l);
     groups.set(key, g);
   }
@@ -111,11 +118,11 @@ export function depositLines(src: OfferteSource, pct: number): DepositLine[] {
   const nr = (src.invoiceNumber ?? "").trim();
   const head = nr ? `Aanbetaling ${pct}% op offerte ${nr}` : `Aanbetaling ${pct}%`;
   return netByRate(src).map((g): DepositLine => ({
-    description: g.exempt ? `${head} (vrijgesteld)` : `${head} (${g.rate}% btw)`,
+    description: `${head} ${groupSuffix(g)}`,
     quantity: 1,
     unit_price: round2((g.net * pct) / 100),
     btw_rate: g.rate,
-    vat_treatment: g.exempt ? "exempt" : null,
+    vat_treatment: g.treatment,
   })).filter((l) => l.unit_price > 0);
 }
 
@@ -137,11 +144,11 @@ export function discountLines(src: OfferteSource): DepositLine[] {
     const amount = off.get(key) ?? 0;
     if (amount <= 0) continue;
     out.push({
-      description: g.exempt ? `${head} (vrijgesteld)` : `${head} (${g.rate}% btw)`,
+      description: `${head} ${groupSuffix(g)}`,
       quantity: -1,
       unit_price: amount,
       btw_rate: g.rate,
-      vat_treatment: g.exempt ? "exempt" : null,
+      vat_treatment: g.treatment,
     });
   }
   return out;
@@ -163,10 +170,10 @@ export function settlementLines(deposits: readonly IssuedDeposit[]): DepositLine
     const groups = new Map<string, RateGroup>();
     for (const l of d.lines) {
       const rate = Number(l.btw_rate) || 0;
-      const exempt = l.vat_treatment === "exempt";
-      const key = `${rate}|${exempt ? 1 : 0}`;
+      const treatment = storedVatTreatment(l.vat_treatment);
+      const key = groupKey(rate, treatment);
       const ex = typeof l.line_total === "number" ? l.line_total : (Number(l.quantity) || 0) * (Number(l.unit_price) || 0);
-      const g = groups.get(key) ?? { rate, exempt, net: 0 };
+      const g = groups.get(key) ?? { rate, treatment, net: 0 };
       g.net += ex;
       groups.set(key, g);
     }
@@ -176,11 +183,11 @@ export function settlementLines(deposits: readonly IssuedDeposit[]): DepositLine
       const amount = round2(g.net);
       if (amount <= 0) continue;
       out.push({
-        description: g.exempt ? `${head} (vrijgesteld)` : `${head} (${g.rate}% btw)`,
+        description: `${head} ${groupSuffix(g)}`,
         quantity: -1,
         unit_price: amount,
         btw_rate: g.rate,
-        vat_treatment: g.exempt ? "exempt" : null,
+        vat_treatment: g.treatment,
       });
     }
   }

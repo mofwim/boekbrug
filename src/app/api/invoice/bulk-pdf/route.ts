@@ -34,6 +34,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 // screens show the owner's invoices.
 import { getActingFor } from "@/lib/acting-for-server";
 import { invoiceOwnerId } from "@/lib/acting-for";
+import { isUnknownColumn } from "@/lib/created-by";
 import { planBulkPdf, bulkZipName, BULK_PDF_MAX } from "@/lib/invoice-bulk-pdf";
 import { renderInvoicePdf } from "@/lib/invoice-pdf-server";
 
@@ -82,11 +83,16 @@ export async function POST(req: NextRequest) {
     client_email: string | null; client_btw_number: string | null;
     total_ex_btw: number | null; btw_amount: number | null;
     original_invoice_id: string | null;
+    // [KLANT-LAND] Absent on an installation behind on client_country.sql — see the second read.
+    client_country?: string | null;
   }> | null = null;
   let error: { message: string } | null = null;
   try {
     rows = await fetchAllRowsForIds(ids, (chunk, from, to) =>
-      supabase
+      // [KLANT-LAND] client_country is newer than the generated types — the same cast every new
+      // column gets, on the READ only; the row type above says what comes back.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (supabase as any)
         .from("invoices")
         // [BULK-PDF-VOLLEDIG] These five were everything the ZIP's file NAMES need — and the
         // same row is handed to renderInvoicePdf when there is no stored pdf, which reads fifteen.
@@ -103,7 +109,11 @@ export async function POST(req: NextRequest) {
         //     it must carry and which an accountant matches the pair on. It is an ID, not the
         //     number the PDF prints, so it is resolved below;
         //   · total_ex_btw / btw_amount — the header figures the totals block prints.
-        .select("id, invoice_number, client_name, pdf_url, direction, invoice_type, invoice_date, due_date, delivery_date, client_address, client_postal_code, client_city, client_email, client_btw_number, total_ex_btw, btw_amount, original_invoice_id")
+        //   · client_country — [KLANT-LAND] the country line under a foreign customer's city
+        //     (art. 35a lid 1 sub c). Newer than some installations, so a read that fails on
+        //     exactly this column is repeated below without it: a missing migration costs the
+        //     country line in the archive, never the archive.
+        .select("id, invoice_number, client_name, pdf_url, direction, invoice_type, invoice_date, due_date, delivery_date, client_address, client_postal_code, client_city, client_email, client_btw_number, total_ex_btw, btw_amount, original_invoice_id, client_country")
         .in("id", chunk)
         .eq(ownerColumn, ownerId)
         .eq("direction", direction)
@@ -111,7 +121,24 @@ export async function POST(req: NextRequest) {
         .range(from, to),
     );
   } catch (e) {
-    error = { message: e instanceof Error ? e.message : "read failed" };
+    if (isUnknownColumn(e, "client_country")) {
+      try {
+        rows = await fetchAllRowsForIds(ids, (chunk, from, to) =>
+          supabase
+            .from("invoices")
+            .select("id, invoice_number, client_name, pdf_url, direction, invoice_type, invoice_date, due_date, delivery_date, client_address, client_postal_code, client_city, client_email, client_btw_number, total_ex_btw, btw_amount, original_invoice_id")
+            .in("id", chunk)
+            .eq(ownerColumn, ownerId)
+            .eq("direction", direction)
+            .order("id", { ascending: true })
+            .range(from, to),
+        );
+      } catch (e2) {
+        error = { message: e2 instanceof Error ? e2.message : "read failed" };
+      }
+    } else {
+      error = { message: e instanceof Error ? e.message : "read failed" };
+    }
   }
   if (error) {
     // [NO-SILENT-EMPTY] A failed read is not "none of these exist". Handing back an empty archive

@@ -5,6 +5,7 @@
 // running totals, and quick actions (new invoice pre-filled for this customer, edit).
 
 import { useState } from 'react'
+import { countryNameNl } from '@/lib/client-country'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
@@ -37,6 +38,8 @@ interface Client {
   postal_code: string | null; city: string | null; notes: string | null
   // [BESTE] Optional: absent on an installation behind on clients_term_phone.sql.
   phone?: string | null; payment_term_days?: number | null
+  // [KLANT-LAND] ISO code (client_country.sql); absent on an installation behind on it.
+  country?: string | null
 }
 
 // [STATUS] Kopie elf. Deze week af op DRIE van de vier woorden — "Verstuurd" waar de rest
@@ -119,7 +122,7 @@ export default function KlantDetailClient({ client, invoices, totals, behaviour 
 
         {/* Contact */}
         <Card title={t('kld.gegevens')} action={<Link href={`/dashboard/klanten?bewerk=${client.id}`} style={{ fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none' }}>{t('kld.bewerken')}</Link>}>
-          <Row k={t('kld.adres')} v={[client.address, [client.postal_code, client.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '—'} />
+          <Row k={t('kld.adres')} v={[client.address, [client.postal_code, client.city].filter(Boolean).join(' '), client.country && client.country !== 'NL' ? countryNameNl(client.country) : null].filter(Boolean).join(', ') || '—'} />
           <Row k="KVK" v={client.kvk_number || '—'} />
           <Row k="BTW" v={client.btw_number || '—'} />
           <Row k="IBAN" v={client.iban || '—'} />

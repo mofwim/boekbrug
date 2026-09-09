@@ -345,8 +345,10 @@ export function taxExemptionReason(category: UblTaxCategory, intraCommunity = fa
 /**
  * Is this supply reverse-charged to the buyer?
  *
- * Deliberately evidence-based: this app has no per-line reverse-charge flag, so the only honest
- * signal is the one the law itself requires the seller to put on the invoice. Article 226 point
+ * Evidence-based. Since [VERLEGD-VERKOOP] the line carries the owner's own choice (vat_treatment
+ * 'reverse_charge'), which is the document's legal fact and is read first. Before that option
+ * existed the only honest signal was the one the law itself requires the seller to put on the
+ * invoice, and that reading stays for older lines. Article 226 point
  * 11a of the VAT Directive (art. 35a lid 1 sub k Wet OB) says a reverse-charged invoice must carry
  * the words "btw verlegd" — so an invoice that IS reverse-charged says so, and one that does not
  * is not one. Reading the owner's own words is not a guess; inferring it from a 0% rate would be.
@@ -363,6 +365,9 @@ export function lineVatKind(line: UblInvoiceLine, documentIsReverseCharged = fal
   const rate = Number(line.btw_rate ?? 0);
   if (rate > 0) return "taxed";
   if (line.vat_treatment === "exempt") return "exempt";
+  // [VERLEGD-VERKOOP] The owner's own choice on the line — the document's legal fact, no longer a
+  // regex over the description. AE with art. 12 lid 5 as its ground (taxExemptionReason).
+  if (line.vat_treatment === "reverse_charge") return "reverse_charge";
   if (RE_REVERSE_CHARGE.test(line.description ?? "")) return "reverse_charge";
   // [E-FACTUUR-VERLEGD] The document-level fact, from the same predicate the PDF prints its
   // "Btw verlegd" sentence from (isReverseChargedInvoice in icp.ts): an EU customer with a VAT

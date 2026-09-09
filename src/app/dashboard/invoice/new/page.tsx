@@ -50,6 +50,8 @@ import { translator } from '@/lib/i18n/t'
 import { statusLabel } from '@/lib/invoice-status'
 import type { MessageKey } from '@/lib/i18n/messages'
 import { KOR_RATE_HINT } from '@/lib/kor-invoice'
+import { hasReverseChargeLine, storedVatTreatment } from '@/lib/line-vat-treatment'
+import { checkEuZeroRatedInvoice, countryNameNl, normalizeCountry } from '@/lib/client-country'
 import { M3, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 // [PRIJS-MODUS] Typen met of zonder btw — één pure omrekening, gedeeld met het bewerkscherm.
 // Wat er wordt OPGESLAGEN blijft ex-btw; dit is een invoerstand, geen opslagformaat.
@@ -138,6 +140,8 @@ type Client = {
   kvk_number: string
   // [BESTE] The payment term agreed with this customer (clients_term_phone.sql); absent = default.
   payment_term_days?: number | null
+  // [KLANT-LAND] ISO code (client_country.sql); absent = not recorded, read as the Netherlands.
+  country?: string | null
 }
 
 // [VRIJGESTELD] Sentinel for the BTW-tarief dropdown. "Vrijgesteld" is not a rate, but a
@@ -145,6 +149,8 @@ type Client = {
 // in for it, and is translated back into (0%, vat_treatment='exempt') the moment it is chosen.
 // Negative on purpose: no rate can ever collide with it.
 const EXEMPT_OPTION = -1
+// [VERLEGD-VERKOOP] Same trick for the verleggingsregeling: 0% plus the flag 'reverse_charge'.
+const REVERSE_CHARGE_OPTION = -2
 
 // [AANBETALING] Every ISSUED deposit on an offerte, as the credit lines that settle it on the
 // final invoice, plus their numbers for the banner. A deposit still in concept is not money the
@@ -175,7 +181,9 @@ type InvoiceLine = {
   // [VRIJGESTELD] 'exempt' = vrijgestelde prestatie (art. 11 Wet OB): geen BTW, en de omzet gaat
   // in GEEN aangifterubriek. Alleen te kiezen als de ondernemer dat in Instellingen heeft
   // verklaard; afwezig = gewoon belast, precies zoals elke regel van vóór dit veld.
-  vat_treatment?: 'exempt' | null
+  // [VERLEGD-VERKOOP] 'reverse_charge' = btw verlegd naar de klant (art. 12 lid 5 Wet OB): 0% op de
+  // regel, de omzet in rubriek 1e, en het btw-nummer van de klant verplicht op de factuur.
+  vat_treatment?: 'exempt' | 'reverse_charge' | null
   // [UNIT] De eenheid van deze regel ("uur", "m²", "stuk"). Komt mee uit de catalogus zodra
   // je een artikel kiest, en gaat door naar invoice_lines.unit → de UN/ECE-code in de e-factuur.
   // Leeg = geen eenheid, wat neerkomt op C62 (stuk) — precies het gedrag van vóór dit veld.
@@ -449,6 +457,7 @@ function NewInvoicePageContent() {
   const aiClientPostal  = searchParams.get('client_postal_code') ?? ''
   const aiClientCity    = searchParams.get('client_city') ?? ''
   const aiClientBtw     = searchParams.get('client_btw_number') ?? ''
+  const aiClientCountry = searchParams.get('client_country') ?? ''
   const aiDescription   = searchParams.get('description') ?? ''
   const aiAmount        = parseFloat(searchParams.get('amount') ?? '0') || 0
   const aiBtwRate       = parseFloat(searchParams.get('btw_rate') ?? '21') || 21
@@ -523,6 +532,8 @@ function NewInvoicePageContent() {
   const [clientPostal, setClientPostal]   = useState(aiClientPostal)
   const [clientCity, setClientCity]       = useState(aiClientCity)
   const [clientBtw, setClientBtw]         = useState(aiClientBtw)
+  // [KLANT-LAND] The customer's country code; empty reads as the Netherlands everywhere.
+  const [clientCountry, setClientCountry] = useState(aiClientCountry)
   // [KLANT-EXTRA] Twee vrije regels direct onder de klantnaam op het document — "t.a.v. …", een
   // afdeling of het inkoopordernummer dat de klant op de factuur wil zien staan. Per document,
   // niet per klant: een inkoopordernummer verschilt per factuur.
@@ -757,7 +768,7 @@ function NewInvoicePageContent() {
             unit_price:  l.unit_price  ?? 0,
             btw_rate:    l.btw_rate    ?? 21,
             unit:        l.unit ?? null,
-            vat_treatment: l.vat_treatment === 'exempt' ? 'exempt' : null,
+            vat_treatment: storedVatTreatment(l.vat_treatment),
             discount_type: l.discount_type === 'percent' || l.discount_type === 'amount' ? l.discount_type : null,
             // Het regelmodel houdt de korting als RUWE invoerstring (zoals het invoerveld);
             // de databasekolom is numeriek — dus hier terug naar de invoervorm.
@@ -826,6 +837,7 @@ function NewInvoicePageContent() {
     setClientPostal(c.postal_code ?? '')
     setClientCity(c.city ?? '')
     setClientBtw(c.btw_number ?? '')
+    setClientCountry(c.country ?? '')
     setClientSearch(c.name)
     setShowDropdown(false)
     applyClientTerm(c)
@@ -896,6 +908,13 @@ function NewInvoicePageContent() {
   function markLineExempt(i: number) {
     setLines(prev => prev.map((l, idx) => idx === i
       ? { ...l, btw_rate: 0, vat_treatment: 'exempt', unit_price: repriceForRateChange(l.unit_price, l.btw_rate, 0, priceMode) }
+      : l))
+  }
+
+  // [VERLEGD-VERKOOP] Verlegd is 0% PLUS the flag, set together for the same reason as exempt.
+  function markLineReverseCharged(i: number) {
+    setLines(prev => prev.map((l, idx) => idx === i
+      ? { ...l, btw_rate: 0, vat_treatment: 'reverse_charge', unit_price: repriceForRateChange(l.unit_price, l.btw_rate, 0, priceMode) }
       : l))
   }
 
@@ -1119,6 +1138,7 @@ function NewInvoicePageContent() {
         client_postal_code: clientPostal,
         client_city: clientCity,
         client_btw_number: clientBtw,
+        client_country: normalizeCountry(clientCountry),
         client_extra_line1: clientExtra1,
         client_extra_line2: clientExtra2,
         client_extra_line3: clientExtra3,
@@ -1255,6 +1275,20 @@ function NewInvoicePageContent() {
       setError(t('nieuw.fout.euBtwLengte', { number: clientBtw.trim() }))
       return
     }
+    // [VERLEGD-VERKOOP] A verlegd line without the customer's btw-id is refused at the send door
+    // (art. 35a lid 1 sub d) — asked here first, where the field is one tap away.
+    if (hasReverseChargeLine(lines) && !clientBtw.trim()) {
+      setError(t('nieuw.fout.verlegdZonderBtw'))
+      return
+    }
+    // [KLANT-LAND] A 0% factuur to a business in another member state needs the customer's btw-id
+    // (art. 138 BTW-richtlijn) — the send door refuses it; asked here first, where the field is one
+    // tap away. Both ways out are in the sentence: the number, or Dutch btw for a consumer.
+    const euNul = checkEuZeroRatedInvoice({ clientCountry, clientBtwNumber: clientBtw, invoiceType, korActive: korActief, lines })
+    if (!euNul.ok) {
+      setError(t('nieuw.fout.euZonderBtw', { land: countryNameNl(euNul.country) }))
+      return
+    }
 
     // [MIN-REGEL] A negative aantal is a CREDIT line — a return settled on this invoice instead of
     // on a separate creditnota, exactly as a wholesaler writes it. Zero is still a mistake, and the
@@ -1342,6 +1376,7 @@ function NewInvoicePageContent() {
         client_postal_code: clientPostal,
         client_city: clientCity,
         client_btw_number: clientBtw,
+        client_country: normalizeCountry(clientCountry),
         client_extra_line1: clientExtra1,
         client_extra_line2: clientExtra2,
         client_extra_line3: clientExtra3,
@@ -1757,6 +1792,11 @@ function NewInvoicePageContent() {
                 <OutlinedInput value={clientPostal} onChange={e => setClientPostal(e.target.value)} placeholder="1234 AB" label={t('nieuw.klant.postcode')} focusColor={cfg.focusColor} />
                 <OutlinedInput value={clientCity} onChange={e => setClientCity(e.target.value)} placeholder="Amsterdam" label={t('nieuw.klant.stad')} focusColor={cfg.focusColor} />
               </div>
+              {/* [KLANT-LAND] Two letters; empty reads as the Netherlands. It decides the 0%-guard at the
+                  send door and the country line under the city on a foreign customer's invoice. */}
+              <div style={{ marginTop: 8, maxWidth: 200 }}>
+                <OutlinedInput value={clientCountry} onChange={e => setClientCountry(e.target.value.toUpperCase())} placeholder="NL" label={t('nieuw.klant.land')} focusColor={cfg.focusColor} />
+              </div>
               <div>
                 <OutlinedInput value={clientBtw} onChange={e => setClientBtw(e.target.value)} placeholder="NL123456789B01" label={t('nieuw.klant.btw')} focusColor={cfg.focusColor} hasError={(!!clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw)) || euVatSuspect} />
                 {clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw) && (
@@ -2004,7 +2044,7 @@ function NewInvoicePageContent() {
                     <LineInput label={priceMode === 'incl' ? t('nieuw.regel.prijsIncl') : t('nieuw.regel.prijsExcl')} value={priceFieldValue(line.unit_price, line.btw_rate, priceMode, line.quantity)} min={0} focusColor={cfg.focusColor} hasError={!!fieldErrors.lines?.[i]?.unit_price} onChange={v => { updateLinePrice(i, v); setFieldErrors(prev => { const l = [...(prev.lines ?? [])]; if (l[i]) l[i] = { ...l[i], unit_price: false }; return { ...prev, lines: l } }) }} />
                     <div>
                       <label style={{ fontSize: 12, fontWeight: 500, color: '#5F6368', display: 'block', marginBottom: 4 }}>BTW %</label>
-                      <select value={line.vat_treatment === 'exempt' ? EXEMPT_OPTION : line.btw_rate} onChange={e => { const v = parseFloat(e.target.value); if (v === EXEMPT_OPTION) markLineExempt(i); else updateLineRate(i, v) }} style={{ width: '100%', minHeight: 44, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 12px', fontSize: 16, backgroundColor: 'white', outline: 'none', boxSizing: 'border-box', appearance: 'none', cursor: 'pointer' }} onFocus={e => { e.currentTarget.style.borderColor = cfg.focusColor; e.currentTarget.style.borderWidth = '2px' }} onBlur={e => { e.currentTarget.style.borderColor = '#E0E0E0'; e.currentTarget.style.borderWidth = '1px' }}>
+                      <select value={line.vat_treatment === 'exempt' ? EXEMPT_OPTION : line.vat_treatment === 'reverse_charge' ? REVERSE_CHARGE_OPTION : line.btw_rate} onChange={e => { const v = parseFloat(e.target.value); if (v === EXEMPT_OPTION) markLineExempt(i); else if (v === REVERSE_CHARGE_OPTION) markLineReverseCharged(i); else updateLineRate(i, v) }} style={{ width: '100%', minHeight: 44, border: '1px solid #E0E0E0', borderRadius: 8, padding: '0 12px', fontSize: 16, backgroundColor: 'white', outline: 'none', boxSizing: 'border-box', appearance: 'none', cursor: 'pointer' }} onFocus={e => { e.currentTarget.style.borderColor = cfg.focusColor; e.currentTarget.style.borderWidth = '2px' }} onBlur={e => { e.currentTarget.style.borderColor = '#E0E0E0'; e.currentTarget.style.borderWidth = '1px' }}>
                         {/* [KOR-FACTUUR] Onder de KOR bestaan 21% en 9% niet als keuze. Weglaten is
                             hier beter dan achteraf afkeuren: een tarief dat je kunt kiezen en dat
                             daarna wordt geweigerd, is een val. Zie kor-invoice.ts voor wat het
@@ -2012,6 +2052,10 @@ function NewInvoicePageContent() {
                         {!korActief && <option value={21}>21%</option>}
                         {!korActief && <option value={9}>9%</option>}
                         <option value={0}>0%</option>
+                        {/* [VERLEGD-VERKOOP] Btw verlegd naar de klant (bouw, onderaanneming,
+                            personeel, schoonmaak): 0% plus de vlag. Niet onder de KOR — daar is
+                            de prestatie vrijgesteld en bestaat er niets te verleggen. */}
+                        {!korActief && <option value={REVERSE_CHARGE_OPTION}>{t('nieuw.regel.verlegd')}</option>}
                         {/* [VRIJGESTELD] Alleen zichtbaar als de ondernemer vrijgestelde omzet
                             heeft verklaard (Instellingen). Voor iedereen anders is deze keuze
                             geen optie maar een valkuil: vrijgesteld ziet eruit als 0%, en een
@@ -2021,6 +2065,11 @@ function NewInvoicePageContent() {
                       </select>
                       {/* De reden staat ernaast, niet in een melding achteraf. Zonder deze zin is
                           een menu met één keuze gewoon een kapot menu. */}
+                      {line.vat_treatment === 'reverse_charge' && (
+                        <p style={{ fontSize: 11, color: '#5F6368', margin: '6px 0 0', lineHeight: 1.45 }}>
+                          {t('nieuw.regel.verlegdHint')}
+                        </p>
+                      )}
                       {korActief && (
                         <p style={{ fontSize: 11, color: '#5F6368', margin: '6px 0 0', lineHeight: 1.45 }}>
                           {KOR_RATE_HINT}
@@ -2301,6 +2350,7 @@ function NewInvoicePageContent() {
                         client_postal_code: clientPostal,
                         client_city: clientCity,
                         client_btw_number: clientBtw,
+                        client_country: normalizeCountry(clientCountry),
                         // [KLANT-EXTRA] De twee vrije klantregels horen er ook op. Zonder deze
                         // vier velden toont het voorbeeld een ander adresblok dan de factuur die
                         // straks verstuurd wordt — en een voorbeeld dat afwijkt van het document

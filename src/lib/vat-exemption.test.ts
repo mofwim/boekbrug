@@ -237,3 +237,14 @@ test("a taxed sale is never re-labelled", () => {
   assert.equal(resolveSaleTreatment("taxed", 0).treatment, "taxed");
   assert.equal(resolveSaleTreatment("taxed", 21).contradicted, false);
 });
+
+// ─── [VERLEGD-VERKOOP] A verlegde sale is "niet bij u belast": rubriek 1e, like a real 0% ──────
+test("[VERLEGD-VERKOOP] a line flagged reverse_charge reads as TAXED at 0% for the rubrieken — 1e, never withheld like an exemption", () => {
+  // The aangifte engine keys on this: 'exempt' is withheld from every rubriek, everything else is
+  // a rate. Verlegde omzet belongs in 1e ("leveringen/diensten belast met 0% of niet bij u
+  // belast"), so the flag must NOT be read as an exemption — the customer declares that btw in
+  // their 2a, and the two filings are compared.
+  assert.equal(getVatTreatment("reverse_charge"), "taxed");
+  assert.equal(isVatTreatment("reverse_charge"), false, "not one of the two aangifte treatments — it is a rate-0 sale with a flag");
+  assert.deepEqual(resolveSaleTreatment(getVatTreatment("reverse_charge"), 0), { treatment: "taxed", contradicted: false });
+});

@@ -17,6 +17,8 @@
 // afronden. Dezelfde rij, dezelfde centen.
 
 import { NextRequest, NextResponse } from 'next/server'
+import { storedVatTreatment } from '@/lib/line-vat-treatment'
+import { normalizeCountry } from '@/lib/client-country'
 // [IN-CHUNK] Een id-lijst reist in de URL — gechunkt, zie supabase-paginate.ts.
 import { chunkIds, fetchAllRowsForIds } from '@/lib/supabase-paginate'
 import { createPipelineClient } from '@/lib/supabase-pipeline'
@@ -318,6 +320,20 @@ export async function POST(request: NextRequest) {
         { created_by: createdBy },
       )
       clientId = nieuw?.id ?? null
+      // [KLANT-LAND] The country in its own best-effort step, for the same reason as the invoice's
+      // client_country below: a column an installation may not have yet must not cost the customer.
+      const nieuwLand = normalizeCountry(body.client_country)
+      if (clientId && nieuwLand) {
+        const { error: landErr } = await pipeline
+          .from('clients')
+          .update({ country: nieuwLand } as never)
+          .eq('id', clientId)
+          .eq('user_id', ownerId)
+        if (landErr) {
+          console.warn('[KLANT-LAND] het land van de nieuwe klant kon niet worden opgeslagen — pas ' +
+            'supabase/migrations/client_country.sql toe', { clientId, error: landErr.message })
+        }
+      }
     }
 
     // ── De factuur ───────────────────────────────────────────────────────────
@@ -429,6 +445,24 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // ── [KLANT-LAND] The customer's country on the document, in its OWN write ──
+    //
+    // The same shape as the two lines above and for the same reason: a column an installation may
+    // not have yet must not take created_by down with it. The invoice stands; the country is a
+    // separate update that may fail, loudly, naming the migration.
+    const klantLand = normalizeCountry(body.client_country)
+    if (klantLand) {
+      const { error: landErr } = await pipeline
+        .from('invoices')
+        .update({ client_country: klantLand } as never)
+        .eq('id', factuur.id)
+        .eq('sender_id', ownerId)
+      if (landErr) {
+        console.warn('[KLANT-LAND] het land van de klant kon niet op de factuur worden opgeslagen — pas ' +
+          'supabase/migrations/client_country.sql toe', { invoiceId: factuur.id, error: landErr.message })
+      }
+    }
+
     // ── De regels ────────────────────────────────────────────────────────────
     const bron = body.lines as Array<Record<string, unknown>>
     // [UNIT] `unit` komt uit migratie invoice_line_unit.sql en gaat via dezelfde terugval
@@ -472,10 +506,11 @@ export async function POST(request: NextRequest) {
           ...(Object.keys(spoor).length
             ? {
                 unit: schoonEenheid(bron[i]?.unit),
-                // [VRIJGESTELD] Alleen de letterlijke waarde 'exempt' telt; al het andere is
-                // NULL = gewoon belast. Zo kan een oude of vreemde client deze kolom niet
-                // gebruiken om omzet uit de aangifte te laten verdwijnen.
-                vat_treatment: bron[i]?.vat_treatment === 'exempt' ? 'exempt' : null,
+                // [VRIJGESTELD] Alleen de letterlijke waarden tellen ('exempt', 'reverse_charge');
+                // al het andere is NULL = gewoon belast. Zo kan een oude of vreemde client deze
+                // kolom niet gebruiken om omzet uit de aangifte te laten verdwijnen. Eén harding
+                // voor elke schrijver: line-vat-treatment.ts.
+                vat_treatment: storedVatTreatment(bron[i]?.vat_treatment),
                 // [REGEL-KORTING] Het AFGESPROKEN getal, al gecontroleerd door validateDraftLines.
                 // Het uitgerekende bedrag staat niet in een kolom — line_total is al netto.
                 discount_type: l.discount_type ?? null,

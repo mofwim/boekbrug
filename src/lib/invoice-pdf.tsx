@@ -28,6 +28,9 @@ import { formatDateNL, formatEuroNL, deriveBtwRate } from './format-nl'
 // [ICP] Art. 226 punt 11a: when the customer owes the BTW, the invoice must SAY so. Same rule
 // the ICP-opgaaf runs on, so the document and the aangifte can never disagree about this sale.
 import { reverseChargeNotice } from './icp'
+import { domesticReverseChargeNotice } from './reverse-charge-invoice'
+import { storedVatTreatment, type StoredVatTreatment } from './line-vat-treatment'
+import { countryNameNl, normalizeCountry } from './client-country'
 // [CREDITNOTA-REF] Art. 219: a corrective document must name the invoice it corrects.
 import { creditnotaReferenceLine } from './creditnota'
 // [UNIT] Nette schrijfwijze van de eenheid; laat onbekende tekst ongemoeid.
@@ -212,6 +215,11 @@ type LineLike = {
   btw_rate?: number | null
   line_total?: number | null
   /**
+   * [VERLEGD-VERKOOP] 'exempt' | 'reverse_charge' | null — the legal category beside the rate. It
+   * decides which summary row the line lands in, and whether the statutory sentence prints.
+   */
+  vat_treatment?: string | null
+  /**
    * [UNIT] De eenheid van deze regel ("uur", "m²"). Optioneel: leeg of afwezig levert precies
    * de oude weergave op — alleen het aantal, zoals het altijd was.
    */
@@ -226,27 +234,45 @@ type LineLike = {
   discount_value?: number | null
 }
 
-function btwBreakdown(lines: LineLike[]): { rate: number; ex: number; btw: number }[] {
-  const byRate = new Map<number, number>()
+type BtwRow = { rate: number; treatment: StoredVatTreatment | null; ex: number; btw: number }
+
+// [VERLEGD-VERKOOP] One row per LEGAL CATEGORY, keyed on (rate, treatment) like the UBL's
+// TaxSubtotal — not per rate. An exempt supply (art. 11), a verlegde supply (art. 12 lid 5) and a
+// real 0% supply are three different statements; one "0,00% BTW" row over their sum told a
+// bookkeeper nothing about any of them, while the e-invoice of the same sale separated them. Art.
+// 35a lid 1 sub g asks for the consideration per rate OR per exemption.
+function btwBreakdown(lines: LineLike[]): BtwRow[] {
+  const groups = new Map<string, BtwRow>()
   for (const l of lines) {
     const rate = Number(l.btw_rate ?? 0)
+    const treatment = storedVatTreatment(l.vat_treatment)
     // line_total is stored ex BTW and already carries the creditnota sign
     const ex =
       l.line_total !== null && l.line_total !== undefined
         ? Number(l.line_total)
         : Number(l.quantity ?? 0) * Number(l.unit_price ?? 0)
-    byRate.set(rate, (byRate.get(rate) ?? 0) + ex)
+    const key = `${rate}|${treatment ?? ''}`
+    const cur = groups.get(key)
+    if (cur) cur.ex += ex
+    else groups.set(key, { rate, treatment, ex, btw: 0 })
   }
-  return Array.from(byRate.entries())
-    .map(([rate, ex]) => ({ rate, ex, btw: (ex * rate) / 100 }))
+  return Array.from(groups.values())
+    .map((g) => ({ ...g, btw: (g.ex * g.rate) / 100 }))
     .filter((g) => g.ex !== 0)
-    .sort((a, b) => a.rate - b.rate)
+    .sort((a, b) => a.rate - b.rate || (a.treatment ?? '').localeCompare(b.treatment ?? ''))
 }
 
 // "21,00% BTW over € 100,00" — rate with two decimals and a Dutch comma.
 function rateLabel(rate: number, ex: number): string {
   const r = rate.toFixed(2).replace('.', ',')
   return `${r}% BTW over ${formatEuroNL(ex)}`
+}
+
+// The summary row's label: the category's own words where the rate says nothing.
+function rowLabel(g: { rate: number; treatment: StoredVatTreatment | null; ex: number }): string {
+  if (g.treatment === 'exempt') return `Vrijgesteld van btw over ${formatEuroNL(g.ex)}`
+  if (g.treatment === 'reverse_charge') return `Btw verlegd over ${formatEuroNL(g.ex)}`
+  return rateLabel(g.rate, g.ex)
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -299,6 +325,11 @@ export function InvoicePDF({
   // [FACTUUR-A] Normalize BTW-id casing on a legal document.
   const senderBtw = profile.btw_number ? String(profile.btw_number).toUpperCase() : '—'
   const clientBtw = invoice.client_btw_number ? String(invoice.client_btw_number).toUpperCase() : ''
+  // [KLANT-LAND] Art. 35a lid 1 sub c: the customer's address — for a foreign customer that includes
+  // the country, printed as its Dutch name under the city. A Dutch or unrecorded country prints
+  // nothing, which is exactly the block every invoice rendered before the column existed.
+  const clientCountryCode = normalizeCountry(invoice.client_country)
+  const clientCountry = clientCountryCode && clientCountryCode !== 'NL' ? countryNameNl(clientCountryCode) : ''
 
   const groups = btwBreakdown(lines ?? [])
   // Fallback for legacy invoices without lines: one derived rate from totals.
@@ -308,6 +339,7 @@ export function InvoicePDF({
       : [
           {
             rate: deriveBtwRate(invoice.btw_amount, invoice.total_ex_btw),
+            treatment: null,
             ex: Number(invoice.total_ex_btw ?? 0),
             btw: Number(invoice.btw_amount ?? 0),
           },
@@ -338,10 +370,27 @@ export function InvoicePDF({
     rateLines.map((g) => ({ line_total: g.ex, btw_rate: g.rate })),
     korting,
   )
+  // [KORTING-PER-GROEP] applyDiscount allocates per RATE, and since the rows are one per legal
+  // category two rows can share rate 0 (vrijgesteld beside verlegd). Handing both the whole
+  // rate-0 allowance subtracted it twice — the defect the UBL export fixed with offByGroup, now
+  // with the same rule: the rate's allowance over that rate's rows pro rata, remainder on the
+  // last, so the parts sum to the allowance to the cent. Keyed on the ROW, not the rate.
   const afgetrokken = new Map<number, number>()
-  for (const a of kortingUitkomst.allowances) afgetrokken.set(a.rate, a.amount)
-  const netRateLines = rateLines.map((g) => {
-    const off = afgetrokken.get(g.rate) ?? 0
+  for (const a of kortingUitkomst.allowances) {
+    const idx = rateLines
+      .map((g, i) => ({ g, i }))
+      .filter(({ g }) => g.rate === a.rate && Math.sign(g.ex) === Math.sign(a.amount) && g.ex !== 0)
+      .sort((x, y) => Math.abs(y.g.ex) - Math.abs(x.g.ex))
+    const base = idx.reduce((sum, { g }) => sum + Math.abs(g.ex), 0)
+    let assigned = 0
+    idx.forEach(({ g, i }, k) => {
+      const part = k === idx.length - 1 ? round2(a.amount - assigned) : round2((a.amount * Math.abs(g.ex)) / base)
+      assigned = round2(assigned + part)
+      if (part !== 0) afgetrokken.set(i, part)
+    })
+  }
+  const netRateLines = rateLines.map((g, i) => {
+    const off = afgetrokken.get(i) ?? 0
     const ex = round2(g.ex - off)
     // [KORTING] `off !== 0`, niet `off > 0`. Op een CREDITNOTA is alles negatief — applyDiscount
     // spiegelt de korting mee (`applied = sign * appliedMagnitude`), dus de aftrek per tarief is
@@ -375,6 +424,8 @@ export function InvoicePDF({
   // deficient — that is the ground on which the 0% gets challenged and the customer's own
   // deduction gets refused. It is derived, never typed: the customer's EU BTW-number plus a
   // zero BTW amount IS the condition. Suppressed when the owner already wrote it in a line.
+  // [VERLEGD-VERKOOP] The EU sentence first, then the domestic one — a buyer in another member
+  // state is verlegd on a different legal ground, and ONE sentence is printed, never two.
   const reverseCharge = reverseChargeNotice({
     clientVatNumber: invoice.client_btw_number,
     btwAmount: invoice.btw_amount,
@@ -382,6 +433,11 @@ export function InvoicePDF({
     korActive: !!profile.kor_active,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     lineTexts: (lines ?? []).map((l: any) => l?.description as string | null),
+  }) ?? domesticReverseChargeNotice({
+    lines: (lines ?? []) as LineLike[],
+    clientBtwNumber: invoice.client_btw_number,
+    invoiceType: type,
+    korActive: !!profile.kor_active,
   })
 
   // [BTW-VERKLARING] Drie verschillende redenen voor EUR 0,00 btw drukten hetzelfde af: niets.
@@ -437,6 +493,7 @@ export function InvoicePDF({
             <Text style={styles.partyText}>
               {invoice.client_postal_code || ''} {invoice.client_city || ''}
             </Text>
+            {clientCountry !== '' && <Text style={styles.partyText}>{clientCountry}</Text>}
             {clientBtw !== '' && <Text style={styles.partyText}>BTW nr.: {clientBtw}</Text>}
             {invoice.client_email ? (
               <Text style={styles.partyText}>{invoice.client_email}</Text>
@@ -575,7 +632,7 @@ export function InvoicePDF({
             )}
             {netRateLines.map((g, i) => (
               <View key={i} style={styles.totalRow}>
-                <Text style={styles.totalLabel}>{rateLabel(g.rate, g.ex)}</Text>
+                <Text style={styles.totalLabel}>{rowLabel(g)}</Text>
                 <Text style={styles.totalValue}>{formatEuroNL(round2(g.btw))}</Text>
               </View>
             ))}

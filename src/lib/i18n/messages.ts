@@ -169,6 +169,8 @@ export const MESSAGES = {
   'nieuw.klant.adres': { nl: 'Adres', ar: 'العنوان', en: 'Address' },
   'nieuw.klant.postcode': { nl: 'Postcode', ar: 'الرمز البريدي', en: 'Postcode' },
   'nieuw.klant.stad': { nl: 'Stad', ar: 'المدينة', en: 'City' },
+  // [KLANT-LAND] The customer's country as an ISO code; empty reads as the Netherlands.
+  'nieuw.klant.land': { nl: 'Land (code, bijv. NL)', ar: 'الدولة (رمز، مثل NL)', en: 'Country (code, e.g. NL)' },
   'nieuw.klant.btw': { nl: 'BTW-nummer klant', ar: 'رقم ضريبة القيمة المضافة للعميل', en: "Client's VAT number" },
   'nieuw.klant.btwFormaat': { nl: 'Verwacht formaat: NL123456789B01', ar: 'الصيغة المتوقّعة: NL123456789B01', en: 'Expected format: NL123456789B01' },
   // Het PO-nummer blijft een Nederlands voorbeeldformaat — zie de kop van dit blok.
@@ -209,6 +211,10 @@ export const MESSAGES = {
   'nieuw.regel.prijsExcl': { nl: 'Prijs excl. (€)', ar: 'السعر بدون ضريبة (€)', en: 'Price excl. (€)' },
   'nieuw.regel.prijsIncl': { nl: 'Prijs incl. (€)', ar: 'السعر شامل الضريبة (€)', en: 'Price incl. (€)' },
   'nieuw.regel.vrijgesteld': { nl: 'Vrijgesteld', ar: 'مُعفى', en: 'Exempt' },
+  // [VERLEGD-VERKOOP] The verleggingsregeling on a line, and what the owner must fill in for it.
+  'nieuw.regel.verlegd': { nl: 'Btw verlegd', ar: 'الضريبة محوَّلة إلى العميل', en: 'VAT reverse-charged' },
+  'nieuw.regel.verlegdHint': { nl: 'Btw verlegd naar de klant: het btw-nummer van de klant komt op de factuur.', ar: 'الضريبة محوَّلة إلى العميل: يُطبع رقم BTW الخاص بالعميل على الفاتورة.', en: 'VAT shifted to the customer: the customer’s VAT number goes on the invoice.' },
+  'nieuw.fout.verlegdZonderBtw': { nl: 'Een regel met btw verlegd vraagt om het btw-nummer van de klant. Vul het in bij de klant.', ar: 'بند بضريبة محوَّلة يتطلب رقم BTW الخاص بالعميل. أدخله في بيانات العميل.', en: 'A reverse-charged line needs the customer’s VAT number. Enter it on the customer.' },
 
   'nieuw.prijsmodus': { nl: 'Prijzen invoeren', ar: 'إدخال الأسعار', en: 'Entering prices' },
   'nieuw.prijsmodus.aria': { nl: 'Prijzen invoeren inclusief of exclusief btw', ar: 'إدخال الأسعار شاملةً الضريبة أو بدونها', en: 'Enter prices including or excluding VAT' },
@@ -285,6 +291,8 @@ export const MESSAGES = {
   'nieuw.bevestig.bedrag': { nl: 'Bedrag', ar: 'المبلغ', en: 'Amount' },
 
   'nieuw.fout.velden': { nl: 'Vul de rood gemarkeerde velden in', ar: 'املأ الحقول المُعلَّمة بالأحمر', en: 'Fill in the fields marked red' },
+  // [KLANT-LAND] A 0% invoice to a business in another member state needs the customer's btw-id.
+  'nieuw.fout.euZonderBtw': { nl: 'Klant in {land} (EU) zonder btw-nummer: vul het in, of reken Nederlandse btw.', ar: 'عميل في {land} (الاتحاد الأوروبي) بلا رقم BTW: أدخله، أو احسب الضريبة الهولندية.', en: 'Customer in {land} (EU) without a VAT number: enter it, or charge Dutch VAT.' },
   'nieuw.fout.btwKlant': { nl: 'Het BTW-nummer van de klant lijkt onjuist (verwacht: NL123456789B01)', ar: 'رقم ضريبة القيمة المضافة للعميل يبدو غير صحيح (المتوقّع: NL123456789B01)', en: "The client's VAT number looks wrong (expected: NL123456789B01)" },
   // [WAARSCHUWING-GEHOORD] Het concept is opgeslagen zonder de korting, dus de factuur zou voor
   // de volle prijs de deur uit gaan. Gezegd VOORDAT het nummer valt: daarna is de factuur wettelijk
@@ -1406,6 +1414,7 @@ export const MESSAGES = {
   // [BESTE] Phone and the agreed payment term on the customer; the open balance on the list.
   'kl.veld.telefoon': { nl: 'Telefoon', ar: 'الهاتف', en: 'Phone' },
   'kl.veld.termijn': { nl: 'Betaaltermijn (dagen)', ar: 'مهلة الدفع (أيام)', en: 'Payment term (days)' },
+  'kl.veld.land': { nl: 'Land (code)', ar: 'الدولة (رمز)', en: 'Country (code)' },
   'kl.termijnDagen': { nl: '{days} dagen', ar: '{days} يوماً', en: '{days} days' },
   'kl.open': { nl: '{amount} open', ar: '{amount} مستحق', en: '{amount} open' },
   'kl.factuur': { nl: 'Factuur', ar: 'فاتورة', en: 'Invoice' },

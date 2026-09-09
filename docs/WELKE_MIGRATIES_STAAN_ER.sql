@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 140 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 142 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 17 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -115,10 +115,10 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('bank_identity.sql', 'index', 'idx_counterpart_memory_lookup', null, 'public'),
   ('bank_identity.sql', 'policy', 'counterpart_memory_delete_own', 'counterpart_memory', 'public'),
   ('bank_identity.sql', 'policy', 'counterpart_memory_insert_own', 'counterpart_memory', 'public'),
+  ('bank_ignore_reason.sql', 'constraint_def', 'bank_transactions_ignore_reason_check', 'anders,dubbel,geen_factuur,niet_van_mij,prive', 'public'),
   ('bank_ignore_reason.sql', 'column', 'ignore_reason', 'bank_transactions', 'public'),
-  ('bank_ignore_reason.sql', 'constraint', 'bank_transactions_ignore_reason_check', null, 'public'),
   ('bank_ignore_reason.sql', 'index', 'idx_bank_tx_ignore_reason', null, 'public'),
-  ('bank_ignore_reason_storno.sql', 'constraint', 'bank_transactions_ignore_reason_check', null, 'public'),
+  ('bank_ignore_reason_storno.sql', 'constraint_def', 'bank_transactions_ignore_reason_check', 'anders,dubbel,geen_factuur,niet_van_mij,prive,storno', 'public'),
   ('bank_match_rejections.sql', 'index', 'bank_match_rejections_unique', null, 'public'),
   ('bank_match_rejections.sql', 'index', 'bank_match_rejections_user', null, 'public'),
   ('bank_match_rejections.sql', 'policy', 'bank_match_rejections_delete_own', 'bank_match_rejections', 'public'),
@@ -191,6 +191,8 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('circle_integrity_and_indexes.sql', 'column', 'shared', 'documents', 'public'),
   ('circle_integrity_and_indexes.sql', 'constraint', 'invoices_document_id_fkey', null, 'public'),
   ('circle_integrity_and_indexes.sql', 'index', 'idx_bank_transactions_invoice_id', null, 'public'),
+  ('client_country.sql', 'column', 'client_country', 'invoices', 'public'),
+  ('client_country.sql', 'column', 'country', 'clients', 'public'),
   ('client_extra_lines.sql', 'column', 'client_extra_line1', 'invoices', 'public'),
   ('client_extra_lines.sql', 'column', 'client_extra_line2', 'invoices', 'public'),
   ('client_extra_lines.sql', 'column', 'client_extra_line3', 'invoices', 'public'),
@@ -449,12 +451,13 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('urenregistratie.sql', 'policy', 'time_entries_insert_own', 'time_entries', 'public'),
   ('urenregistratie.sql', 'policy', 'time_entries_select_own', 'time_entries', 'public'),
   ('urenregistratie.sql', 'policy', 'time_entries_update_own', 'time_entries', 'public'),
+  ('vat_exemption.sql', 'constraint_def', 'invoice_lines_vat_treatment_check', 'exempt,taxed', 'public'),
   ('vat_exemption.sql', 'function_body', 'prevent_accountant_amount_changes', '.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
   ('vat_exemption.sql', 'column', 'vat_deduction', 'invoices', 'public'),
   ('vat_exemption.sql', 'column', 'vat_exempt_activity', 'profiles', 'public'),
   ('vat_exemption.sql', 'column', 'vat_exempt_since', 'profiles', 'public'),
   ('vat_exemption.sql', 'column', 'vat_treatment', 'invoice_lines', 'public'),
-  ('vat_exemption.sql', 'constraint', 'invoice_lines_vat_treatment_check', null, 'public'),
+  ('vat_reverse_charge.sql', 'constraint_def', 'invoice_lines_vat_treatment_check', 'exempt,reverse_charge,taxed', 'public'),
   ('vat_scheme.sql', 'column', 'vat_scheme', 'profiles', 'public'),
   ('vat_scheme.sql', 'column', 'vat_scheme_since', 'profiles', 'public'),
   ('vat_statement_note.sql', 'column', 'vat_statement_note', 'profiles', 'public'),
@@ -499,6 +502,13 @@ bevonden as (
       when 'index' then exists (select 1 from pg_indexes
              where schemaname = p.schema and indexname = p.object)
       when 'constraint' then exists (select 1 from pg_constraint where conname = p.object)
+      -- Een constraint die meer dan één migratie onder dezelfde naam schrijft: haar BESTAAN
+      -- bewijst alleen de eerste. Gemeten wordt de definitie — elke waarde die dit bestand
+      -- zelf in de CHECK noemt, moet erin staan.
+      when 'constraint_def' then exists (
+             select 1 from pg_constraint c where c.conname = p.object
+               and not exists (select 1 from unnest(string_to_array(p.tabel, ',')) mk
+                               where position(quote_literal(mk) in pg_get_constraintdef(c.oid)) = 0))
       -- Een policy staat lang niet altijd in public: de bestandspolicies zitten op
       -- storage.objects. Op het verkeerde schema zoeken gaf een alarm dat nooit uitging.
       when 'policy' then exists (select 1 from pg_policies
@@ -515,6 +525,8 @@ select
   string_agg(case when not aanwezig then
     case when soort = 'function_body'
          then 'function ' || schema || '.' || object || ' loopt achter op de map (mist een van: ' || tabel || ')'
+         when soort = 'constraint_def'
+         then 'constraint ' || object || ' loopt achter op de map (mist een van: ' || tabel || ')'
          else soort || ' ' || schema || '.' || object end end, ', ')                as ontbreekt
 from bevonden
 group by bestand
@@ -594,7 +606,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 157
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 159
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen
