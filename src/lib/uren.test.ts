@@ -22,6 +22,8 @@ import {
   MAX_ENTRIES_PER_INVOICE,
   normalizeTimeEntryInput,
   MAX_HOURS_PER_ENTRY,
+  prefillHourlyRate,
+  billableSharePercent,
   type TimeEntry,
 } from "./uren";
 import { validateDraftLines, ALLOWED_BTW_RATES } from "./draft-totals";
@@ -396,4 +398,67 @@ test("[DECLARABEL] the input reads only an explicit false as own time", () => {
   assert.equal(ok.ok && ok.entry.billable, true, "a body from before this field writes a billable hour");
   const own = normalizeTimeEntryInput({ worked_on: "2026-09-09", description: "Acquisitie", hours: 2, billable: false });
   assert.equal(own.ok && own.entry.billable, false);
+});
+
+// ---------------------------------------------------------------------------------------------
+// [TARIEF-KLANT] The customer's agreed rate, offered on a new hour.
+// ---------------------------------------------------------------------------------------------
+
+test("[TARIEF-KLANT] an empty field takes the customer's rate", () => {
+  const r = prefillHourlyRate({ current: "", wasPrefilled: false, clientRate: 95 });
+  assert.equal(r.rate, "95");
+  assert.equal(r.fromClient, true, "the screen must be able to say where the number came from");
+});
+
+test("[TARIEF-KLANT] a rate the owner typed is never overwritten", () => {
+  const r = prefillHourlyRate({ current: "120", wasPrefilled: false, clientRate: 95 });
+  assert.equal(r.rate, "120", "an hour agreed at another price keeps that price");
+  assert.equal(r.fromClient, false);
+});
+
+test("[TARIEF-KLANT] a rate WE filled in follows the switch to another customer", () => {
+  // The one silent way this could invoice a wrong amount: customer A's 95 standing under
+  // customer B's name, looking exactly like a rate that was agreed.
+  const r = prefillHourlyRate({ current: "95", wasPrefilled: true, clientRate: 140 });
+  assert.equal(r.rate, "140");
+  assert.equal(r.fromClient, true);
+});
+
+test("[TARIEF-KLANT] switching to a customer without a rate clears what we filled in", () => {
+  const r = prefillHourlyRate({ current: "95", wasPrefilled: true, clientRate: null });
+  assert.equal(r.rate, "", "A's rate must not stay behind under a customer who has none");
+  assert.equal(r.fromClient, false);
+});
+
+test("[TARIEF-KLANT] a typed rate survives a customer without a rate", () => {
+  const r = prefillHourlyRate({ current: "120", wasPrefilled: false, clientRate: undefined });
+  assert.equal(r.rate, "120");
+});
+
+test("[TARIEF-KLANT] a missing rate is never read as zero", () => {
+  // Number(null) is 0, and 0 is a real rate with a real (empty) invoice line behind it.
+  for (const clientRate of [null, undefined, 0, Number.NaN]) {
+    const r = prefillHourlyRate({ current: "", wasPrefilled: false, clientRate });
+    assert.equal(r.rate, "", `clientRate ${String(clientRate)} must not fill the field`);
+    assert.equal(r.fromClient, false);
+  }
+});
+
+test("[TARIEF-KLANT] the field speaks Dutch: 87.5 becomes 87,5", () => {
+  assert.equal(prefillHourlyRate({ current: "", wasPrefilled: false, clientRate: 87.5 }).rate, "87,5");
+});
+
+// ---------------------------------------------------------------------------------------------
+// [DECLARABEL] The billable share beside the year total.
+// ---------------------------------------------------------------------------------------------
+
+test("[DECLARABEL] the share is a whole percentage of all hours", () => {
+  assert.equal(billableSharePercent(1000, 640), 64);
+  assert.equal(billableSharePercent(3, 1), 33);
+});
+
+test("[DECLARABEL] no hours is no answer, never 0%", () => {
+  assert.equal(billableSharePercent(0, 0), null);
+  assert.equal(billableSharePercent(null, 12), null);
+  assert.equal(billableSharePercent(120, null), null);
 });

@@ -1414,6 +1414,9 @@ export const MESSAGES = {
   // [BESTE] Phone and the agreed payment term on the customer; the open balance on the list.
   'kl.veld.telefoon': { nl: 'Telefoon', ar: 'الهاتف', en: 'Phone' },
   'kl.veld.termijn': { nl: 'Betaaltermijn (dagen)', ar: 'مهلة الدفع (أيام)', en: 'Payment term (days)' },
+  // [TARIEF-KLANT] Het tarief van deze klant; vult het lege tariefveld bij zijn uren.
+  'kl.veld.uurtarief': { nl: 'Uurtarief (ex btw)', en: 'Hourly rate (ex VAT)', ar: 'أجر الساعة (قبل الضريبة)' },
+  'uren.tariefVanKlant': { nl: 'Tarief van deze klant ingevuld. Pas het aan als je iets anders afsprak.', en: "This customer's rate filled in. Change it if you agreed something else.", ar: 'تم ملء تعرفة هذا العميل. غيّرها إن اتفقت على غيرها.' },
   'kl.veld.land': { nl: 'Land (code)', ar: 'الدولة (رمز)', en: 'Country (code)' },
   'kl.termijnDagen': { nl: '{days} dagen', ar: '{days} يوماً', en: '{days} days' },
   'kl.open': { nl: '{amount} open', ar: '{amount} مستحق', en: '{amount} open' },
@@ -14216,6 +14219,7 @@ export const MESSAGES = {
   'uren.nietDeclarabel.uitleg': { nl: 'Eigen tijd: acquisitie, administratie, leren. Telt mee voor het urencriterium, nooit voor een factuur.', en: 'Your own time: acquisition, admin, learning. Counts towards the criterion, never towards an invoice.', ar: 'وقتك الخاص: استقطاب وإدارة وتعلّم. يُحتسب للمعيار لا للفاتورة.' },
   'uren.nietDeclarabel.chip': { nl: 'Eigen tijd', en: 'Own time', ar: 'وقت خاص' },
   'uren.split': { nl: 'waarvan {declarabel} declarabel', en: 'of which {declarabel} billable', ar: 'منها {declarabel} قابلة للفوترة' },
+  'uren.splitPct': { nl: 'waarvan {declarabel} declarabel ({pct}%)', en: 'of which {declarabel} billable ({pct}%)', ar: 'منها {declarabel} قابلة للفوترة ({pct}%)' },
   'uren.veld.geenKlant': { nl: 'Geen klant', en: 'No customer', ar: 'بدون عميل' },
   'uren.opslaan': { nl: 'Opslaan', en: 'Save', ar: 'حفظ' },
   'uren.annuleren': { nl: 'Annuleren', en: 'Cancel', ar: 'إلغاء' },

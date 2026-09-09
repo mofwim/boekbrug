@@ -29091,7 +29091,10 @@ test("[KLANT-LAND] the field on both customer screens, the snapshot on the invoi
   assert.match(api, /country: normalizeCountry\(body\.country\)/, "the API no longer normalises the country");
   assert.match(api, /if \(landOngeldig\(body as Record<string, unknown>, v\)\) return NextResponse\.json\(\{ error: LAND_FOUT \}, \{ status: 400 \}\)/,
     "a country that is not a code must be refused — saved as NULL it silently reads as the Netherlands");
-  assert.match(api, /const OPTIONAL_COLUMNS = \['phone', 'payment_term_days', 'country'\]/,
+  // [TARIEF-KLANT] added 'default_hourly_rate' to this list, so the assertion asks what it always
+  // meant — that 'country' is among the columns dropped together — instead of pinning the exact
+  // set. What matters is that a customer still saves on an installation behind on the migration.
+  assert.match(api, /const OPTIONAL_COLUMNS = \[[^\]]*'country'[^\]]*\]/,
     "an installation behind on client_country.sql must still save the customer without it");
 
   // Both customer screens carry it; the create screen carries it to the invoice.
@@ -29126,4 +29129,70 @@ test("[KLANT-LAND] the field on both customer screens, the snapshot on the invoi
   const pdf = code("src/lib/invoice-pdf.tsx");
   assert.match(pdf, /const clientCountry = clientCountryCode && clientCountryCode !== 'NL' \? countryNameNl\(clientCountryCode\) : ''/);
   assert.match(pdf, /\{clientCountry !== '' && <Text style=\{styles\.partyText\}>\{clientCountry\}<\/Text>\}/);
+});
+
+// ─── [TARIEF-KLANT] The rate agreed with a customer, offered once and never imposed ────────────
+//
+// The signal this app shows most often to a dienstverlener is "uren zonder tarief", and it is born
+// at an empty rate field: a consultant with four customers types the same four numbers hundreds of
+// times a year, and the hour they forget is the hour that never gets billed. The rate on the
+// customer answers it once.
+//
+// It touches money, so it holds two rules, and the second is the dangerous one:
+//
+//   1. A rate the owner TYPED is never overwritten — a default, not a correction.
+//   2. A rate WE filled in follows the switch to another customer. Customer A's 95 standing under
+//      customer B's name is the one silent way this feature could invoice a wrong amount, and on
+//      the screen it would look exactly like a rate that was agreed.
+test("[TARIEF-KLANT] the customer's rate reaches the hours screen, and only fills an empty field", () => {
+  const pure = code("src/lib/uren.ts");
+  const screen = code("src/app/dashboard/uren/UrenClient.tsx");
+  const page = code("src/app/dashboard/uren/page.tsx");
+  const api = code("src/app/api/clients/route.ts");
+
+  // Rule 1: typed wins, always.
+  assert.match(pure, /const typed = args\.current\.trim\(\) !== "" && !args\.wasPrefilled;/,
+    "the rule that protects a rate the owner typed is gone from prefillHourlyRate");
+  assert.match(pure, /if \(typed\) return \{ rate: args\.current, fromClient: false \};/);
+  // Rule 2: what we filled in is cleared or replaced when the customer changes — never left behind.
+  assert.match(pure, /return \{ rate: args\.wasPrefilled \? "" : args\.current, fromClient: false \};/,
+    "a rate we filled in stays behind under a customer who never agreed it");
+  // [CENT] Number(null) is 0, and 0 is a real rate with a real (empty) invoice line behind it.
+  assert.match(pure, /raw !== null && raw !== undefined && Number\.isFinite\(Number\(raw\)\) && Number\(raw\) > 0/);
+
+  // The wiring: the picker asks, the field answers, and typing takes the field back.
+  assert.match(screen, /prefillHourlyRate\(\{\s*current: form\.hourly_rate,\s*wasPrefilled: ratePrefilled,\s*clientRate: clients\.find\(\(c\) => c\.id === id\)\?\.default_hourly_rate,\s*\}\)/,
+    "the customer picker no longer offers the agreed rate");
+  assert.match(screen, /setRatePrefilled\(false\); setForm\(\{ \.\.\.form, hourly_rate: e\.target\.value \}\)/,
+    "typing in the rate field must make it the owner's number, beyond our reach");
+  // The owner is told WHY a number appeared. A rate that arrives unexplained is a rate nobody checks.
+  assert.match(screen, /ratePrefilled \? t\('uren\.tariefVanKlant'\) : t\('uren\.veld\.tariefHint'\)/);
+  // Editing an existing hour loads a STORED rate — the owner's, not ours.
+  assert.equal(screen.match(/setRatePrefilled\(false\)/g)?.length, 4,
+    "every door that puts a number in the rate field must say whose number it is");
+
+  // The rate travels with the customer list, and the customer screen can set it.
+  assert.match(page, /\.select\('id, name, default_hourly_rate'\)/);
+  assert.match(api, /default_hourly_rate: uurtarief\(body\.default_hourly_rate\),/);
+  // [KOLOM-AFWEZIG] An older database without the column must not refuse to save a customer.
+  assert.match(api, /'default_hourly_rate'/);
+});
+
+// ─── [DECLARABEL-DEEL] The billable share of the year, as a share ─────────────────────────────
+//
+// "1.000 uur, waarvan 640 declarabel" is two numbers the owner has to divide in their head. The
+// percentage is the one a dienstverlener actually steers on, and it is the difference between a
+// year that pays and a year that does not.
+//
+// It is a SHARE, so it rounds to a whole percent and never to cents — and 0 of 0 hours has no
+// share at all. Printing "0%" beside an empty January would be a confident wrong answer.
+test("[DECLARABEL-DEEL] the billable share is a whole percentage, and absent when there is nothing to divide", () => {
+  const pure = code("src/lib/uren.ts");
+  assert.match(pure, /export function billableSharePercent\(totalHours: number \| null, billableHours: number \| null\): number \| null/);
+  assert.match(pure, /if \(totalHours <= 0\) return null;/,
+    "a share of no hours must be no answer, never 0%");
+  assert.match(pure, /return Math\.round\(\(billableHours \/ totalHours\) \* 100\);/,
+    "a share is not money — round2 would print a false precision the owner cannot act on");
+  const screen = code("src/app/dashboard/uren/UrenClient.tsx");
+  assert.match(screen, /pct === null \? t\('uren\.split', \{ declarabel \}\) : t\('uren\.splitPct', \{ declarabel, pct \}\)/);
 });

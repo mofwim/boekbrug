@@ -24,6 +24,8 @@ import { isMissingRelation } from '@/lib/pg-missing'
 import { parsePaymentTerm } from '@/lib/payment-term'
 // [KLANT-LAND] ISO country code, two letters or nothing (client_country.sql).
 import { normalizeCountry } from '@/lib/client-country'
+// [CENT] One rounding for the whole app — an hourly rate is money on a future invoice line.
+import { round2 } from '@/lib/invoice-totals'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,7 +50,18 @@ function velden(body: Record<string, unknown>) {
     // [KLANT-LAND] The country as a code; anything that is not one is refused by landOngeldig below,
     // never stored as a guess.
     country: normalizeCountry(body.country),
+    // [TARIEF-KLANT] Het afgesproken uurtarief, ex btw. Onleesbaar of negatief wordt null: een
+    // tarief dat de app zelf verzint is erger dan een leeg veld, want het belandt op een factuur.
+    default_hourly_rate: uurtarief(body.default_hourly_rate),
   }
+}
+
+/** [TARIEF-KLANT] A rate is a number of at least zero, or nothing at all. */
+function uurtarief(raw: unknown): number | null {
+  if (raw === null || raw === undefined || String(raw).trim() === '') return null
+  const n = Number(String(raw).replace(',', '.'))
+  // [CENT] The app has one rounding, and a rate that ends up on an invoice line uses it.
+  return Number.isFinite(n) && n >= 0 ? round2(n) : null
 }
 
 /** Typed a country that is not a two-letter code: say so, do not save a customer without it. */
@@ -63,14 +76,15 @@ const LAND_FOUT = 'Land: gebruik de landcode van twee letters (NL, DE, BE)'
  * client_country.sql — dropped together when an installation is behind on either, so the rest of
  * the customer is still saved.
  */
-function withoutOptional<T extends { phone?: unknown; payment_term_days?: unknown; country?: unknown }>(v: T) {
+function withoutOptional<T extends { phone?: unknown; payment_term_days?: unknown; country?: unknown; default_hourly_rate?: unknown }>(v: T) {
   const rest = { ...v }
   delete rest.phone
   delete rest.payment_term_days
   delete rest.country
+  delete rest.default_hourly_rate
   return rest
 }
-const OPTIONAL_COLUMNS = ['phone', 'payment_term_days', 'country']
+const OPTIONAL_COLUMNS = ['phone', 'payment_term_days', 'country', 'default_hourly_rate']
 const missesOptional = (error: unknown) => OPTIONAL_COLUMNS.some((c) => isUnknownColumn(error, c))
 
 export async function POST(request: NextRequest) {
