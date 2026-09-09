@@ -38,13 +38,16 @@ export async function loadWorkStand(
   const hoursByWork = new Map<string, number>();
   let hoursWithoutRate = 0;
   if (ids.length > 0) {
-    const { data: hourRows, error: hoursErr } = await db.from("time_entries").select("work_item_id, hours, hourly_rate, worked_on")
+    const { data: hourRows, error: hoursErr } = await db.from("time_entries").select("work_item_id, hours, hourly_rate, worked_on, billable")
       .eq("user_id", userId).is("invoice_id", null).in("work_item_id", ids.slice(0, 200)).limit(2000);
     if (!hoursErr) {
       // [CONTRACT] A contract's agreed hours are per period, so its hours count this month only;
       // one-off work counts every unbilled hour on it.
       const recurring = new Set(open.filter((r) => r.repeat_every).map((r) => r.id));
-      for (const h of (hourRows ?? []) as Array<{ work_item_id: string; hours: number | null; hourly_rate: number | null; worked_on: string | null }>) {
+      for (const h of (hourRows ?? []) as Array<{ work_item_id: string; hours: number | null; hourly_rate: number | null; worked_on: string | null; billable?: boolean | null }>) {
+        // [DECLARABEL] Own time carries no rate BY DESIGN. Counting it as "an hour that will fall
+        // off the invoice" is a warning about work that must never be on one.
+        if (h.billable === false) continue;
         if (h.hourly_rate === null) hoursWithoutRate += 1;
         if (recurring.has(h.work_item_id) && (h.worked_on ?? "") < monthStart) continue;
         hoursByWork.set(h.work_item_id, (hoursByWork.get(h.work_item_id) ?? 0) + Number(h.hours ?? 0));

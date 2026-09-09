@@ -44,7 +44,9 @@ import { URENCRITERIUM_HOURS, type UrencriteriumLevel, type UrencriteriumStatus 
 // segmenten, dus een ondernemer op een Engelstalig systeem tikt mm-dd-jjjj in een Nederlands
 // veld. Dit veld typt in dd-mm-jjjj en zegt terug welke datum het begrepen heeft.
 import DateFieldNL from '@/components/ui/DateFieldNL'
-import { groupBillable, entryValue, isBillable, MAX_HOURS_PER_ENTRY, type TimeEntry } from '@/lib/uren'
+import { groupBillable, entryValue, isUninvoiced, isDeclarable, MAX_HOURS_PER_ENTRY, type TimeEntry } from '@/lib/uren'
+// [CENT] The app's one rounding — a total of hours is added first and rounded once.
+import { round2 } from '@/lib/invoice-totals'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 const FONT_NUM = "'Roboto Mono', monospace"
@@ -54,14 +56,16 @@ const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 export interface UrenClientCard { id: string; name: string }
 
 type Tab = 'open' | 'billed'
-type Form = { id: string | null; client_id: string; worked_on: string; description: string; hours: string; hourly_rate: string }
+type Form = { id: string | null; client_id: string; worked_on: string; description: string; hours: string; hourly_rate: string; billable: boolean }
 
 // [TZ] amsterdamToday, niet toISOString(). Tussen middernacht en 02:00 zomertijd is de UTC-dag de
 // VORIGE dag, dus een uur dat om 00:30 wordt opgeschreven zou op gisteren worden geboekt — en de
 // datum van dit uur wordt straks de datum op de factuurregel van de klant.
 const emptyForm = (): Form => ({
   id: null, client_id: '', worked_on: amsterdamToday(),
-  description: '', hours: '', hourly_rate: '',
+  // [DECLARABEL] A new hour is billable until the owner says otherwise: that is what the screen is
+  // for, and the tick is one tap away for the hour that is their own time.
+  description: '', hours: '', hourly_rate: '', billable: true,
 })
 
 /**
@@ -84,7 +88,7 @@ const URENCRITERIUM_SENTENCE: Record<UrencriteriumLevel, MessageKey> = {
 }
 
 export default function UrenClient({
-  initialEntries, clients, loadFailed = false, urencriterium = null,
+  initialEntries, clients, loadFailed = false, urencriterium = null, declarabelThisYear = null,
 }: {
   initialEntries: TimeEntry[]
   clients: UrenClientCard[]
@@ -92,6 +96,11 @@ export default function UrenClient({
   loadFailed?: boolean
   /** [URENCRITERIUM] Where the year stands against the 1.225 hours. Decided in urencriterium.ts. */
   urencriterium?: UrencriteriumStatus | null
+  /**
+   * [DECLARABEL] The billable half of that year total. Null when the read failed — and then the
+   * line is absent rather than showing a zero next to a real number.
+   */
+  declarabelThisYear?: number | null
 }) {
   const router = useRouter()
   const locale = useLocale()
@@ -125,7 +134,11 @@ export default function UrenClient({
   }
 
   const groups = useMemo(() => groupBillable(entries), [entries])
-  const billed = useMemo(() => entries.filter((e) => !isBillable(e)), [entries])
+  const billed = useMemo(() => entries.filter((e) => !isUninvoiced(e)), [entries])
+  // [DECLARABEL] Own time: real, on the screen, counted for the urencriterium, never invoiced.
+  // groupBillable leaves these out on purpose, so they get their own section rather than vanishing.
+  const ownTime = useMemo(() => entries.filter((e) => isUninvoiced(e) && !isDeclarable(e)), [entries])
+  const ownHours = useMemo(() => round2(ownTime.reduce((s, e) => s + Number(e.hours || 0), 0)), [ownTime])
 
   async function reload() {
     try {
@@ -149,6 +162,7 @@ export default function UrenClient({
         // A Dutch keyboard types 1,5 — accepting only 1.5 would refuse the number the owner meant.
         hours: form.hours.replace(',', '.'),
         hourly_rate: form.hourly_rate.trim() === '' ? null : form.hourly_rate.replace(',', '.'),
+        billable: form.billable,
       }
       const res = await fetch('/api/uren', {
         method: form.id ? 'PATCH' : 'POST',
@@ -270,6 +284,12 @@ export default function UrenClient({
                   uren: urencriterium.hours.toLocaleString('nl-NL'),
                   jaar: urencriterium.year,
                 })}
+                {/* [DECLARABEL] The number beside the number: the criterion counts every hour, and
+                    the owner's instinct counts only the invoiced ones. Saying both ends the
+                    confusion that costs the zelfstandigenaftrek. */}
+                {declarabelThisYear !== null && (
+                  <> · {t('uren.split', { declarabel: declarabelThisYear.toLocaleString('nl-NL') })}</>
+                )}
               </div>
               {/* Een balk zegt in één blik wat een zin in drie regels zegt. aria-hidden: de zin
                   eronder draagt dezelfde informatie voor wie hem niet ziet. */}
@@ -334,14 +354,18 @@ export default function UrenClient({
                 max={MAX_HOURS_PER_ENTRY}
                 onChange={(e) => setForm({ ...form, hours: e.target.value })} />
             </div>
-            <div>
-              <label style={label} htmlFor="uren-tarief">{t('uren.veld.tarief')}</label>
-              <input id="uren-tarief" inputMode="decimal" value={form.hourly_rate} style={input}
-                onChange={(e) => setForm({ ...form, hourly_rate: e.target.value })} />
-              <span style={{ fontSize: 11, color: M3.neutral, display: 'block', marginTop: 4, textAlign: 'start' }}>
-                {t('uren.veld.tariefHint')}
-              </span>
-            </div>
+            {/* [DECLARABEL] The rate belongs to a billable hour. On own time the field is not
+                emptied — the owner may flip the tick back — it simply stops asking for one. */}
+            {form.billable && (
+              <div>
+                <label style={label} htmlFor="uren-tarief">{t('uren.veld.tarief')}</label>
+                <input id="uren-tarief" inputMode="decimal" value={form.hourly_rate} style={input}
+                  onChange={(e) => setForm({ ...form, hourly_rate: e.target.value })} />
+                <span style={{ fontSize: 11, color: M3.neutral, display: 'block', marginTop: 4, textAlign: 'start' }}>
+                  {t('uren.veld.tariefHint')}
+                </span>
+              </div>
+            )}
           </div>
           <div style={{ marginTop: 12 }}>
             <label style={label} htmlFor="uren-omschrijving">{t('uren.veld.omschrijving')}</label>
@@ -351,6 +375,15 @@ export default function UrenClient({
               {t('uren.veld.omschrijvingHint')}
             </span>
           </div>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 12, textAlign: 'start', cursor: 'pointer' }}>
+            <input type="checkbox" checked={form.billable} disabled={busy}
+              onChange={(e) => setForm({ ...form, billable: e.target.checked })}
+              style={{ width: 18, height: 18, marginTop: 1, flexShrink: 0 }} />
+            <span>
+              <span style={{ fontSize: 14, fontWeight: 600 }}>{t('uren.veld.declarabel')}</span>
+              <span style={{ display: 'block', fontSize: 11, color: M3.neutral, marginTop: 2 }}>{t('uren.veld.declarabelHint')}</span>
+            </span>
+          </label>
           <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
             <button type="button" onClick={save} disabled={busy} style={{
               padding: '10px 16px', borderRadius: R.sm, border: 'none', background: M3.primary,
@@ -418,6 +451,7 @@ export default function UrenClient({
                       id: e.id, client_id: e.client_id ?? '', worked_on: e.worked_on,
                       description: e.description, hours: String(e.hours),
                       hourly_rate: e.hourly_rate === null ? '' : String(e.hourly_rate),
+                      billable: isDeclarable(e),
                     })} style={{
                       padding: '6px 10px', borderRadius: R.sm, border: `1px solid ${M3.outline}`,
                       background: '#fff', color: M3.neutral, fontFamily: FONT, fontSize: 12, cursor: 'pointer',
@@ -447,6 +481,55 @@ export default function UrenClient({
           >{t('uren.maakFactuur')}</button>
         </section>
       ))}
+
+      {/* [DECLARABEL] Own time. It is not a group of billable work, so it is not in the list above;
+          leaving it off the screen entirely would hide hours the owner needs for the urencriterium. */}
+      {tab === 'open' && ownTime.length > 0 && (
+        <section data-testid="uren-eigen-tijd" style={{
+          background: '#fff', borderRadius: R.md, boxShadow: EL1, padding: 16, marginBottom: 12,
+        }}>
+          <header style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'baseline' }}>
+            <div style={{ fontSize: 16, fontWeight: 600, textAlign: 'start' }}>{t('uren.nietDeclarabel.kop')}</div>
+            <div style={{ fontFamily: FONT_NUM, fontSize: 16, fontWeight: 600, textAlign: 'end' }}>
+              {ownHours} {t('uren.urenKort')}
+            </div>
+          </header>
+          <div style={{ fontSize: 12, color: M3.neutral, marginTop: 2, textAlign: 'start' }}>
+            {t('uren.nietDeclarabel.uitleg')}
+          </div>
+          <ul style={{ listStyle: 'none', margin: '12px 0 0', padding: 0 }}>
+            {ownTime.map((e) => (
+              <li key={e.id} style={{
+                display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline',
+                padding: '8px 0', borderTop: `1px solid ${M3.surfaceVariant}`, flexWrap: 'wrap',
+              }}>
+                <div style={{ flex: '1 1 200px', textAlign: 'start' }}>
+                  <div style={{ fontSize: 14 }}>{e.description}</div>
+                  <div style={{ fontSize: 12, color: M3.neutral, fontFamily: FONT_NUM }}>
+                    {dateShort(e.worked_on, locale)} · {e.hours} {t('uren.urenKort')}
+                  </div>
+                </div>
+                <div style={{ fontSize: 12, color: M3.neutral, textAlign: 'end' }}>{t('uren.nietDeclarabel.chip')}</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button type="button" disabled={busy} onClick={() => setForm({
+                    id: e.id, client_id: e.client_id ?? '', worked_on: e.worked_on,
+                    description: e.description, hours: String(e.hours),
+                    hourly_rate: e.hourly_rate === null ? '' : String(e.hourly_rate),
+                    billable: false,
+                  })} style={{
+                    padding: '6px 10px', borderRadius: R.sm, border: `1px solid ${M3.outline}`,
+                    background: '#fff', color: M3.neutral, fontFamily: FONT, fontSize: 12, cursor: 'pointer',
+                  }}>{t('uren.bewerken')}</button>
+                  <button type="button" disabled={busy} onClick={() => remove(e)} style={{
+                    padding: '6px 10px', borderRadius: R.sm, border: `1px solid ${M3.outline}`,
+                    background: '#fff', color: M3.neutral, fontFamily: FONT, fontSize: 12, cursor: 'pointer',
+                  }}>{t('uren.verwijderen')}</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {tab === 'billed' && (
         <section style={{ background: '#fff', borderRadius: R.md, boxShadow: EL1, padding: 16 }}>

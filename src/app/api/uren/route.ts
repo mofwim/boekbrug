@@ -49,7 +49,9 @@ function refusalSentence(t: Translator, code: TimeEntryRefusal): string {
   return t(UREN_REFUSAL_KEY[code], { max: MAX_HOURS_PER_ENTRY });
 }
 
-const COLUMNS = "id, client_id, worked_on, description, hours, hourly_rate, invoice_id, created_at";
+// [DECLARABEL] `billable` travels with every row: the screen shows own time apart, and a client
+// that cannot see the column would show acquisition hours as billable work waiting for an invoice.
+const COLUMNS = "id, client_id, worked_on, description, hours, hourly_rate, invoice_id, created_at, billable";
 
 /** De ingelogde ondernemer, de administratie waar dit onder valt, en de juiste client. */
 async function context() {
@@ -142,7 +144,8 @@ export async function PATCH(req: NextRequest) {
 
   // The work an hour belongs to is set from the work screen, never changed from here.
   const { work_item_id: _ignored, ...entry } = parsed.entry; // eslint-disable-line @typescript-eslint/no-unused-vars
-  const { data, error } = await ctx.db
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (ctx.db as any)
     .from("time_entries")
     .update({ ...entry, updated_at: new Date().toISOString() })
     .eq("id", id)

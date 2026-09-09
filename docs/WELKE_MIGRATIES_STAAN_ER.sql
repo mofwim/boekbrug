@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 138 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 139 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 17 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -441,6 +441,8 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('till_sales.sql', 'policy', 'till_sales_insert_own', 'till_sales', 'public'),
   ('till_sales.sql', 'policy', 'till_sales_select_own', 'till_sales', 'public'),
   ('till_sales.sql', 'policy', 'till_sales_update_own', 'till_sales', 'public'),
+  ('time_entries_declarabel.sql', 'column', 'billable', 'time_entries', 'public'),
+  ('time_entries_declarabel.sql', 'index', 'time_entries_billable_open_idx', null, 'public'),
   ('urenregistratie.sql', 'index', 'idx_time_entries_invoice', null, 'public'),
   ('urenregistratie.sql', 'index', 'idx_time_entries_unbilled', null, 'public'),
   ('urenregistratie.sql', 'policy', 'time_entries_delete_own', 'time_entries', 'public'),
@@ -590,7 +592,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 155
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 156
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen
