@@ -21724,6 +21724,56 @@ test("[MELDING-WEG] every finished notice carries its own X, and the duplicate's
   }
 });
 
+// ── [INTAKE-VOORTGANG] The add-button shows what is happening to the file ────────────────────
+//
+// The sheet closed the moment a file was picked, and from then on the only sign of life was an
+// hourglass on the card. The owner asked for a dialog with a progress bar, one they can close while
+// the upload goes on. Two things can go wrong with that and only a gate sees them: a bar that
+// invents progress it does not have (the read has no known length), and a close that aborts the
+// upload it was only supposed to hide.
+test("[INTAKE-VOORTGANG] the add-button shows the upload's progress honestly, and closing the dialog does not stop the upload", () => {
+  const xhr = code("src/lib/upload-xhr.ts");
+  assert.match(xhr, /xhr\.upload\.addEventListener\('progress'/, "no upload progress without the upload's own events");
+  assert.match(xhr, /e\.lengthComputable && e\.total > 0/, "a progress event without a total is not a percentage");
+  assert.match(xhr, /status === 204 \|\| status === 205 \|\| status === 304 \? null/, "a Response may not carry a body on those statuses");
+  assert.match(xhr, /new TypeError\('Network request failed'\)/, "a failed connection must reject the way fetch does, so the caller's catch still runs");
+
+  const btn = code("src/components/intake/IntakeButton.tsx");
+  assert.match(btn, /return postFormWithProgress\('\/api\/intake', fd, \{/, "the intake is not sent over XHR — fetch cannot report progress");
+  assert.doesNotMatch(btn, /fetch\('\/api\/intake'/, "…and the fetch path is gone, or the two drift");
+  // The phases in order, from the first byte: a row before the fit, uploading when send runs,
+  // reading when the body is up, done or failed when the answer is in — on EVERY exit.
+  assert.match(btn, /phase: 'fitting', percent: 0/, "no row before the fit — the first seconds show nothing");
+  assert.match(btn, /patchRow\(rowId, \{ phase: 'uploading', percent: 0 \}\)/);
+  assert.match(btn, /onUploaded: \(\) => patchRow\(rowId, \{ phase: 'reading', percent: 100 \}\)/);
+  assert.match(btn, /patchRow\(rowId, \{ phase: outcome === 'error' \? 'failed' : 'done' \}\)/, "a refused upload leaves its row spinning");
+  assert.match(btn, /patchRow\(rowId, \{ phase: 'done' \}\)\s*\n\s*return 'ok'/, "a landed upload leaves its row spinning");
+  assert.match(btn, /patchRow\(rowId, \{ phase: 'failed' \}\)\s*\n\s*return 'error'/, "a thrown upload leaves its row spinning");
+  assert.match(btn, /function noteLanded\(rowId: string, name: string, where: string\)/, "where the file landed does not reach its row");
+  assert.doesNotMatch(btn, /noteLanded\(file\.name/, "a call site forgot its row");
+  // Closing only hides. Nothing in this file can reach the request.
+  assert.match(btn, /onClose=\{\(\) => setProgressOpen\(false\)\}/);
+  assert.doesNotMatch(btn, /\.abort\(/, "closing the progress dialog must not abort the upload");
+  // It is visible only while something is in flight — every outcome has its own feedback already.
+  // Derived, not an effect: a setState inside an effect is a cascading render, and the lint says so.
+  assert.match(btn, /const progressVisible = progressOpen && inFlight > 0/);
+  assert.match(btn, /open=\{progressVisible\}/);
+  // A fresh batch starts a fresh list; a file joining a running batch keeps the others' rows.
+  assert.match(btn, /batchRef\.current\.started === 1 \? \[\] : prev/);
+
+  // The dialog itself: below the outcome dialogs, honest about what has a number, no words of its own.
+  const dlg = code("src/components/intake/IntakeProgress.tsx");
+  assert.match(dlg, /zIndex: 350/, "the progress dialog must sit BELOW the duplicate and destination dialogs (400)");
+  assert.match(btn, /zIndex: 400/);
+  assert.match(dlg, /aria-valuenow=\{determinate \? r\.percent : full \? 100 : undefined\}/, "a number on a phase that has none is a made-up number");
+  assert.match(dlg, /const indeterminate = r\.phase === 'fitting' \|\| r\.phase === 'reading'/);
+  assert.match(dlg, /progress-indeterminate/);
+  assert.doesNotMatch(dlg, /\bt\(/, "a component holds no language of its own");
+  const css = readFileSync("src/app/globals.css", "utf8");
+  assert.match(css, /@keyframes progress-slide/, "the indeterminate slide has no animation — a still bar reads as a hang");
+  assert.match(css, /inset-inline-start: -40%/, "…and it must run with the writing direction, not with `left`");
+});
+
 test("[MEDEWERKER] the sales member has a way back, a bell and a way out", () => {
   // A whole persona worked in an app with no navigation at all. The layout hides the chrome, the
   // search and the bottom bar for a verkoopmedewerker — with a good argument, written out in

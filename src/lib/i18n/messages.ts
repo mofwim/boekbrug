@@ -1527,6 +1527,21 @@ export const MESSAGES = {
   'int.pdfBeeld': { nl: 'PDF, afbeelding of bankafschrift', ar: 'PDF أو صورة أو كشف بنكي', en: 'PDF, image or bank statement' },
   'int.watToegevoegd': { nl: 'Wat is er toegevoegd', ar: 'ما الذي أُضيف', en: 'What was added' },
   'int.drieBezig': { nl: 'Even wachten — er worden er al drie verwerkt.', ar: 'انتظر قليلاً — ثلاثة قيد المعالجة بالفعل.', en: 'One moment — three are already being processed.' },
+  // [INTAKE-VOORTGANG] The progress dialog after a file is picked. Three phases, one percentage:
+  // only the upload has a number; the fit and the read say what they are without inventing one.
+  'int.voortgang.titel': { nl: 'Bezig met toevoegen', ar: 'جارٍ الإضافة', en: 'Adding…' },
+  'int.voortgang.klaarTitel': { nl: 'Klaar', ar: 'تمّ', en: 'Done' },
+  'int.voortgang.sluit': { nl: 'Sluiten — het toevoegen gaat door', ar: 'إغلاق — الإضافة تستمر', en: 'Close — adding carries on' },
+  'int.voortgang.achtergrond': {
+    nl: 'Je kunt dit sluiten. Het toevoegen gaat gewoon door, en je hoort waar het bestand terechtkomt.',
+    ar: 'يمكنك إغلاق هذه النافذة. تستمر الإضافة في الخلفية، وستُخبَر أين استقرّ الملف.',
+    en: 'You can close this. Adding carries on, and you will be told where the file landed.',
+  },
+  'int.voortgang.klaarmaken': { nl: 'Bestand wordt klaargemaakt…', ar: 'يجري تجهيز الملف…', en: 'Preparing the file…' },
+  'int.voortgang.uploaden': { nl: 'Uploaden… {p}%', ar: 'جارٍ الرفع… {p}%', en: 'Uploading… {p}%' },
+  'int.voortgang.lezen': { nl: 'Wordt gelezen — dit kan even duren', ar: 'جارٍ القراءة — قد يستغرق ذلك قليلاً', en: 'Being read — this can take a moment' },
+  'int.voortgang.klaar': { nl: 'Klaar', ar: 'تمّ', en: 'Done' },
+  'int.voortgang.mislukt': { nl: 'Niet gelukt', ar: 'لم ينجح', en: 'Did not succeed' },
   'int.bestaande': { nl: 'Bekijk de bestaande factuur', ar: 'اعرض الفاتورة الموجودة', en: 'View the existing invoice' },
   'int.tochAndere': { nl: 'Toch toevoegen — dit is een andere factuur', ar: 'أضِفها رغم ذلك — هذه فاتورة أخرى', en: 'Add it anyway — this is a different invoice' },
   'int.paginasSamen': { nl: 'Meerdere pagina’s → samen één factuur', ar: 'عدة صفحات ← فاتورة واحدة معاً', en: 'Several pages → one invoice together' },

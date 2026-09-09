@@ -28,6 +28,10 @@ import { combineImagesToPdf } from '@/lib/combine-images-pdf'
 // is one shared decision now — see upload-fit.ts. This file used to normalize the image itself and
 // refuse everything else.
 import { sendWithFit } from '@/lib/upload-fit'
+// [INTAKE-VOORTGANG] The send goes over XHR so the bytes can be counted as they leave; the dialog
+// shows them. fetch has no upload progress — see upload-xhr.ts.
+import { postFormWithProgress } from '@/lib/upload-xhr'
+import { IntakeProgress, type ProgressPhase } from './IntakeProgress'
 // [UPLOAD-ERRORS] Eén vertaler van HTTP-status → wat de eigenaar leest, gedeeld met
 // /dashboard/upload. Puur en getest; zonder dit las een 402 of 413 hier als "Toevoegen mislukt".
 import { describeUploadFailure } from '@/lib/upload-failure'
@@ -80,6 +84,19 @@ export default function IntakeButton({
   // Zie handleFile: bij één foto verandert er niets aan wat de eigenaar gewend is.
   const batchRef = useRef<{ started: number; done: Array<{ name: string; where: string }> }>({ started: 0, done: [] })
   const [batchSummary, setBatchSummary] = useState<Array<{ name: string; where: string }> | null>(null)
+  // [INTAKE-VOORTGANG] One row per file handed over, from the first byte to where it landed. The
+  // dialog opens when a file starts and closes itself when nothing is in flight any more — every
+  // outcome has its own feedback already (a toast and a move, or a dialog of its own). The X only
+  // hides it; the upload is not touched. See IntakeProgress.tsx.
+  const [progressRows, setProgressRows] = useState<Array<{ id: string; name: string; phase: ProgressPhase; percent: number; outcome?: string }>>([])
+  const [progressOpen, setProgressOpen] = useState(false)
+  const rowSeq = useRef(0)
+  const patchRow = (id: string, changes: Partial<{ phase: ProgressPhase; percent: number; outcome: string }>) =>
+    setProgressRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...changes } : r)))
+  // Visible only while something is in flight. Derived, not an effect that closes it: the moment
+  // the last upload lands, its own feedback takes over (a toast and a move, or a dialog).
+  const progressVisible = progressOpen && inFlight > 0
+  useCloseOnBack(progressVisible, () => setProgressOpen(false))
   // [DUP-MODAL] a duplicate is a decision, not a passing notice — show a modal
   // (stays until dismissed) with a link to the existing invoice, not a toast.
   // [DUP-ARCHIVED] `archived` = de bestaande factuur staat in Genegeerd. Dan is "bestaat al" waar
@@ -239,9 +256,11 @@ export default function IntakeButton({
     return inFlight <= 1 && batchRef.current.started <= 1
   }
 
-  /** Onthoud waar dit bestand landde, voor de samenvatting van een reeks. */
-  function noteLanded(name: string, where: string) {
+  /** Onthoud waar dit bestand landde, voor de samenvatting van een reeks — en voor zijn regel in
+   *  de voortgangsdialoog, die hetzelfde zegt terwijl de rest nog loopt. */
+  function noteLanded(rowId: string, name: string, where: string) {
     batchRef.current.done.push({ name, where })
+    patchRow(rowId, { outcome: where })
   }
 
   // Returns the outcome so the multi-page flow knows whether to KEEP the collected pages
@@ -257,6 +276,12 @@ export default function IntakeButton({
     setInFlight((n) => n + 1)
     batchRef.current.started += 1
     setOpen(false)
+    // [INTAKE-VOORTGANG] A row in the dialog before anything happens to the file. A fresh batch
+    // (this is the first of it — `started` was reset to 0 when the last one finished) starts a
+    // fresh list, so yesterday's rows do not sit above today's file.
+    const rowId = `r${++rowSeq.current}`
+    setProgressRows((prev) => (batchRef.current.started === 1 ? [] : prev).concat({ id: rowId, name: file.name, phase: 'fitting', percent: 0 }))
+    setProgressOpen(true)
     try {
       // [UPLOAD-PLAFOND] One call that makes the file fit, whatever it is: an image is re-encoded
       // (and an unreadable HEIC rescued), a PDF has its embedded images downsampled while its text
@@ -277,7 +302,13 @@ export default function IntakeButton({
         // photo in Mijn bestanden and in the audit trail. Both values are in the documents.source
         // CHECK constraint; the server validates and falls back to 'camera'.
         fd.append('source', source)
-        return fetch('/api/intake', { method: 'POST', body: fd })
+        // [INTAKE-VOORTGANG] The fit is done by the time send runs, so this is where uploading
+        // starts; the browser counts the bytes out, and 'reading' begins when the last one is up.
+        patchRow(rowId, { phase: 'uploading', percent: 0 })
+        return postFormWithProgress('/api/intake', fd, {
+          onProgress: (sent, total) => patchRow(rowId, { percent: Math.round((sent / total) * 100) }),
+          onUploaded: () => patchRow(rowId, { phase: 'reading', percent: 100 }),
+        })
       })
       if (retried) {
         console.warn('[UPLOAD-PLAFOND] the platform refused the first attempt for size — sent a smaller one', {
@@ -312,7 +343,7 @@ export default function IntakeButton({
           // [INTAKE-QUEUE] Deze modal ONDERBREEKT met opzet, ook tijdens een reeks: hij draagt een
           // beslissing ("Toch toevoegen") die alleen de eigenaar kan nemen, en hem wegstoppen in een
           // samenvatting zou betekenen dat een factuur stil buiten de boeken blijft.
-          noteLanded(file.name, t('int.landed.mogelijkDubbel'))
+          noteLanded(rowId, file.name, t('int.landed.mogelijkDubbel'))
           setDupModal({ message: failureText(res.status, data, t('int.bestaatAl')), originalId: data.original_id, canForce: !!data.canForce, archived: data.archived, file, source })
           outcome = 'duplicate'
         } else if (res.status === 409 && data.duplicate && data.existing?.id) {
@@ -321,7 +352,7 @@ export default function IntakeButton({
           // wordt hij daarom een melding — maar de regel in de samenvatting moet zeggen dat dit
           // bestand NIET is toegevoegd. Een afwijzing die alleen als "verwerkt" in het lijstje
           // staat, is precies de stille verdwijning waar deze app tegen is gebouwd.
-          noteLanded(file.name, t('int.landed.dubbel'))
+          noteLanded(rowId, file.name, t('int.landed.dubbel'))
           if (mayNavigate()) setDestModal({
             fileName: file.name,
             message: failureText(res.status, data, t('int.bestandBestaatAl')),
@@ -353,6 +384,8 @@ export default function IntakeButton({
         else showToast(describeUploadFailure(res.status, data.error).message)
           outcome = 'error'
         }
+        // [INTAKE-VOORTGANG] A duplicate is an answer, not a failure: its row is done, and says so.
+        patchRow(rowId, { phase: outcome === 'error' ? 'failed' : 'done' })
         return outcome
       }
 
@@ -370,11 +403,11 @@ export default function IntakeButton({
         const target = data.auto_verified && data.invoice_id
           ? `/dashboard/incoming/manage?focus=${data.invoice_id}`
           : '/dashboard/incoming'
-        noteLanded(file.name, data.destination === 'receipt' ? t('int.landed.bon') : t('int.landed.factuur'))
+        noteLanded(rowId, file.name, data.destination === 'receipt' ? t('int.landed.bon') : t('int.landed.factuur'))
         if (mayNavigate()) setTimeout(() => router.push(target), 600)
       } else if (data.destination === 'bank') {
         showToast(data.message || t('int.toegevoegd'))
-        noteLanded(file.name, t('int.landed.bank'))
+        noteLanded(rowId, file.name, t('int.landed.bank'))
         if (mayNavigate()) setTimeout(() => router.push('/dashboard/bank'), 600)
       } else if (data.destination === 'statement') {
         // [STATEMENT-RECONCILE] Een leveranciersoverzicht wordt niet geboekt maar vergeleken:
@@ -383,7 +416,7 @@ export default function IntakeButton({
         // die toont de boodschap én de link naar het bestand in Mijn bestanden.
         // [INTAKE-QUEUE] Een blijvende modal onderbreekt het fotograferen; tijdens een reeks komt
         // de zin in de samenvatting te staan.
-        noteLanded(file.name, t('int.landed.overzicht'))
+        noteLanded(rowId, file.name, t('int.landed.overzicht'))
         if (mayNavigate()) setDestModal({
           fileName: file.name,
           message: data.message || t('int.overzichtGecontroleerd'),
@@ -396,7 +429,7 @@ export default function IntakeButton({
         // [HERINNERING-NOOIT] Een betalingsherinnering wordt bewaard en aan zijn factuur gekoppeld,
         // nooit geboekt. De zin zegt wat er met de factuur is (betaald / open / niet in de boeken)
         // en hoort dus in de blijvende modal, niet in een toast.
-        noteLanded(file.name, t('int.landed.herinnering'))
+        noteLanded(rowId, file.name, t('int.landed.herinnering'))
         if (mayNavigate()) setDestModal({
           fileName: file.name,
           message: data.message || t('int.herinneringBewaard'),
@@ -414,7 +447,7 @@ export default function IntakeButton({
         // pagina die hij net gevraagd werd te controleren. Elke andere bestemming brengt hem
         // wél naar waar zijn bestand landde; deze hoort dat als eerste te doen.
         showToast(data.message || t('int.dagomzetGeboekt'))
-        noteLanded(file.name, t('int.landed.dagomzet'))
+        noteLanded(rowId, file.name, t('int.landed.dagomzet'))
         if (mayNavigate()) setTimeout(() => router.push('/dashboard/dagomzet'), 600)
       } else if (data.destination === 'ledger') {
         // [INTAKE-DEST-CHECK] Een grootboek-/controlebestand is NADRUKKELIJK GEEN geld: het telt
@@ -423,7 +456,7 @@ export default function IntakeButton({
         // controle-check"), geen plaats. Precies zoals bij een leveranciersoverzicht mag die zin
         // niet in een toast verdwijnen: dezelfde blijvende modal, met de link naar het bestand.
         // [INTAKE-QUEUE] Zie hierboven: tijdens een reeks een melding, met de zin in de samenvatting.
-        noteLanded(file.name, t('int.landed.controle'))
+        noteLanded(rowId, file.name, t('int.landed.controle'))
         if (mayNavigate()) setDestModal({
           fileName: file.name,
           message: data.message || t('int.ingelezenControle'),
@@ -439,7 +472,7 @@ export default function IntakeButton({
         // decides whether to open it (tap the link) or stay (tap "Klaar").
         // [INTAKE-QUEUE] Een blijvende modal onderbreekt het fotograferen. Alleen tonen als
         // deze upload de enige was; anders melden en in de samenvatting opnemen.
-        noteLanded(file.name, t('int.landed.bestand'))
+        noteLanded(rowId, file.name, t('int.landed.bestand'))
         if (mayNavigate()) setDestModal({
           // [NAAM-BIJ-BINNENKOMST] The name the server STORED. A photo is wrapped into a PDF at
           // intake ([INTAKE-IMG-PDF]), so `IMG_20260819_211723.jpg` is filed as `.pdf` — and this
@@ -463,9 +496,11 @@ export default function IntakeButton({
         showToast(data.message || t('int.toegevoegd'))
         router.refresh()
       }
+      patchRow(rowId, { phase: 'done' })
       return 'ok'
     } catch {
       showToast(t('int.fout.toevoegen'))
+      patchRow(rowId, { phase: 'failed' })
       return 'error'
     } finally {
       // [INTAKE-QUEUE] De teller zakt hier, en NIET eerder: pas als hij nul is, is de reeks klaar
@@ -595,6 +630,24 @@ export default function IntakeButton({
         ref={mpFileRef} type="file" accept="image/*" multiple
         style={{ display: 'none' }}
         onChange={(e) => { addMpPages(e.target.files); e.currentTarget.value = '' }}
+      />
+
+      {/* [INTAKE-VOORTGANG] What is happening to the file, from the moment it was picked. */}
+      <IntakeProgress
+        open={progressVisible}
+        title={busy ? t('int.voortgang.titel') : t('int.voortgang.klaarTitel')}
+        rows={progressRows.map((r) => ({
+          ...r,
+          phaseLabel:
+            r.phase === 'fitting' ? t('int.voortgang.klaarmaken')
+            : r.phase === 'uploading' ? t('int.voortgang.uploaden', { p: r.percent })
+            : r.phase === 'reading' ? t('int.voortgang.lezen')
+            : r.phase === 'done' ? t('int.voortgang.klaar')
+            : t('int.voortgang.mislukt'),
+        }))}
+        closeLabel={t('int.voortgang.sluit')}
+        footnote={t('int.voortgang.achtergrond')}
+        onClose={() => setProgressOpen(false)}
       />
 
       {/* Choice sheet */}
