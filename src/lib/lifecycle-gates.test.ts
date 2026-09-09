@@ -25372,6 +25372,49 @@ test("[ACTIES-ALTIJD] the ways out stand above the fold, and the chevron opens t
     "the estimate must be stated for both the wide and the stacked layout");
 });
 
+// ── [KNOPPEN-OP-ORDE] ─────────────────────────────────────────────────────────────────────────
+//
+// The owner's screenshot of Inkoopfacturen on a phone: five button styles, three heights, a bulk
+// pair hugging one edge above a pair stretched across the line, and on the card a row whose first
+// line ended at the far edge while every wrapped line started at the near one — with the bin
+// floating beside the card. "Fix the chaos, put the bin among the buttons, order them." One pill
+// geometry, one order, the bin last. This holds the shape; the render test holds the order on a
+// real card.
+test("[KNOPPEN-OP-ORDE] one pill, one order: the toolbar's four and the card's actions, the bin among them", () => {
+  const s = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  assert.match(s, /^const PILL: CSSProperties = \{/m, "the one pill geometry is gone");
+  assert.match(s, /^const PILL_OUTLINED: CSSProperties = \{ \.\.\.PILL,/m);
+  assert.match(s, /^const PILL_PRIMARY: CSSProperties = \{ \.\.\.PILL,/m);
+
+  // The toolbar: the bulk pair in its own wrapper, outlined at rest and filled while selecting;
+  // Matchen the one filled action; Reken na outlined like its neighbours.
+  assert.match(s, /<div className="inko-bulk">/, "the bulk pair lost its wrapper");
+  assert.match(s, /style=\{selectMode \? PILL_PRIMARY : PILL_OUTLINED\}/, "Meerdere betalen wears a fill of its own again");
+  assert.match(s, /className="inko-match"[\s\S]{0,120}\.\.\.PILL_PRIMARY,/, "Matchen left the shared geometry");
+  assert.match(s, /className="inko-audit"[\s\S]{0,120}\.\.\.PILL_OUTLINED,/, "Reken na left the shared geometry");
+  const css = readFileSync("src/app/globals.css", "utf8");
+  assert.match(css, /\.inko-bulk \{\s*display: flex;\s*gap: 8px;\s*flex: 1 1 100%;/, "the bulk wrapper does not claim its line on a phone");
+  assert.match(css, /\.inko-bulk > button \{\s*flex: 1 1 0;/, "…or does not split it evenly");
+
+  // The card: the row flows from the start (no auto margin), in ONE order — Betalen, Bekijk PDF,
+  // Opnieuw inlezen, Bedragen corrigeren, … , the bin — all before the fold.
+  const from = s.indexOf("aria-controls={`inv-detail-${inv.id}`}");
+  const to = s.indexOf("id={`inv-detail-${inv.id}`}");
+  assert.ok(from > 0 && to > from, "the action row or the fold moved");
+  const row = s.slice(from, to);
+  assert.doesNotMatch(row, /marginInlineEnd: 'auto'/, "an auto margin splits the row between two edges again");
+  const order = ["{t('inkoop.betalen')}", "{t('ink.bekijkPdf')}", "void runReread(inv)", "openCorrection(inv)", "handleRemoveRequest(inv)"]
+    .map((m) => row.indexOf(m));
+  assert.ok(order.every((i) => i > 0), "an action left the row: " + order.join(","));
+  assert.deepEqual([...order].sort((a, b) => a - b), order, "the actions are out of order — Betalen, Bekijk PDF, Opnieuw inlezen, Bedragen corrigeren, the bin");
+  assert.ok((row.match(/PILL_OUTLINED/g) ?? []).length >= 6, "a secondary action wears a style of its own again");
+  assert.match(row, /style=\{PILL_PRIMARY\}/, "Betalen is not the one filled pill");
+  // The bin: inside the row, the outlined pill with the icon alone, still hidden while selecting.
+  assert.match(row, /\{!selectMode && \(\s*<button\s*onClick=\{e => \{ e\.stopPropagation\(\); handleRemoveRequest\(inv\) \}\}/, "the bin left the row or shows during selection");
+  assert.match(row, /handleRemoveRequest\(inv\)[\s\S]{0,400}\.\.\.PILL_OUTLINED, width: 40, padding: 0/, "the bin is not the shared pill");
+  assert.equal((s.match(/handleRemoveRequest\(inv\)/g) ?? []).length, 1, "the bin stands twice — beside the card and in the row");
+});
+
 // ── [FILTERS-EEN-REGEL] ───────────────────────────────────────────────────────────────────────
 test("[FILTERS-EEN-REGEL] period, filter and sort share one row, and one open menu at a time", () => {
   const scherm = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");

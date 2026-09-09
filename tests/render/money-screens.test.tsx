@@ -261,6 +261,16 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   // makes it the one place the claim "visible without a tap" can be held.
   assert.match(html, /Bekijk PDF/, "the PDF button is folded away again — nothing on the closed card offers it");
   assert.match(html, /Bedragen corrigeren/, "…and the correction door with it");
+  // [KNOPPEN-OP-ORDE] On a card that carries them all, the actions come in ONE order — Betalen,
+  // Bekijk PDF, Opnieuw inlezen, Bedragen corrigeren — and the bin is the last of them, inside
+  // the card's row (after its chevron), not floating beside the card.
+  const cards = html.split('class="inv-card inv-card--acties"').slice(1);
+  const full = cards.find((c) => c.includes("Bekijk PDF") && c.includes("Bedragen corrigeren") && c.includes("Opnieuw inlezen"));
+  assert.ok(full, "no card carries all four actions — the fixture no longer exercises the row");
+  const at = (needle: string) => { const i = full!.indexOf(needle); assert.ok(i > 0, `${needle} is missing from the card`); return i; };
+  const seq = [at(">Betalen<"), at("Bekijk PDF"), at("Opnieuw inlezen"), at("Bedragen corrigeren"), at(' verwijderen"')];
+  assert.deepEqual([...seq].sort((a, b) => a - b), seq, "the actions are out of order on the rendered card");
+  assert.ok(at('aria-controls="inv-detail-') < at(' verwijderen"'), "the bin stands before the chevron — outside the row");
   assert.match(html, /qr_code_2<\/span>Betalen/, "…and the pay button (asserted with its icon, so 'Meerdere betalen' cannot stand in for it)");
   // Every card carries the chevron, closed, pointing at a detail block that is NOT rendered yet.
   const chevrons = (html.match(/aria-controls="inv-detail-/g) ?? []).length;
