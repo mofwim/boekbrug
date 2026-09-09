@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 141 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 142 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 17 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -419,6 +419,7 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('supplier_aliases.sql', 'policy', 'supplier_aliases_insert_own', 'supplier_aliases', 'public'),
   ('supplier_aliases.sql', 'policy', 'supplier_aliases_select_own', 'supplier_aliases', 'public'),
   ('supplier_aliases.sql', 'policy', 'supplier_aliases_update_own', 'supplier_aliases', 'public'),
+  ('supplier_country.sql', 'column', 'country', 'suppliers', 'public'),
   ('supplier_defaults.sql', 'column', 'default_btw_rate', 'suppliers', 'public'),
   ('supplier_defaults.sql', 'column', 'default_category', 'suppliers', 'public'),
   ('supplier_defaults.sql', 'constraint', 'suppliers_default_btw_rate_legal', null, 'public'),
@@ -604,7 +605,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 158
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 159
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen

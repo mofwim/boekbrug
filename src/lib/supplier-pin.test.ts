@@ -147,3 +147,46 @@ test('[LEVERANCIER-STANDAARD] a default on the form is read, cleared by empty, a
   assert.equal(badCat.ok, false)
   if (!badCat.ok) { assert.equal(badCat.field, 'category'); assert.equal(badCat.code, 'category_unknown') }
 })
+
+test('[LEVERANCIER-LAND] the country: absent is silence, empty clears, a code is stored upper-case, anything else is refused', () => {
+  // The four-field pin modal never mentions the country, so a stored one must survive it.
+  const silent = planSupplierPin({ name: 'OZ&ER FOOD B.V.' })
+  assert.ok(silent.ok)
+  if (!silent.ok) return
+  assert.equal('country' in silent.values, false, 'the pin modal never mentions the country')
+  assert.deepEqual(
+    supplierPinChanges({ name: 'OZ&ER FOOD B.V.', iban: null, kvk_number: null, btw_number: null, country: 'DE' }, silent.values),
+    {},
+    'a stored country survives a form that did not carry it',
+  )
+
+  const set = planSupplierPin({ name: 'OZ&ER FOOD B.V.', country: ' de ' })
+  assert.ok(set.ok)
+  if (!set.ok) return
+  assert.equal(set.values.country, 'DE', 'stored as the ISO code, upper case')
+  assert.deepEqual(
+    supplierPinChanges({ name: 'OZ&ER FOOD B.V.', iban: null, kvk_number: null, btw_number: null, country: null }, set.values),
+    { country: 'DE' },
+  )
+
+  const greek = planSupplierPin({ name: 'OZ&ER FOOD B.V.', country: 'EL' })
+  assert.ok(greek.ok)
+  if (!greek.ok) return
+  assert.equal(greek.values.country, 'GR', "Greece's VAT prefix is stored as the country code")
+
+  const cleared = planSupplierPin({ name: 'OZ&ER FOOD B.V.', country: '' })
+  assert.ok(cleared.ok)
+  if (!cleared.ok) return
+  assert.equal(cleared.values.country, null, 'empty means CLEAR, which reads as the Netherlands')
+  assert.deepEqual(
+    supplierPinChanges({ name: 'OZ&ER FOOD B.V.', iban: null, kvk_number: null, btw_number: null, country: 'DE' }, cleared.values),
+    { country: null },
+  )
+
+  // A typed country that is not a code is refused — never stored as NULL, which would read as NL
+  // and quietly move a German supplier's purchases out of rubriek 4b.
+  const bad = planSupplierPin({ name: 'OZ&ER FOOD B.V.', country: 'Duitsland' })
+  assert.equal(bad.ok, false)
+  if (!bad.ok) { assert.equal(bad.field, 'country'); assert.equal(bad.code, 'country_shape') }
+  assert.equal(MESSAGES[SUPPLIER_PIN_REFUSAL_KEY.country_shape].nl, 'Land: gebruik de landcode van twee letters (NL, DE, US).')
+})

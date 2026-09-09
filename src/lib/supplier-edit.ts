@@ -38,6 +38,8 @@ export interface SupplierCurrent {
   /** [LEVERANCIER-STANDAARD] Absent on a row read before the columns existed; read as null. */
   default_btw_rate?: number | null
   default_category?: string | null
+  /** [LEVERANCIER-LAND] Read apart by the route; absent on a row read before the column existed. */
+  country?: string | null
 }
 
 export type SupplierChanges = ReturnType<typeof supplierPinChanges>
@@ -82,12 +84,13 @@ export function supplierEditTrail(current: SupplierCurrent, changes: SupplierCha
   if ('btw_number' in changes) { old.btw_number = current.btw_number; next.btw_number = changes.btw_number ?? null }
   if ('default_btw_rate' in changes) { old.default_btw_rate = current.default_btw_rate ?? null; next.default_btw_rate = changes.default_btw_rate ?? null }
   if ('default_category' in changes) { old.default_category = current.default_category ?? null; next.default_category = changes.default_category ?? null }
+  if ('country' in changes) { old.country = current.country ?? null; next.country = changes.country ?? null }
   return { old, new: next }
 }
 
 export type SupplierEditPlan =
   | { ok: true; values: SupplierPinValues; changes: SupplierChanges; iban: IbanMove | null }
-  | { ok: false; field: 'name' | 'iban' | 'kvk' | 'btw' | 'rate' | 'category'; code: import('./supplier-pin').SupplierPinRefusal }
+  | { ok: false; field: 'name' | 'iban' | 'kvk' | 'btw' | 'rate' | 'category' | 'country'; code: import('./supplier-pin').SupplierPinRefusal }
 
 /**
  * Read the edit form against the row as it stands: the same validation the pin route runs, then

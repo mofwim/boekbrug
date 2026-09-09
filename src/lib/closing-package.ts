@@ -123,10 +123,12 @@ import {
   privegebruikNote,
 } from "./aangifte";
 // [ICP] Rubriek 3b + the separate ICP-opgaaf, keyed on the customers' EU VAT numbers.
+import { buildIcp, buildIcpCsv, icpNote, type IcpInvoice, type IcpResult } from "./icp";
+// [BUITENLANDSE-INKOOP] Rubriek 4a/4b, from the same rule and the same reads as /api/aangifte.
 import {
-  buildIcp, buildIcpCsv, icpNote, buildForeignPurchases, buildForeignPurchaseCsv, foreignPurchaseNote,
-  type IcpInvoice, type IcpResult, type ForeignPurchaseResult,
-} from "./icp";
+  foreignPurchaseVat, foreignPurchaseIds, foreignPurchaseNote, buildForeignPurchaseCsv, type ForeignPurchaseVat,
+} from "./foreign-purchase-vat";
+import { readSupplierCountries, SUPPLIER_COUNTRY_READ_FAILED_NOTE } from "./supplier-country";
 import { fetchAllRows, fetchAllRowsForIds } from "./supabase-paginate";
 // [PACKAGE-ART29] Both sides of art. 29 Wet OB — see the call site for why they belong here.
 import { collectBadDebt, collectVatClawback } from "./bad-debt-collect";
@@ -162,7 +164,9 @@ export interface PackageInvoice {
   due_date: string | null;
   pdf_url: string | null;            // outgoing PDF (FACTUUR-A)
   document_id: string | null;        // link to documents (incoming original)
-  client_btw_number: string | null;  // [AANGIFTE] EU-VAT signal for rubriek 4b (not auto-computed)
+  client_btw_number: string | null;  // on incoming, the supplier's btw-nummer: its prefix places a purchase in 4b when no country was recorded
+  // [BUITENLANDSE-INKOOP] The supplier's registry row, whose recorded country decides 4a/4b first.
+  supplier_id?: string | null;
   marked_paid_at: string | null;     // [CLOSING-PACKAGE-PAYDATE] fallback payment date (estimate)
   // [PAYDATE-ECHT] De dag waarop het geld volgens de eigenaar is bewogen. apply_manual_payment
   // schrijft hem (`payment_date = p_pay_date`) en de kasstelsel-aangifte rekent ermee. Hij stond al
@@ -674,10 +678,10 @@ interface AssembleInput {
    *  of concept-btw-aangifte.csv, which is exactly how an owner would come to believe it was
    *  filed along with the rest. null/absent when the quarter has nothing intra-EU. */
   icp?: IcpResult | null;
-  /** [ICP] The quarter's EU purchases (rubriek 4a/4b). A LISTING, never a calculation: the
-   *  verlegde BTW and its matching deduction stay out of the concept on purpose. It becomes its
-   *  own file so the accountant has the invoices in front of them instead of hunting for them. */
-  euPurchases?: ForeignPurchaseResult | null;
+  /** [BUITENLANDSE-INKOOP] The quarter's purchases from suppliers abroad (rubriek 4a/4b): the two
+   *  totals the concept declares and deducts, and the invoices behind them. Its own file in the
+   *  ZIP, so the accountant checks a list that adds up to the concept. */
+  euPurchases?: ForeignPurchaseVat | null;
   /**
    * [AFLETTEREN] The bank statement with each line's invoice beside it, as the accountant's CSV,
    * plus its totals. The one part of this package that hands over WORK rather than documents.
@@ -835,7 +839,7 @@ export function buildLeesmij(args: {
   L.push("  overzicht.json             dezelfde gegevens machineleesbaar, met de ruwe BTW-cijfers");
   L.push("  concept-btw-aangifte.csv   een CONCEPT, alleen als er omzet is. Niet ingediend.");
   L.push("  concept-icp-opgaaf.csv     idem, en een APARTE opgaaf — geen rubriek van de aangifte");
-  L.push("  eu-inkopen.csv             de EU-inkopen als lijst, zonder verlegde BTW uit te rekenen");
+  L.push("  inkopen-buitenland.csv     de inkopen bij leveranciers buiten Nederland (rubriek 4a/4b), met de verlegde btw per factuur");
   L.push("  dagomzet.csv               de dagomzet per tarief, als er een kassa is");
   L.push("  kaart-reconciliatie.csv    kas ↔ pinautomaat ↔ bank, met de dagen die niet sluiten");
   L.push("  Kasboek-…xlsx              het kasboek met beginsaldo en eindsaldo per dag");
@@ -1144,14 +1148,13 @@ export async function assembleClosingPackageZip(input: AssembleInput): Promise<C
     filesIncluded++;
   }
 
-  // ── eu-inkopen.csv (rubriek 4a/4b) ──
-  // The counterpart of the file above, and the one piece of quarter work this app deliberately
-  // leaves to a human: which Dutch rate applies to a foreign purchase is a judgement, and for a
-  // KOR or partly-exempt owner 4b and 5b stop cancelling. So it hands over the invoices instead
-  // of a number — which is still the whole difference between "there are EU purchases" and a
-  // list somebody can work from.
-  if (euPurchasesForZip && euPurchasesForZip.purchases.length > 0) {
-    zip.file("eu-inkopen.csv", "﻿" + buildForeignPurchaseCsv(euPurchasesForZip, quarterLabel));
+  // ── inkopen-buitenland.csv (rubriek 4a/4b) ──
+  // [BUITENLANDSE-INKOOP] The invoices behind the two rubrieken, one line each with the verlegde
+  // btw at the proposed rate and the deductible share — so the accountant checks a list that adds
+  // up to the concept instead of hunting for the invoices. A foreign supplier that charged btw is
+  // listed underneath, apart, as something to check rather than something declared.
+  if (euPurchasesForZip && (euPurchasesForZip.items.length > 0 || euPurchasesForZip.chargedAbroad.length > 0)) {
+    zip.file("inkopen-buitenland.csv", "﻿" + buildForeignPurchaseCsv(euPurchasesForZip, quarterLabel));
     filesIncluded++;
   }
 
@@ -1352,7 +1355,7 @@ const INVOICE_FIELDS =
   // [CREDIT-REF] original_invoice_id rijdt mee zodat de creditnota-e-factuur in het pakket
   // dezelfde BillingReference draagt als zijn gemailde/gedownloade tweeling — twee e-facturen
   // van één document die verschillen is precies de drift waar ubl-inputs.ts tegen bestaat.
-  "id, invoice_number, client_name, status, direction, invoice_type, tax_kind, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, client_address, client_postal_code, client_city, marked_paid_at, payment_method, payment_date, source, sender_id, receiver_id, field_confidence, discount_type, discount_value, original_invoice_id" as const;
+  "id, invoice_number, client_name, status, direction, invoice_type, tax_kind, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, supplier_id, client_address, client_postal_code, client_city, marked_paid_at, payment_method, payment_date, source, sender_id, receiver_id, field_confidence, discount_type, discount_value, original_invoice_id" as const;
 
 /**
  * [DATE-GAP] Verified invoices that carry NO invoice_date. Postgres range filters
@@ -2899,19 +2902,6 @@ export async function buildClosingPackageZip(args: {
     });
   }
 
-  // [ICP] The purchase mirror: EU inkopen NAMED for the accountant, never computed.
-  const euPurchases = buildForeignPurchases({
-    invoices: incoming.map((i): IcpInvoice => ({
-      invoiceNumber: i.invoice_number,
-      clientName: i.client_name,
-      clientVatNumber: i.client_btw_number,
-      direction: "incoming",
-      status: i.status,
-      totalExBtw: i.total_ex_btw,
-      btwAmount: i.btw_amount,
-    })),
-  });
-
   // [NO-EMPTY-LEDGER] Kon een grootboek niet worden gelezen, dan komt er GEEN concept mee. Een
   // concept-aangifte is een optelsom die pretendeert compleet te zijn; met een ontbrekend been is
   // dat een onwaarheid met een bedrag eraan. De boekhouder krijgt in plaats daarvan de reden, en
@@ -2947,8 +2937,28 @@ export async function buildClosingPackageZip(args: {
       default: return typeof result.proRataPercent === "number" ? result.proRataPercent / 100 : 0;
     }
   };
+  // ── [BUITENLANDSE-INKOOP] Rubriek 4a/4b, from the same rows and the same rule as /api/aangifte:
+  //    the supplier's recorded country first (its own tolerant read), the btw-nummer's prefix
+  //    second, the proposed rate, the owner's deductible share per invoice. ONE DOCUMENT, ONE
+  //    RUBRIEK: an invoice placed here is kept out of the 2a set below, whatever it prints.
+  const landen = await readSupplierCountries(supabase, ownerId);
+  if (landen.failed) regimeNotes.push(SUPPLIER_COUNTRY_READ_FAILED_NOTE);
+  const buitenland = foreignPurchaseVat(incoming.map((i) => ({
+    id: i.id,
+    direction: "incoming" as const,
+    status: i.status,
+    invoiceNumber: i.invoice_number,
+    supplierName: i.client_name,
+    totalExBtw: i.total_ex_btw,
+    btwAmount: i.btw_amount,
+    supplierCountry: i.supplier_id ? landen.byId.get(i.supplier_id) ?? null : null,
+    supplierVatNumber: i.client_btw_number,
+    aftrekDeel: aftrekDeelVan(i.id),
+  })));
+  const buitenlandIds = foreignPurchaseIds(buitenland);
+
   const verlegdeVondsten = incoming
-    .filter((i) => ["received", "paid"].includes(String(i.status ?? "")))
+    .filter((i) => ["received", "paid"].includes(String(i.status ?? "")) && !buitenlandIds.has(i.id))
     .map((i) => {
       const fc = i.field_confidence;
       const merk = fc && typeof fc === "object" ? (fc._btw_verlegd as { grondslag: number | null } | undefined) : undefined;
@@ -2965,8 +2975,8 @@ export async function buildClosingPackageZip(args: {
 
   const conceptAangifte = hasDeclarable && !ledgerReadFailed
     ? buildAangifte(
-        { ...result, intraEuOmzet: icp.totalExBtw, verlegdNaarMij: totaalVerlegd(verlegdeVondsten), korActive },
-        { ...completeness, euPurchaseNote: foreignPurchaseNote(euPurchases) },
+        { ...result, intraEuOmzet: icp.totalExBtw, verlegdNaarMij: totaalVerlegd(verlegdeVondsten), korActive, verlegdBuitenEu: buitenland.nonEu, verlegdBinnenEu: buitenland.eu },
+        { ...completeness, euPurchaseNote: foreignPurchaseNote(buitenland) },
         `Q${quarter} ${year}`, regimeNotes,
       )
     : null;
@@ -3336,7 +3346,7 @@ export async function buildClosingPackageZip(args: {
     cardStatedCommission,
     conceptAangifte,
     icp,
-    euPurchases,
+    euPurchases: buitenland,
     kasboekXlsx,
     bankHandover,
     numbering,
