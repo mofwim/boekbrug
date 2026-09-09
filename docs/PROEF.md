@@ -14,8 +14,10 @@ Yes → a company. No → good software. The screens do not answer this; only re
 
 ## Who, how long
 
-- **5 to 10 businesses**, one trade. Bouw first if five are willing; otherwise whoever is actually
-  willing to enter their real work — a garage that says yes beats a bouwbedrijf that says maybe.
+- **5 to 10 businesses in two cohorts of five: bouw and dienstverleners** (docs/DIENST.md — the
+  largest segment, closest to the Core, with a leak measurable from the first week). If five of
+  one cohort cannot be found, whoever is actually willing to enter their real work — a garage
+  that says yes beats a bouwbedrijf that says maybe.
 - **4 to 6 weeks** of real use: their real customers, their real hours, their real purchase
   invoices. Not a demo account.
 - **No new features during the test** unless a participant hits a wall that stops them closing the
