@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 144 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 145 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 17 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -206,6 +206,8 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('company_members_sales_role.sql', 'function', 'next_invoice_seq', null, 'public'),
   ('company_members_sales_role.sql', 'index', 'clients_created_by_idx', null, 'public'),
   ('company_members_sales_role.sql', 'index', 'company_member_invites_owner_idx', null, 'public'),
+  ('creditnota_external_reference.sql', 'column', 'credited_invoice_date', 'invoices', 'public'),
+  ('creditnota_external_reference.sql', 'column', 'credited_invoice_number', 'invoices', 'public'),
   ('creditnota_partial.sql', 'function', 'assert_credit_within_original', null, 'public'),
   ('creditnota_per_rate_ceiling.sql', 'function', 'assert_credit_within_rate', null, 'public'),
   ('crm_backbone.sql', 'column', 'client_id', 'invoices', 'public'),
@@ -608,7 +610,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 161
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 162
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen

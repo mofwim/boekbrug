@@ -368,6 +368,14 @@ export default function InvoiceDetailPage() {
           .eq('id', invoiceData.original_invoice_id)
           .maybeSingle()
         if (corrected) setCorrectedInvoice(corrected)
+      } else if (invoiceData.invoice_type === 'creditnota') {
+        // [CREDITNOTA-EXTERN] A standalone creditnota names the invoice it corrects itself: the
+        // number and date the owner typed for an invoice issued outside BoekBrug. select('*')
+        // above carries the two columns wherever the migration has run; absent, nothing is claimed.
+        const ext = invoiceData as { credited_invoice_number?: string | null; credited_invoice_date?: string | null }
+        if (ext.credited_invoice_number?.trim()) {
+          setCorrectedInvoice({ invoice_number: ext.credited_invoice_number.trim(), invoice_date: ext.credited_invoice_date ?? null })
+        }
       }
 
       setLoading(false)

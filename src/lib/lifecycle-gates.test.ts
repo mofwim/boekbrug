@@ -19253,7 +19253,9 @@ test("[BULK-PDF-VOLLEDIG] a bulk-downloaded invoice is drawn from every column i
     `the bulk download draws invoices without these columns, so the PDF prints them blank:\n  ${absent.join("\n  ")}`,
   );
   assert.match(route, /original_invoice_id/, "…and the creditnota's reference must be selected");
-  assert.match(route, /original_invoice_number: origin\?\.invoice_number \?\? null/,
+  // [CREDITNOTA-EXTERN] Resolved through the one resolver: the linked original first, the typed
+  // reference of a standalone creditnota second — never a second opinion on which one wins.
+  assert.match(route, /linkedNumber: origin\?\.invoice_number,[\s\S]{0,200}?original_invoice_number: ref\.originalNumber,/,
     "…and resolved into the number the PDF prints");
 
   // [NO-SILENT-EMPTY] Both reads inside the drawing path dropped their outcome. `profile ?? {}`
@@ -29104,6 +29106,67 @@ test("[KOR-AANGIFTE-UIT] the KOR switches the sales rubrieken and 5b off, on eve
     "the regime note still says the concept's 5a should not be paid — there is no such 5a any more");
   assert.match(rf, /geen btw-aangifte — behalve voor btw die naar jou is verlegd/, "…and no longer states the rule");
   assert.match(MESSAGES["inst.korUitleg"].nl, /het aangiftescherm staat dan uit/, "the setting no longer says what the switch does");
+});
+
+// ── [CREDITNOTA-EXTERN] A standalone creditnota names the invoice it corrects ─────────────────
+//
+// Art. 219 Richtlijn 2006/112/EG (art. 35 Wet OB): a document that amends an earlier invoice is
+// only equated with an invoice when it "refers specifically and unambiguously to the initial
+// invoice". A creditnota made from an invoice in this app carries that through
+// original_invoice_id, and the PDF and the e-factuur print the original's number and date from it
+// ([CREDITNOTA-REF]). A creditnota for an invoice issued OUTSIDE BoekBrug — the very case the
+// create screen's 'Credit' type exists for — had nowhere to hold the reference, so every such
+// document went out naming only itself: formally deficient, the customer's correction open to
+// challenge, the owner's btw correction without its documentary basis.
+//
+// Two typed columns (creditnota_external_reference.sql), one resolver that puts the linked
+// original first, one door check, and every surface that prints or exports the reference reading
+// the typed one where there is no link. The send door refuses a standalone creditnota that names
+// nothing — before the number, like every check there.
+test("[CREDITNOTA-EXTERN] the typed reference reaches the door, the PDF, the archive and the e-factuur", () => {
+  const mig = code("supabase/migrations/creditnota_external_reference.sql");
+  assert.match(mig, /ADD COLUMN IF NOT EXISTS credited_invoice_number text/);
+  assert.match(mig, /ADD COLUMN IF NOT EXISTS credited_invoice_date date/);
+
+  const pure = code("src/lib/creditnota.ts");
+  assert.match(pure, /const linked = String\(args\.linkedNumber \?\? ""\)\.trim\(\);\s*if \(linked\) return/,
+    "the linked original no longer outranks the typed reference — a creditnota made from an in-app invoice must never print a number someone typed");
+  assert.match(pure, /if \(args\.originalInvoiceId\) return \{ ok: true \};/, "a linked creditnota is asked for a typed number it does not need");
+  assert.match(pure, /code: "creditnota_zonder_verwijzing"/, "the refusal lost its code");
+
+  // The door: refused BEFORE the number, and only where the column exists.
+  const send = code("src/app/api/invoice/send/route.ts");
+  assert.match(send, /if \('credited_invoice_number' in invoice\) \{\s*const verwijzing = checkStandaloneCreditnota\(\{/,
+    "the send door no longer asks a standalone creditnota for its reference (or asks it on an installation that cannot hold one)");
+  const doorAt = send.indexOf("code: verwijzing.code");
+  const numberAt = send.indexOf("if (!resend && !finalNumber)");
+  assert.ok(doorAt > 0 && numberAt > doorAt, "the refusal must come BEFORE a number is minted (Art. 35: no holes)");
+  assert.match(send, /creditRef = creditReferenceOf\(\{/, "the mailed PDF no longer resolves the reference");
+  assert.match(send, /original_invoice_number: creditRef\.originalNumber \?\? undefined,/, "…or does not hand it to the PDF");
+
+  // Both screens carry the two fields to the routes, and ask the door's question first.
+  const nieuw = code("src/app/dashboard/invoice/new/page.tsx");
+  assert.match(nieuw, /credited_invoice_number: invoiceType === 'creditnota' \? \(creditedNumber\.trim\(\) \|\| null\) : null,/, "the create screen no longer sends the typed number");
+  assert.match(nieuw, /checkStandaloneCreditnota\(\{ invoiceType, originalInvoiceId: null, creditedNumber \}\)/, "…or no longer asks before sending");
+  assert.match(nieuw, /t\('nieuw\.credit\.verwijzingNummer'\)/, "the number field left the create screen");
+  const edit = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+  assert.match(edit, /credited_invoice_number: creditedNumber, credited_invoice_date: creditedDate \|\| null/, "the edit screen no longer sends the typed reference");
+  assert.match(edit, /checkStandaloneCreditnota\(\{ invoiceType, originalInvoiceId, creditedNumber \}\)/, "…or no longer asks before sending");
+
+  // The routes write the reference apart, naming the migration when they cannot.
+  for (const file of ["src/app/api/invoice/draft/route.ts", "src/app/api/invoice/[id]/route.ts"]) {
+    const src = code(file);
+    assert.match(src, /credited_invoice_number: verwezenNummer/, `${file}: the typed reference is not written`);
+    assert.match(src, /supabase\/migrations\/creditnota_external_reference\.sql/, `${file}: a failed write no longer names the migration`);
+  }
+
+  // The archive and the e-factuur read the typed reference where there is no link.
+  assert.match(code("src/app/api/invoice/bulk-pdf/route.ts"), /creditedNumber: i\.credited_invoice_number,/, "the bulk archive draws a standalone creditnota without its reference");
+  assert.match(code("src/app/api/invoice/bulk-pdf/route.ts"), /isUnknownColumn\(e, "credited_invoice_number"\)/, "…and would fail the whole archive on an installation behind on the migration");
+  const ubl = code("src/lib/ubl-inputs.ts");
+  assert.match(ubl, /select\("credited_invoice_number, credited_invoice_date"\)/, "the e-factuur's BillingReference ignores the typed reference");
+  assert.match(ubl, /if \(error\) return null;/, "…or fails the e-factuur on an installation behind on the migration");
+  assert.match(code("src/app/dashboard/invoice/[id]/page.tsx"), /ext\.credited_invoice_number\?\.trim\(\)/, "the detail page's PDF names only itself on a standalone creditnota");
 });
 
 // ── [KORTING-EENMAAL] A header-only document is not discounted a second time ──────────────────
