@@ -36,10 +36,12 @@
 // happened. Its two unique capabilities moved to waarheid first (the Q1–Q4 + year
 // picker, and the card-control block); only then was this link removed.
 //
-// EXTENDING: add a record screen → add one <AdminTile> to the administratie grid
-// (reuse the screen's existing icon + iconBg for visual continuity). Add a number
-// screen → a MiniCard under "Je waarheid". Keep new top-level doors out of the flat
-// list; put them in the group they belong to.
+// EXTENDING: add a record screen → add one <AdminTile> to the administratie grid.
+// Its glyph and colour go in DOOR_LOOK (src/lib/nav-destinations.ts) and are spread in
+// with doorLook(): the rail draws the same door from the same entry ([ZIJBALK-DEUR]),
+// so a colour typed here by hand is the two drifting apart. Add a number screen → a
+// MiniCard under "Je waarheid". Keep new top-level doors out of the flat list; put
+// them in the group they belong to.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useRouter } from 'next/navigation'
@@ -64,6 +66,8 @@ import DashboardTools from '@/components/tools/DashboardTools'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import type { MessageKey } from '@/lib/i18n/messages'
+// [ZIJBALK-DEUR] One glyph and one colour per door, shared with the rail.
+import { doorLook } from '@/lib/nav-destinations'
 // ─── Design tokens — BoekBrug Design System v1.0 ─────────────────────────────
 const FONT = "'Roboto', -apple-system, sans-serif"
 const EL1  = '0 1px 2px rgba(0,0,0,0.08)'
@@ -247,7 +251,7 @@ export function ZzpDashboard(
               <IntakeButton variant="card" />
               {/* [UPLOAD-HUB] Alles uploaden — many files at once; the app sorts them. */}
               <ActionCard
-                icon="upload_file" iconBg="#1A73E8" iconColor="#fff"
+                icon={doorLook('/dashboard/upload').icon} iconBg={doorLook('/dashboard/upload').tint} iconColor="#fff"
                 label={t('start.allesUploaden')} sub={t('start.allesUploaden.sub')}
                 onClick={() => router.push('/dashboard/upload')}
               />
@@ -257,7 +261,7 @@ export function ZzpDashboard(
                   else. It is also the only door for an owner with no kassa-rapport: his PIN revenue
                   otherwise reaches the books with no btw rate at all, which blocks his aangifte. */}
               <ActionCard
-                icon="storefront" iconBg="#7B1FA2" iconColor="#fff"
+                icon={doorLook('/dashboard/kassa').icon} iconBg={doorLook('/dashboard/kassa').tint} iconColor="#fff"
                 label={t('start.kassa')} sub={t('start.kassa.sub')}
                 onClick={() => router.push('/dashboard/kassa')}
               />
@@ -276,14 +280,14 @@ export function ZzpDashboard(
           <section>
             <SectionLabel>{t('start.administratie')}</SectionLabel>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-              <AdminTile icon="description" tint="#00897B" label={t('start.tegel.facturen')}
+              <AdminTile {...doorLook('/dashboard/facturen')} label={t('start.tegel.facturen')}
                 onClick={() => router.push('/dashboard/facturen')} />
-              <AdminTile icon="mark_email_unread" tint="#0288D1" label={t('start.tegel.inkomend')} badge={pendingCount}
+              <AdminTile {...doorLook('/dashboard/incoming')} label={t('start.tegel.inkomend')} badge={pendingCount}
                 onClick={() => router.push('/dashboard/incoming')} />
               {/* [NAV-FROM] ?from=home so Terug on Inkoopfacturen returns HERE. Without it the
                   canonical parent is /dashboard/incoming — a verification list this visitor never
                   passed through, since this tile jumps straight to the manage surface. */}
-              <AdminTile icon="request_quote" tint="#E37400" label={t('start.tegel.inkoop')}
+              <AdminTile {...doorLook('/dashboard/incoming/manage')} label={t('start.tegel.inkoop')}
                 onClick={() => router.push('/dashboard/incoming/manage?from=home')} />
               {/* [LEVERANCIER-DEUR] Precies de fout die [UREN-DEUR] hieronder beschrijft, opnieuw
                   gemaakt en meteen hersteld: /dashboard/leveranciers werd gebouwd, vertaald,
@@ -292,15 +296,15 @@ export function ZzpDashboard(
                   een weg ernaartoe.
                   Naast Inkoopfacturen, want dit is de optelsom van precies die stapel: wat er per
                   leverancier nog openstaat, en wat daarvan vervallen is. */}
-              <AdminTile icon="local_shipping" tint="#B26A00" label={t('start.tegel.leveranciers')}
+              <AdminTile {...doorLook('/dashboard/leveranciers')} label={t('start.tegel.leveranciers')}
                 onClick={() => router.push('/dashboard/leveranciers')} />
-              <AdminTile icon="account_balance" tint="#1A73E8" label={t('start.tegel.bank')}
+              <AdminTile {...doorLook('/dashboard/bank')} label={t('start.tegel.bank')}
                 onClick={() => router.push('/dashboard/bank')} />
-              <AdminTile icon="payments" tint="#00897B" label={t('start.tegel.kas')}
+              <AdminTile {...doorLook('/dashboard/kas')} label={t('start.tegel.kas')}
                 onClick={() => router.push('/dashboard/kas')} />
-              <AdminTile icon="point_of_sale" tint="#7B1FA2" label={t('start.tegel.dagomzet')}
+              <AdminTile {...doorLook('/dashboard/dagomzet')} label={t('start.tegel.dagomzet')}
                 onClick={() => router.push('/dashboard/dagomzet')} />
-              <AdminTile icon="inventory_2" tint="#5F6368" label={t('start.tegel.artikelen')}
+              <AdminTile {...doorLook('/dashboard/artikelen')} label={t('start.tegel.artikelen')}
                 onClick={() => router.push('/dashboard/artikelen')} />
               {/* [UREN-DEUR] Het urenscherm had NUL inkomende links — niet hier, niet op de
                   werkplek, niet in de onderbalk. Het was gebouwd, vertaald, getest en door de
@@ -311,19 +315,19 @@ export function ZzpDashboard(
                   Hier, in het administratieraster, want dat is wat het is: een registratiescherm,
                   precies zoals Kas en Dagomzet. De uitbreidingsregel in de kop van dit bestand zegt
                   hetzelfde ("add a record screen → add one <AdminTile> to the administratie grid"). */}
-              <AdminTile icon="schedule" tint="#455A64" label={t('start.tegel.uren')}
+              <AdminTile {...doorLook('/dashboard/uren')} label={t('start.tegel.uren')}
                 onClick={() => router.push('/dashboard/uren')} />
               {/* [VOERTUIG] Only for a trade that works on cars. A barber shown a vehicle register
                   learns that this app guesses about him; a monteur without one has nowhere to put
                   the only thing he actually thinks in. Unknown trade → absent, exactly as before. */}
               {vehicleTrade && (
-                <AdminTile icon="directions_car" tint="#0B57D0" label={t('vtg.titel')}
+                <AdminTile {...doorLook('/dashboard/voertuigen')} label={t('vtg.titel')}
                   onClick={() => router.push('/dashboard/voertuigen')} />
               )}
               {/* [WERK] The trade's own work, in its own plural: Werkorders, Ritten, Klussen,
                   Opdrachten. Absent for a trade without a work layer, exactly as before. */}
               {workPluralKey && (
-                <AdminTile icon="work" tint="#0B57D0" label={t(workPluralKey as MessageKey)}
+                <AdminTile {...doorLook('/dashboard/werk')} label={t(workPluralKey as MessageKey)}
                   onClick={() => router.push('/dashboard/werk')} />
               )}
             </div>
@@ -340,7 +344,7 @@ export function ZzpDashboard(
               {/* [TRUTH-LENS] Je financiële waarheid — één live beeld (omzet, kosten,
                   winst, BTW) met tijd-lens. Zelfde reconcile-pijplijn als de aangifte. */}
               <ActionCard
-                icon="monitoring" iconBg="#0B8043" iconColor="#fff"
+                icon={doorLook('/dashboard/waarheid').icon} iconBg={doorLook('/dashboard/waarheid').tint} iconColor="#fff"
                 label={t('start.waarheid')} sub={t('start.waarheid.kaartSub')}
                 onClick={() => router.push('/dashboard/waarheid')}
               />
@@ -352,7 +356,7 @@ export function ZzpDashboard(
                   two-column grid is gone with it — a 1fr 1fr grid holding a single child left a
                   dead half-row. */}
               {/* [AANGIFTE] Concept rubrieken (1a/1b/5a/5b) — a draft, never a filing. */}
-              <MiniCard icon="receipt_long" tint="#455A64"
+              <MiniCard {...doorLook('/dashboard/aangifte')}
                 label={t('start.conceptBtw')} sub="1a/1b/5a/5b"
                 onClick={() => router.push('/dashboard/aangifte')} />
               {/* [IB-JAAR-DEUR] Het jaaroverzicht is expliciet tweezijdig gebouwd — een boekhouder
@@ -362,7 +366,7 @@ export function ZzpDashboard(
                   en je auditfile waren daarmee bereikbaar voor iedereen behalve degene van wie ze
                   zijn. Hier, naast de concept-BTW, want dat is dezelfde vraag over een andere
                   periode. */}
-              <MiniCard icon="date_range" tint="#0B57D0"
+              <MiniCard {...doorLook('/dashboard/jaar')}
                 label={t('start.jaar')} sub={t('start.jaar.sub')}
                 onClick={() => router.push('/dashboard/jaar')} />
             </div>
@@ -373,7 +377,7 @@ export function ZzpDashboard(
             <SectionLabel>{t('start.meer')}</SectionLabel>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <ActionCard
-                icon="work" iconBg={M3.success} iconColor="#fff"
+                icon={doorLook('/dashboard/werkplek').icon} iconBg={doorLook('/dashboard/werkplek').tint} iconColor="#fff"
                 label={t('start.tegel.werkplek')} sub={t('start.werkplek.sub')}
                 onClick={() => router.push('/dashboard/werkplek')}
               />
@@ -390,7 +394,7 @@ export function ZzpDashboard(
                   `person_add` zit al in de icon_names-subset van layout.tsx; een naam die daar
                   niet in staat rendert als rauwe ligatuurtekst (zie material-icons.test.ts). */}
               <ActionCard
-                icon="person_add" iconBg="#7B1FA2" iconColor="#fff"
+                icon={doorLook('/dashboard/settings/team').icon} iconBg={doorLook('/dashboard/settings/team').tint} iconColor="#fff"
                 label={t('start.tegel.team')} sub={t('start.team.sub')}
                 onClick={() => router.push('/dashboard/settings/team')}
               />

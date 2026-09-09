@@ -170,6 +170,20 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   // [INVOICE-SCAN] The banner is the whole reason this file exists — assert it actually appears for
   // rows that are wrong, so a scan silently returning nothing cannot pass as a working screen.
   assert.match(html, /kloppen niet|klopt niet/, "the scan banner names the wrong invoices");
+  // [AUTO-UITLEG] The badges the app awards on its own judgement are explained once above the
+  // list. The fixture carries all three: the bon row (_auto_verified and _auto_paid) and the ubl
+  // row (a non-contradicting _einvoice) — so all three lines must be there, in words and not keys,
+  // each led by the badge's own label.
+  for (const [badge, clause] of [
+    ["Automatisch</strong>", "elke controle slaagde"],
+    ["Bon · al afgerekend</strong>", "de bon noemt de betaalwijze"],
+    ["Cijfers van de leverancier</strong>", "niets van een pagina gelezen"],
+  ]) {
+    assert.ok(html.includes(badge), `the legend does not lead with the badge's own label: ${badge}`);
+    assert.ok(html.includes(clause), `the legend lost its explanation: ${clause}`);
+  }
+  assert.ok(!html.includes("ink.autoUitleg"), "the explanation reached the screen as a key");
+  assert.ok(!html.includes("Zonder vervaldatum"), "the crossed-out chip is back");
 
   // [BETAALDATUM] A paid invoice says WHEN. The card carried "Betaald" plus the invoice date and
   // the vervaldatum — two dates that are not about the payment — while the one that is decided
@@ -215,7 +229,9 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   );
   // Exactly ONE row earns it: the contradicting one must not, or the screen argues with itself.
   assert.equal(
-    (html.match(/Cijfers van de leverancier/g) ?? []).length, 1,
+    // The BADGE — its glyph immediately followed by its label. The legend above the list prints
+    // the same label once more ([AUTO-UITLEG]), inside <strong>, and must not count here.
+    (html.match(/verified<\/span>Cijfers van de leverancier/g) ?? []).length, 1,
     "a contradicted e-invoice may never wear the reassuring badge",
   );
 
@@ -298,6 +314,10 @@ test("[BETAALBEWIJS] every \"Betaald\" carries the bank line that says so", asyn
       counterpartName: "BALKIP B.V.", counterpartIban: null },
   }] } });
   assert.match(bank, /afgeschreven/);
+  // [AUTO-UITLEG] No such row on this screen → no legend for a badge nobody sees.
+  for (const clause of ["elke controle slaagde", "de bon noemt de betaalwijze", "niets van een pagina gelezen"]) {
+    assert.ok(!bank.includes(clause), `the legend explains a badge that is not on screen: ${clause}`);
+  }
   // Curly quotes, as the rest of the catalogue writes them. The QUOTES are the app's punctuation;
   // the string between them is the bank's, and only the second one may never be touched.
   assert.match(bank, /\u201cFACTUUR 264091 BALKIP\u201d/, "the owner's own statement line");

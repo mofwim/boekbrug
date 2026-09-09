@@ -25,6 +25,8 @@
 import { amsterdamToday, formatEuroNL, formatDateNL } from '@/lib/format-nl'
 // [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
 import { failureText } from '@/lib/server-message'
+// [AUTO-UITLEG] The badges the app awards on its own judgement, explained once above the list.
+import { BadgeLegend } from '@/components/ui/BadgeLegend'
 // [E-FACTUUR-ZICHTBAAR] De cijfers die de leverancier zelf meestuurde — het sterkste bewijs dat
 // deze app heeft, en het enige waar het scherm nog niets over zei.
 import { eInvoiceOf } from '@/lib/e-invoice'
@@ -2697,6 +2699,17 @@ export default function IncomingManageClient({
             "geen facturen gevonden voor …" and "0 facturen gevonden" adds nothing. */}
         {invoices.length > 0 && !(rawS && displayed.length === 0) && (
           <div aria-live="polite" style={{ marginBottom: 10, padding: '0 2px' }}>
+            {/* [AUTO-UITLEG] What "Automatisch", "Bon · al afgerekend" and "Cijfers van de
+                leverancier" mean — the three badges on this screen that say the app decided
+                something by itself. Said ONCE at the top, only for a badge a row on screen carries,
+                with the badge's label from the badge's own key. Each had a title attribute, which a
+                phone never shows. The first does not claim the invoice is correct: its last clause
+                asks the owner to check, before paying. */}
+            <BadgeLegend items={[
+              ...(displayed.some(isAutoVerified) ? [{ id: 'auto', icon: 'auto_awesome', badge: t('inkoop.automatisch'), text: t('ink.autoUitleg') }] : []),
+              ...(displayed.some((inv) => autoPaidBasis(inv) !== null) ? [{ id: 'bon', icon: 'receipt_long', badge: t('inkoop.bonAfgerekend'), text: t('ink.bonAutoUitleg') }] : []),
+              ...(displayed.some((inv) => eInvoiceBadge(inv) !== null) ? [{ id: 'efactuur', icon: 'verified', badge: t('inkoop.cijfersLeverancier'), text: t('ink.eFactuurLegenda') }] : []),
+            ]} />
             <p style={{ fontSize: 12.5, color: '#5F6368', fontFamily: FONT, margin: 0, fontWeight: 500 }}>
               {rawS
                 ? t('ink.gevonden', { facturen: nFacturen(displayed.length) })
@@ -2706,7 +2719,14 @@ export default function IncomingManageClient({
                 : period !== 'all'
                   ? t('ink.inPeriode', { facturen: nFacturen(displayed.length), period: periodWindow.label ?? '' })
                   : filter === 'all'
-                    ? t('ink.telling', { facturen: nFacturen(listedCount), open: receivedCount, paid: paidCount })
+                    // [AUTO-UITLEG] "287 van 502": the list is a window (the paid query stops at
+                    // 200), and the total used to be a sentence of its own below the chips. The
+                    // owner crossed that sentence out; the number stays, in three words, so the
+                    // counter never implies the owner owns fewer facturen than he does.
+                    // [NO-SILENT-EMPTY] Not while a read failed — then the total is not known.
+                    ? (hiddenCount > 0 && !loadIncomplete
+                        ? t('ink.tellingVan', { facturen: nFacturen(listedCount), total: totalCount ?? 0, open: receivedCount, paid: paidCount })
+                        : t('ink.telling', { facturen: nFacturen(listedCount), open: receivedCount, paid: paidCount }))
                     : t('ink.vanTelling', { shown: displayed.length, facturen: nFacturen(listedCount) })}
             </p>
             {/* [OPEN-TOTAL] Het bedrag onder de aantallen: wat er van deze rijen nog te betalen is,
@@ -2749,7 +2769,9 @@ export default function IncomingManageClient({
                   ['verlopen', t('ink.bak.verlopen'), '#FCE8E6', '#8C1D18'],
                   ['dezeWeek', t('ink.bak.dezeWeek'), '#FEF7E0', '#7C5800'],
                   ['later', t('ink.bak.later'), M3.surfaceVariant, M3.onSurface],
-                  ['zonderDatum', t('ink.bak.zonderDatum'), M3.surfaceVariant, '#5F6368'],
+                  // [AUTO-UITLEG] No "Zonder vervaldatum" chip: the owner crossed it out. Those
+                  // rows are still in the list and in the open total above; the chip only
+                  // offered the same due-date sort the other three do.
                 ] as const).map(([key, label, bg, color]) => {
                   const b = buckets[key]
                   if (b.count === 0) return null
@@ -2784,16 +2806,8 @@ export default function IncomingManageClient({
                 {t('inkoop.fout.onvolledig')}
               </p>
             )}
-            {/* The list is a window, not the archive: the paid query stops at 200. Say so rather
-                than let the counter imply the owner owns fewer facturen than he does.
-                [NO-SILENT-EMPTY] Not while a source read failed: this sentence asserts that the
-                {receivedCount} openstaande facturen shown ARE all of them, which is exactly what
-                we do not know then. The banner at the top of the page has already said so. */}
-            {hiddenCount > 0 && !loadIncomplete && period === 'all' && (
-              <p style={{ fontSize: 11.5, color: '#80868B', fontFamily: FONT, margin: '3px 0 0', lineHeight: 1.4 }}>
-                {t('ink.totaalDisclosure', { total: totalCount ?? 0, open: receivedCount, paid: paidCount })}
-              </p>
-            )}
+            {/* [AUTO-UITLEG] The "Je hebt er 502 in totaal…" sentence stood here; the owner crossed
+                it out. The total moved into the counter line above ("287 van 502"). */}
           </div>
         )}
 

@@ -1373,6 +1373,14 @@ export const MESSAGES = {
   'up.tochToevoegen': { nl: 'Toch toevoegen — dit is een ander bestand', ar: 'أضِفه رغم ذلك — هذا ملف مختلف', en: 'Add it anyway — this is a different file' },
   'up.nietGelezen': { nl: 'Niet gelezen', ar: 'لم يُقرأ', en: 'Not read' },
   'up.opruimen': { nl: 'Lijst opruimen', ar: 'تنظيف القائمة', en: 'Clear the list' },
+  // [MELDING-WEG] The X on a finished notice — one label for every screen that carries it
+  // (the upload hub's rows, Inkomend's results, the bank upload's report).
+  'melding.weghalen': { nl: 'Melding weghalen', ar: 'إزالة هذا التنبيه', en: 'Dismiss this notice' },
+  // [MELDING-WEG] [TAAL] Where a byte-identical upload already is. The folder names inside {path}
+  // are the owner's own folders and stay as stored; the sentence around them is the app's. Came
+  // from the server as one Dutch sentence and stood as such on the Arabic screen.
+  'up.staatAlIn': { nl: 'Dit bestand staat al in: {path}', ar: 'هذا الملف موجود أصلاً في: {path}', en: 'This file is already in: {path}' },
+  'up.alToegevoegdZin': { nl: 'Dit bestand is al toegevoegd', ar: 'هذا الملف أُضيف مسبقاً', en: 'This file has already been added' },
   'up.meerderePaginas': { nl: 'Factuur met meerdere pagina’s?', ar: 'فاتورة من عدة صفحات؟', en: 'A multi-page invoice?' },
   'up.paginasSamen': { nl: 'Hoort een papieren factuur bij elkaar? Voeg de pagina’s hier samen tot', ar: 'أوراق فاتورة واحدة؟ اجمع الصفحات هنا في', en: 'Pages of one paper invoice? Merge them here into' },
   'up.eenFactuur': { nl: 'Eén factuur, meerdere pagina’s', ar: 'فاتورة واحدة، عدة صفحات', en: 'One invoice, several pages' },
@@ -1519,6 +1527,21 @@ export const MESSAGES = {
   'int.pdfBeeld': { nl: 'PDF, afbeelding of bankafschrift', ar: 'PDF أو صورة أو كشف بنكي', en: 'PDF, image or bank statement' },
   'int.watToegevoegd': { nl: 'Wat is er toegevoegd', ar: 'ما الذي أُضيف', en: 'What was added' },
   'int.drieBezig': { nl: 'Even wachten — er worden er al drie verwerkt.', ar: 'انتظر قليلاً — ثلاثة قيد المعالجة بالفعل.', en: 'One moment — three are already being processed.' },
+  // [INTAKE-VOORTGANG] The progress dialog after a file is picked. Three phases, one percentage:
+  // only the upload has a number; the fit and the read say what they are without inventing one.
+  'int.voortgang.titel': { nl: 'Bezig met toevoegen', ar: 'جارٍ الإضافة', en: 'Adding…' },
+  'int.voortgang.klaarTitel': { nl: 'Klaar', ar: 'تمّ', en: 'Done' },
+  'int.voortgang.sluit': { nl: 'Sluiten — het toevoegen gaat door', ar: 'إغلاق — الإضافة تستمر', en: 'Close — adding carries on' },
+  'int.voortgang.achtergrond': {
+    nl: 'Je kunt dit sluiten. Het toevoegen gaat gewoon door, en je hoort waar het bestand terechtkomt.',
+    ar: 'يمكنك إغلاق هذه النافذة. تستمر الإضافة في الخلفية، وستُخبَر أين استقرّ الملف.',
+    en: 'You can close this. Adding carries on, and you will be told where the file landed.',
+  },
+  'int.voortgang.klaarmaken': { nl: 'Bestand wordt klaargemaakt…', ar: 'يجري تجهيز الملف…', en: 'Preparing the file…' },
+  'int.voortgang.uploaden': { nl: 'Uploaden… {p}%', ar: 'جارٍ الرفع… {p}%', en: 'Uploading… {p}%' },
+  'int.voortgang.lezen': { nl: 'Wordt gelezen — dit kan even duren', ar: 'جارٍ القراءة — قد يستغرق ذلك قليلاً', en: 'Being read — this can take a moment' },
+  'int.voortgang.klaar': { nl: 'Klaar', ar: 'تمّ', en: 'Done' },
+  'int.voortgang.mislukt': { nl: 'Niet gelukt', ar: 'لم ينجح', en: 'Did not succeed' },
   'int.bestaande': { nl: 'Bekijk de bestaande factuur', ar: 'اعرض الفاتورة الموجودة', en: 'View the existing invoice' },
   'int.tochAndere': { nl: 'Toch toevoegen — dit is een andere factuur', ar: 'أضِفها رغم ذلك — هذه فاتورة أخرى', en: 'Add it anyway — this is a different invoice' },
   'int.paginasSamen': { nl: 'Meerdere pagina’s → samen één factuur', ar: 'عدة صفحات ← فاتورة واحدة معاً', en: 'Several pages → one invoice together' },
@@ -6540,7 +6563,6 @@ export const MESSAGES = {
   'ink.bak.verlopen': { nl: 'Verlopen', ar: 'متأخرة', en: 'Overdue' },
   'ink.bak.dezeWeek': { nl: 'Deze week', ar: 'هذا الأسبوع', en: 'This week' },
   'ink.bak.later': { nl: 'Later', ar: 'لاحقاً', en: 'Later' },
-  'ink.bak.zonderDatum': { nl: 'Zonder vervaldatum', ar: 'بدون تاريخ استحقاق', en: 'No due date' },
   'ink.filter.zonderOrigineel': {
     nl: 'Zonder origineel',
     ar: 'بدون مستند أصلي',
@@ -8019,6 +8041,34 @@ export const MESSAGES = {
     ar: '{facturen} · مستحقة الدفع: {open} · مدفوعة: {paid}',
     en: '{facturen} · {open} to pay · {paid} paid',
   },
+  // [AUTO-UITLEG] The same line when the list is a window on a larger archive (the paid query
+  // stops at 200): the total in three words, where a whole sentence used to say it.
+  'ink.tellingVan': {
+    nl: '{facturen} van {total} · {open} te betalen · {paid} betaald',
+    ar: '{facturen} من أصل {total} · مستحقة الدفع: {open} · مدفوعة: {paid}',
+    en: '{facturen} of {total} · {open} to pay · {paid} paid',
+  },
+  // [AUTO-UITLEG] What the badges the app awards on its own judgement mean, said once above the
+  // list (BadgeLegend). The badge's own label is printed in front of each line from the badge's
+  // own key, so these hold the explanation only. They stand AT REST, so each is short by the
+  // standard in docs/RUSTIG.md ([RUSTIG] counts): what the app did, on what ground, and what the
+  // owner still does. The checks themselves are on every card ([CONTROLES-INKLAPPEN]); the two
+  // claims a retranslation may never soften are "niets is betaald" and "vóór je betaalt".
+  'ink.autoUitleg': {
+    nl: 'De app las en boekte deze factuur zelf: elke controle slaagde. Niets is betaald — controleer vóór je betaalt.',
+    ar: 'قرأ التطبيق هذه الفاتورة وقيّدها بنفسه: كل فحص نجح. لم يُدفع شيء — تحقّق قبل الدفع.',
+    en: 'The app read and booked this invoice itself: every check passed. Nothing is paid — check before you pay.',
+  },
+  'ink.bonAutoUitleg': {
+    nl: 'De app boekte deze bon zelf als betaald: de bon noemt de betaalwijze. Klopt het niet? Zet de betaling terug.',
+    ar: 'قيّد التطبيق هذا الإيصال كمدفوع بنفسه: الإيصال يذكر طريقة الدفع. أليس صحيحاً؟ تراجع عن الدفعة.',
+    en: 'The app booked this receipt as paid itself: the receipt names the payment method. Not right? Undo the payment.',
+  },
+  'ink.eFactuurLegenda': {
+    nl: 'Deze cijfers stuurde de leverancier zelf als e-factuur; er is niets van een pagina gelezen.',
+    ar: 'هذه الأرقام أرسلها المورّد بنفسه فاتورةً إلكترونية؛ لم يُقرأ شيء من صفحة.',
+    en: 'The supplier sent these figures themselves as an e-invoice; nothing was read off a page.',
+  },
   'ink.terugdraaien': {
     nl: 'Terugdraaien',
     ar: 'تراجع',
@@ -8078,11 +8128,6 @@ export const MESSAGES = {
     nl: 'Toon alleen deze',
     ar: 'اعرض هذه فقط',
     en: 'Show only these',
-  },
-  'ink.totaalDisclosure': {
-    nl: 'Je hebt er {total} in totaal. Deze lijst toont de {open} openstaande en de {paid} meest recente betaalde.',
-    ar: 'لديك {total} في المجموع. تعرض هذه القائمة المفتوحة وعددها {open} وأحدث المدفوعة وعددها {paid}.',
-    en: 'You have {total} in total. This list shows the {open} outstanding ones and the {paid} most recently paid.',
   },
   'ink.totaalLabel': {
     nl: 'totaal',

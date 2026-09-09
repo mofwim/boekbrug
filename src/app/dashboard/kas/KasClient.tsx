@@ -19,6 +19,8 @@ import { rowMatchesQuery } from '@/lib/search'
 import { sendWithFit } from '@/lib/upload-fit'
 // [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
 import { failureText } from '@/lib/server-message'
+// [AUTO-UITLEG] The 🔗 marker on a payment entry, explained once above the ledger.
+import { BadgeLegend } from '@/components/ui/BadgeLegend'
 // [PARSE-NL] One tolerant reader for an amount a Dutch owner TYPES — see parse-nl.ts. This screen
 // used `Number(x.replace(',', '.'))`, which reads the two ordinary Dutch ways of writing money
 // wrongly and in opposite directions: "1.306,36" became NaN (refused with "bedrag moet groter dan
@@ -810,6 +812,14 @@ export default function KasClient() {
 
         {/* Ledger */}
         <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: 0.6, color: M3.neutral, margin: '0 2px 10px' }}>{t('kas.boekingen')}</div>
+        {/* [AUTO-UITLEG] The 🔗 on a payment entry meant "the app put this here itself, from a
+            cash-paid invoice" — in a title attribute, which a phone never shows. Said once, above
+            the ledger, only while such an entry is on screen. */}
+        {!loading && !loadError && (
+          <BadgeLegend items={filteredEntries.some((e) => e.category === 'betaling')
+            ? [{ id: 'betaling', icon: 'link', badge: '🔗', text: t('kas.betalingAutomatisch') }]
+            : []} />
+        )}
 
         {/* [SEARCH] In-page live filter over the ledger */}
         {!loading && !loadError && entries.length > 0 && (

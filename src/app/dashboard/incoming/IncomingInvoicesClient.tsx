@@ -34,6 +34,9 @@ import { supersedeTargetOf } from "@/lib/supersede-target";
 import { waitingReasonOf, explainWaiting } from "@/lib/why-waiting";
 // [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
 import { failureText } from '@/lib/server-message'
+// [MELDING-WEG] The X on a result row, and the duplicate's place in the owner's language.
+import { DismissX } from "@/components/ui/DismissX";
+import { duplicateWhere } from "@/lib/duplicate-sentence";
 // [TZ] The owner's Amsterdam day, never the UTC one — see format-nl.ts.
 import { amsterdamToday } from '@/lib/format-nl'
 import Link from "next/link";
@@ -3290,9 +3293,12 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
       // Not ok — duplicate is informative, not a failure.
       if ((data as { duplicate?: boolean }).duplicate) {
         const existing = (data as { existing?: { id: string; folder_id: string | null } }).existing;
+        // [MELDING-WEG] [TAAL] The place is structured; the sentence is the catalogue's — the same
+        // module the upload hub reads, so the two doors say it the same way.
+        const where = duplicateWhere(data);
         return {
           name: file.name, status: "duplicate", file,
-          message: failureText(res.status, data as { error?: unknown }, t('ink.result.duplicate')),
+          message: where ? t(where.key, where.params) : failureText(res.status, data as { error?: unknown }, t('ink.result.duplicate')),
           link: existing?.id ? { folderId: existing.folder_id ?? null, focusId: existing.id } : undefined,
           // The server says whether this one may be overridden. The byte-hash gate deliberately
           // may not; the semantic one may, and this screen used to offer neither.
@@ -3769,6 +3775,12 @@ function ManualUpload({ onUploaded }: { onUploaded: () => void }) {
                         <p style={{ fontSize: 12, color: "#5f6368", margin: "6px 0 0", fontWeight: 600 }}>{t('act.bezig')}</p>
                       )}
                     </div>
+                    {/* [MELDING-WEG] Read it, take it away — one row at a time, the green button
+                        below still closes them all. Not while a retry is in flight: that row is
+                        about to change, and the outcome must land on it. */}
+                    {!r.retrying && (
+                      <DismissX label={t('melding.weghalen')} onClick={() => setResults((prev) => prev.filter((_, j) => j !== i))} />
+                    )}
                   </div>
                 );
               })}

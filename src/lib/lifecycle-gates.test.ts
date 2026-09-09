@@ -26,7 +26,7 @@ import { DOCUMENT_REFERRERS } from "./document-references";
 // instead of parsing it out of source — see the test.
 import { isExpectedBookingRefusal } from "./incasso-settle";
 // [ZIJBALK] The navigation destinations as DATA — read, not matched as a literal. See [KOP-KLEINER].
-import { destinationsFor, railDestinations } from "./nav-destinations";
+import { destinationsFor, railDestinations, DOOR_LOOK } from "./nav-destinations";
 // [WAAROM-VASTGEHOUDEN] De zinnen bij de machinecodes — gescand tegen de plekken die ze maken.
 import { HOLD_LABELS } from "./hold-reasons";
 // [WAAROM-WACHT] …en de zin die de eigenaar leest bij dezelfde code.
@@ -8030,6 +8030,9 @@ test("[TAAL] the translated screens have no Dutch of their own left", () => {
     // and permanently untrue for every screen that does not. Listed here so the Dutch cannot walk
     // back in one entry at a time.
     "src/components/nav/DashboardChrome.tsx",
+    // [ZIJBALK-ACCOUNT] The account block at the top of the rail — on every dashboard screen from
+    // 1024px, in whichever language the owner reads. Its four controls are the header's keys.
+    "src/components/nav/RailAccount.tsx",
     // [LEVERANCIER-KIEZEN] The supplier name field and the form around it. Both render inside the
     // two incoming screens above, and both are new enough that a Dutch sentence typed straight
     // into them would look perfectly finished — in Dutch.
@@ -21569,6 +21572,255 @@ test("[RPC-ARGUMENT] every rpc argument name exists in the function it calls", (
   }
   assert.ok(checked > 40, `the gate only checked ${checked} rpc arguments — it has stopped reaching the code`);
   assert.deepEqual(offenders, [], `rpc arguments the function does not declare:\n  ${offenders.join("\n  ")}`);
+});
+
+// ── [ZIJBALK-DEUR] One door, one look ─────────────────────────────────────────────────────────
+//
+// The home painted each tile in a colour of its own and the rail drew the same doors in grey, with
+// a different glyph for five of them. The owner asked for one look. The look now lives in
+// DOOR_LOOK (nav-destinations.ts) and BOTH screens read it; what this gate holds is that neither
+// has started carrying a colour of its own again — the way two lists drift, one hex at a time.
+test("[ZIJBALK-DEUR] a door looks the same on the home tile and on the rail, from one table", () => {
+  const nav = code("src/lib/nav-destinations.ts");
+  assert.match(nav, /export const DOOR_LOOK = \{/, "the shared look table is gone");
+  assert.match(nav, /export function doorLook\(href: DoorHref\): DoorLook/, "doorLook is no longer typed on the table's keys");
+
+  // Every rail row carries its tile's glyph and colour — every owner variant and the accountant.
+  for (const [role, counter, work] of [
+    ["zzper", false, false], ["zzper", true, false], ["zzper", false, true], ["accountant", false, false],
+  ] as const) {
+    for (const d of railDestinations(role, counter, work)) {
+      const look = DOOR_LOOK[d.href as keyof typeof DOOR_LOOK];
+      assert.ok(look, `${role}: ${d.href} is on the rail and not in DOOR_LOOK`);
+      assert.equal(d.tint, look.tint, `${role}: ${d.href} is painted a colour that is not its tile's`);
+      assert.equal(d.icon, look.icon, `${role}: ${d.href} shows a glyph that is not its tile's`);
+      assert.match(d.tint ?? "", /^#[0-9A-Fa-f]{6}$/, `${d.href}: the tint is not a hex colour`);
+    }
+  }
+
+  // The rail paints it as the tile does: a white glyph on a square of the door's colour.
+  const rail = code("src/components/nav/DashboardRail.tsx");
+  assert.match(rail, /background: item\.tint \?\? M3\.onSurfaceVariant/, "the rail no longer paints the door's colour");
+  assert.match(rail, /color: '#fff',\s*fontVariationSettings/, "…with the tile's white glyph on it");
+
+  // …and the HOME reads the same table. A tile with a colour typed into it is the drift itself.
+  const home = code("src/app/dashboard/zzp/ZzpDashboard.tsx");
+  assert.match(home, /import \{ doorLook \} from '@\/lib\/nav-destinations'/, "the home no longer reads the shared look");
+  assert.doesNotMatch(home, /<AdminTile icon="/, "an AdminTile carries a glyph of its own again");
+  assert.doesNotMatch(home, /<MiniCard icon="/, "a MiniCard carries a glyph of its own again");
+  assert.doesNotMatch(home, /tint="#/, "a tile carries a colour of its own again");
+  assert.doesNotMatch(home, /iconBg="#/, "a card carries a colour of its own again");
+  assert.doesNotMatch(home, /iconBg=\{M3\./, "a card takes its colour from the palette directly, past the table");
+  assert.ok((home.match(/doorLook\('\/dashboard/g) ?? []).length >= 20,
+    "the home reads fewer doors from the table than it draws — a tile went back to its own colour");
+});
+
+// ── [ZIJBALK-ACCOUNT] The account corner lives in the rail ────────────────────────────────────
+//
+// The owner asked for the home bar's corner — name, e-mail, the bell, Berichten, Instellingen,
+// Uitloggen — in the rail, and the corner gone. Gone at the widths the rail exists; a phone has no
+// rail. So the invariant is not "moved" but "in exactly one place at every width", and the two
+// halves of that are held here: the rail draws it, and the bar hides it at the rail's breakpoint.
+test("[ZIJBALK-ACCOUNT] the account corner is in the rail from 1024px, and nowhere twice", () => {
+  // The layout reads the name it hands over, and hands it over.
+  const layout = code("src/app/dashboard/layout.tsx");
+  assert.match(layout, /select\('id, email, role, full_name, company_name'\)/, "the layout does not read the name the rail shows");
+  assert.match(layout, /account=\{\{ id: profile\.id, name: profile\.full_name \|\| profile\.company_name \|\| '', email: profile\.email \?\? null \}\}/,
+    "the rail is mounted without the account");
+  const rail = code("src/components/nav/DashboardRail.tsx");
+  assert.match(rail, /\{account && <RailAccount account=\{account\} role=\{role\} \/>\}/, "the rail draws no account block");
+  // …above the navigation, where the owner put it.
+  assert.ok(rail.indexOf("<RailAccount") < rail.indexOf("sections.map("), "the account block is not at the top of the rail");
+
+  const acc = code("src/components/nav/RailAccount.tsx");
+  // No client during render: the layout renders this on the server, and so do the render tests.
+  assert.doesNotMatch(acc, /const supabase = createClient\(\)/, "the account block builds a client in the render body");
+  assert.match(acc, /getBrowserClient\(\)/, "…it must build it on first use, inside the effect");
+  // The four things the corner had.
+  assert.match(acc, /<NotificationsBell/, "the bell did not move");
+  assert.match(acc, /href=\{messagesHref\}/, "Berichten did not move");
+  assert.match(acc, /href="\/dashboard\/settings"/, "Instellingen did not move");
+  assert.match(acc, /auth\.signOut\(\)/, "there is no way out of the app from the rail");
+  // [NO-SILENT-EMPTY] A failed read reaches the bell as an error, never as "Geen meldingen".
+  assert.match(acc, /loadError=\{notifError\}/, "a failed read would show as no notifications");
+  assert.match(acc, /t\('start\.meldingenFout'\)/);
+  // The bell's panel cannot open inside a scrolling rail; fixed beside it, clear of its width.
+  assert.match(acc, /panelStyle=\{\{ position: 'fixed'[^}]*insetInlineStart: 'calc\(var\(--rail-w\) \+ 8px\)'/,
+    "the panel opens inside the rail's scroll box, where it is clipped");
+  assert.match(code("src/app/dashboard/_shared/index.tsx"), /\.\.\.panelStyle,/, "the bell no longer takes a panel placement");
+
+  // The corner leaves the home bar at the SAME breakpoint that shows the rail — and all of it.
+  const css = readFileSync("src/app/globals.css", "utf8");
+  assert.match(css, /@media \(min-width: 1024px\) \{\s*\.dash-header-account \{\s*display: none !important;/,
+    "the corner is still drawn beside the rail");
+  // Raw source, not code(): the end of the corner is a comment marker, and code() strips comments.
+  // Slicing to </header> instead would count a control moved out of the wrapper as still inside.
+  const shared = readFileSync("src/app/dashboard/_shared/index.tsx", "utf8");
+  const cornerAt = shared.indexOf('className="dash-header-account"');
+  assert.ok(cornerAt > 0, "the home bar's corner is not marked");
+  const cornerEnd = shared.indexOf("[ZIJBALK-ACCOUNT] end of the corner", cornerAt);
+  assert.ok(cornerEnd > cornerAt, "the corner has no end marker — nothing says where it stops");
+  const corner = shared.slice(cornerAt, cornerEnd);
+  for (const piece of ["<ZzpNavLinks", "<AccountantNavLinks", "<NotificationsBell", "<ProfileMenu", "forum"]) {
+    assert.ok(corner.includes(piece), `${piece} is outside the corner and stays on screen beside the rail`);
+  }
+  // …and the marker is the last thing before the bar closes.
+  assert.match(shared.slice(cornerEnd, cornerEnd + 300), /\*\/\}\s*<\/header>/, "something sits between the end of the corner and the end of the bar");
+  // The glyph for the way out is in the font subset; a name that is not renders as its text.
+  assert.match(readFileSync("src/app/layout.tsx", "utf8"), /icon_names=[^"]*\blogout\b/, "'logout' is not in the icon subset");
+});
+
+// ── [MELDING-WEG] A finished notice can be taken off the screen, one at a time ─────────────────
+//
+// "Dit bestand staat al in: 2026 / Q3 / juli / Facturen" is a notice whose work is done the moment
+// it is read. The upload hub kept it on screen with one exit — "Lijst opruimen", which takes every
+// row with it — and the owner asked the obvious question: where is the X? The same question stood
+// on the Inkomend results modal (rows, one green close for all) and on the bank upload's report
+// card (no exit at all). One component answers it everywhere; this gate holds that it stays
+// answered, and that the duplicate's place is said in the owner's language while it is at it.
+test("[MELDING-WEG] every finished notice carries its own X, and the duplicate's place is said in the owner's language", () => {
+  const x = code("src/components/ui/DismissX.tsx");
+  assert.match(x, /aria-label=\{label\}/, "the X has no name for a screen reader");
+  assert.match(x, />close<\/span>/, "…or lost its glyph");
+  assert.doesNotMatch(x, /\bt\(/, "a component holds no language of its own — the label is handed in");
+
+  // The hub: a row's X, the same revoke rule as "Lijst opruimen", and the reprocess rows too.
+  const hub = code("src/app/dashboard/upload/UploadClient.tsx");
+  assert.match(hub, /it\.status !== 'queued' && it\.status !== 'busy' && \(\s*<DismissX/,
+    "a finished row on the hub has no X — or a busy one has, and its upload would go on invisibly");
+  const dropAt = hub.indexOf("const dropRows = useCallback");
+  const clearAt = hub.indexOf("const clearFinished = useCallback");
+  assert.ok(dropAt > 0 && clearAt > dropAt, "removing one row and clearing the list must share ONE revoke rule");
+  // The rule revokes exactly once; neither caller revokes on its own. (The unmount cleanup at the
+  // top of the component revokes too, and may: that is the whole list going, not a row.)
+  assert.equal((hub.slice(dropAt, clearAt).match(/URL\.revokeObjectURL\(u\)/g) ?? []).length, 1, "the shared rule revokes exactly once");
+  assert.doesNotMatch(hub.slice(clearAt, hub.indexOf("const removeItem = useCallback") + 200), /revokeObjectURL/, "a caller revokes on its own, beside the rule");
+  assert.match(hub, /const removeItem = useCallback\(\(id: string\) => dropRows\(/, "the X does not go through the shared rule");
+  assert.match(hub, /const clearFinished = useCallback\(\(\) => dropRows\(/, "…nor does Lijst opruimen");
+  assert.match(hub, /reprocHidden\.has\(idx\)/, "a reprocess row cannot be taken off the screen");
+  assert.match(hub, /setReprocHidden\(new Set\(\)\)/, "…or a new run starts with the previous run's rows hidden");
+  assert.ok((hub.match(/<DismissX/g) ?? []).length >= 2, "the hub lost an X");
+
+  // Inkomend's results modal: one X per row, none while a retry is in flight.
+  const ink = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  assert.match(ink, /\{!r\.retrying && \(\s*<DismissX/, "a result row on Inkomend has no X — or a retrying one has");
+  assert.match(ink, /setResults\(\(prev\) => prev\.filter\(\(_, j\) => j !== i\)\)/, "the X does not remove the row it sits on");
+
+  // The bank upload's report card.
+  const bank = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(bank, /<DismissX label=\{t\('melding\.weghalen'\)\} onClick=\{\(\) => setUploadInfo\(null\)\}/, "the bank upload's report has no exit");
+
+  // [TAAL] The place comes structured from the server; the sentence is the catalogue's. All three
+  // duplicate answers carry the path, and both upload screens read it through the one module.
+  const intake = code("src/app/api/intake/route.ts");
+  assert.equal((intake.match(/folder_path: (?:bc|racedPath)/g) ?? []).length, 2, "an intake duplicate answer lost its folder_path");
+  assert.match(code("src/app/api/email/upload/route.ts"), /folder_path: folderPath/, "the e-mail route's duplicate answer lost its folder_path");
+  const mod = code("src/lib/duplicate-sentence.ts");
+  assert.match(mod, /if \(d\.archived\) return null/, "an archived duplicate must keep the server's sentence — it names the invoice and the way back");
+  assert.match(mod, /if \(d\.canForce \|\| d\.original_id\) return null/, "a semantic duplicate must keep the server's sentence — THIS file is not in the books, its look-alike is");
+  for (const [name, src] of [["hub", hub], ["Inkomend", ink]] as const) {
+    assert.match(src, /duplicateWhere\(data\)/, `${name} does not read the duplicate's place through the shared module`);
+    assert.match(src, /where \? t\(where\.key, where\.params\)/, `${name} does not say it in the owner's language`);
+  }
+});
+
+// ── [INTAKE-VOORTGANG] The add-button shows what is happening to the file ────────────────────
+//
+// The sheet closed the moment a file was picked, and from then on the only sign of life was an
+// hourglass on the card. The owner asked for a dialog with a progress bar, one they can close while
+// the upload goes on. Two things can go wrong with that and only a gate sees them: a bar that
+// invents progress it does not have (the read has no known length), and a close that aborts the
+// upload it was only supposed to hide.
+test("[INTAKE-VOORTGANG] the add-button shows the upload's progress honestly, and closing the dialog does not stop the upload", () => {
+  const xhr = code("src/lib/upload-xhr.ts");
+  assert.match(xhr, /xhr\.upload\.addEventListener\('progress'/, "no upload progress without the upload's own events");
+  assert.match(xhr, /e\.lengthComputable && e\.total > 0/, "a progress event without a total is not a percentage");
+  assert.match(xhr, /status === 204 \|\| status === 205 \|\| status === 304 \? null/, "a Response may not carry a body on those statuses");
+  assert.match(xhr, /new TypeError\('Network request failed'\)/, "a failed connection must reject the way fetch does, so the caller's catch still runs");
+
+  const btn = code("src/components/intake/IntakeButton.tsx");
+  assert.match(btn, /return postFormWithProgress\('\/api\/intake', fd, \{/, "the intake is not sent over XHR — fetch cannot report progress");
+  assert.doesNotMatch(btn, /fetch\('\/api\/intake'/, "…and the fetch path is gone, or the two drift");
+  // The phases in order, from the first byte: a row before the fit, uploading when send runs,
+  // reading when the body is up, done or failed when the answer is in — on EVERY exit.
+  assert.match(btn, /phase: 'fitting', percent: 0/, "no row before the fit — the first seconds show nothing");
+  assert.match(btn, /patchRow\(rowId, \{ phase: 'uploading', percent: 0 \}\)/);
+  assert.match(btn, /onUploaded: \(\) => patchRow\(rowId, \{ phase: 'reading', percent: 100 \}\)/);
+  assert.match(btn, /patchRow\(rowId, \{ phase: outcome === 'error' \? 'failed' : 'done' \}\)/, "a refused upload leaves its row spinning");
+  assert.match(btn, /patchRow\(rowId, \{ phase: 'done' \}\)\s*\n\s*return 'ok'/, "a landed upload leaves its row spinning");
+  assert.match(btn, /patchRow\(rowId, \{ phase: 'failed' \}\)\s*\n\s*return 'error'/, "a thrown upload leaves its row spinning");
+  assert.match(btn, /function noteLanded\(rowId: string, name: string, where: string\)/, "where the file landed does not reach its row");
+  assert.doesNotMatch(btn, /noteLanded\(file\.name/, "a call site forgot its row");
+  // Closing only hides. Nothing in this file can reach the request.
+  assert.match(btn, /onClose=\{\(\) => setProgressOpen\(false\)\}/);
+  assert.doesNotMatch(btn, /\.abort\(/, "closing the progress dialog must not abort the upload");
+  // It is visible only while something is in flight — every outcome has its own feedback already.
+  // Derived, not an effect: a setState inside an effect is a cascading render, and the lint says so.
+  assert.match(btn, /const progressVisible = progressOpen && inFlight > 0/);
+  assert.match(btn, /open=\{progressVisible\}/);
+  // A fresh batch starts a fresh list; a file joining a running batch keeps the others' rows.
+  assert.match(btn, /batchRef\.current\.started === 1 \? \[\] : prev/);
+
+  // The dialog itself: below the outcome dialogs, honest about what has a number, no words of its own.
+  const dlg = code("src/components/intake/IntakeProgress.tsx");
+  assert.match(dlg, /zIndex: 350/, "the progress dialog must sit BELOW the duplicate and destination dialogs (400)");
+  assert.match(btn, /zIndex: 400/);
+  assert.match(dlg, /aria-valuenow=\{determinate \? r\.percent : full \? 100 : undefined\}/, "a number on a phase that has none is a made-up number");
+  assert.match(dlg, /const indeterminate = r\.phase === 'fitting' \|\| r\.phase === 'reading'/);
+  assert.match(dlg, /progress-indeterminate/);
+  assert.doesNotMatch(dlg, /\bt\(/, "a component holds no language of its own");
+  const css = readFileSync("src/app/globals.css", "utf8");
+  assert.match(css, /@keyframes progress-slide/, "the indeterminate slide has no animation — a still bar reads as a hang");
+  assert.match(css, /inset-inline-start: -40%/, "…and it must run with the writing direction, not with `left`");
+});
+
+// ── [AUTO-UITLEG] A badge the app awarded on its own judgement is explained on screen ────────
+//
+// "Automatisch" means the app read and booked the invoice itself because shouldAutoAdvanceInvoice
+// passed; "Bon · al afgerekend" that it marked a receipt paid on the till's own tender line;
+// "Cijfers van de leverancier" that the figures are the supplier's, not a reading. Each was
+// explained in a title attribute, which a phone never shows. The owner asked for the sentence above
+// the list. What a gate must hold is the WORDING — every clause a check the rule actually runs, and
+// the two claims no retranslation may soften — and that the legend follows the rows: shown for a
+// badge in view, never for one that is not. The crossed-out chip and sentence go with it.
+test("[AUTO-UITLEG] the badges the app awards on its own judgement are explained once above the list, in words it can stand behind", () => {
+  const legend = code("src/components/ui/BadgeLegend.tsx");
+  assert.doesNotMatch(legend, /\bt\(/, "a component holds no language of its own");
+  assert.match(legend, /<strong>\{it\.badge\}<\/strong>/, "the line does not lead with the badge's own label");
+
+  const manage = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  // Each line only while a row on screen carries the badge — and labelled from the badge's OWN key.
+  assert.match(manage, /displayed\.some\(isAutoVerified\) \? \[\{ id: 'auto', icon: 'auto_awesome', badge: t\('inkoop\.automatisch'\), text: t\('ink\.autoUitleg'\) \}\]/);
+  assert.match(manage, /displayed\.some\(\(inv\) => autoPaidBasis\(inv\) !== null\) \? \[\{ id: 'bon', icon: 'receipt_long', badge: t\('inkoop\.bonAfgerekend'\), text: t\('ink\.bonAutoUitleg'\) \}\]/);
+  assert.match(manage, /displayed\.some\(\(inv\) => eInvoiceBadge\(inv\) !== null\) \? \[\{ id: 'efactuur', icon: 'verified', badge: t\('inkoop\.cijfersLeverancier'\), text: t\('ink\.eFactuurLegenda'\) \}\]/);
+  // The badges' own tooltips stay: a phone never shows a title, a desktop still does.
+  assert.match(manage, /title=\{t\('ink\.autoVerifiedUitleg'\)\}/);
+  // The Dutch of the first line: what the app did, on what ground, and the two claims that may not
+  // soften. Short, because it stands at rest ([RUSTIG]): the checks themselves are on every card.
+  const cat = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  const nl = /'ink\.autoUitleg': \{\s*nl: '([^']+)'/.exec(cat)?.[1] ?? "";
+  for (const clause of ["las en boekte deze factuur zelf", "elke controle slaagde", "Niets is betaald", "vóór je betaalt"]) {
+    assert.ok(nl.includes(clause), `the explanation lost: "${clause}"`);
+  }
+  assert.ok(nl.trim().split(/\s+/).length <= 20, "the explanation stands at rest and grew past twenty words — say it at the card instead");
+  assert.doesNotMatch(nl, /^Automatisch/, "the badge's label comes from the badge's own key, not typed into the sentence");
+  // The receipt line names what the paper must say for the app to have acted — the rule in
+  // receipt-auto-settle.ts — and the way back.
+  const bon = /'ink\.bonAutoUitleg': \{\s*nl: '([^']+)'/.exec(cat)?.[1] ?? "";
+  for (const clause of ["de bon noemt de betaalwijze", "Zet de betaling terug"]) {
+    assert.ok(bon.includes(clause), `the receipt explanation lost: "${clause}"`);
+  }
+
+  // The cash book's 🔗 marker, the same way: once above the ledger, only while such an entry is on screen.
+  const kas = code("src/app/dashboard/kas/KasClient.tsx");
+  assert.match(kas, /filteredEntries\.some\(\(e\) => e\.category === 'betaling'\)\s*\?\s*\[\{ id: 'betaling', icon: 'link', badge: '🔗', text: t\('kas\.betalingAutomatisch'\) \}\]/);
+
+  // …and the crossed-out block is gone: no "Zonder vervaldatum" chip, no total sentence. The total
+  // moved into the counter line ("287 van 502"), and only while the read is whole.
+  assert.doesNotMatch(manage, /'zonderDatum', t\(/, "the crossed-out chip is back");
+  assert.doesNotMatch(manage, /ink\.totaalDisclosure/, "the crossed-out sentence is back");
+  assert.doesNotMatch(cat, /'ink\.totaalDisclosure'|'ink\.bak\.zonderDatum'/, "an orphan key survived");
+  assert.match(manage, /hiddenCount > 0 && !loadIncomplete\s*\?\s*t\('ink\.tellingVan'/, "the total left the screen entirely — the counter must still say 'van {total}'");
 });
 
 test("[MEDEWERKER] the sales member has a way back, a bell and a way out", () => {

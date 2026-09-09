@@ -354,7 +354,7 @@ export function ProfileMenu({ profile, onLogout, links }: {
 // [BOEK-028] Bell with outside click + markAsRead — May 2026
 
 export function NotificationsBell({
-  notifications, showNotifications, onToggle, onMarkAllRead, loadError,
+  notifications, showNotifications, onToggle, onMarkAllRead, loadError, panelStyle,
 }: {
   notifications: NotificationRow[]
   showNotifications: boolean
@@ -363,6 +363,9 @@ export function NotificationsBell({
   // [NO-SILENT-EMPTY] De meldingen konden niet worden gelezen. Zonder deze stand toont de bel
   // "Geen meldingen" — de enige zin die dit paneel nooit mag zeggen als het het niet weet.
   loadError?: string | null
+  // [ZIJBALK-ACCOUNT] Where the panel opens. Below the bell by default (the header); the rail
+  // hands in a fixed placement beside itself, because a panel inside its scroll box is clipped.
+  panelStyle?: React.CSSProperties
 }) {
   const t = translator(useLocale())
   const router = useRouter()
@@ -434,6 +437,7 @@ export function NotificationsBell({
           backgroundColor: '#fff', border: '1px solid #E0E0E0',
           borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
           width: 320, zIndex: 200, overflow: 'hidden',
+          ...panelStyle,
         }}>
           <div style={{ padding: '12px 16px', borderBottom: '1px solid #E0E0E0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
             <p style={{ fontSize: 14, fontWeight: 600, color: '#202124', margin: 0 }}>{t('kop.meldingen')}</p>
@@ -723,6 +727,12 @@ export function DashboardHeader({
         <SearchBar />
       </div>
 
+      {/* [ZIJBALK-ACCOUNT] Everything from here to the end of the bar is the account corner, and
+          from 1024px it is drawn in the rail instead — RailAccount, and .dash-header-account in
+          globals.css, which hides this at the SAME breakpoint that shows the rail. Below that width
+          nothing changes: a phone has no rail. The inline display loses to the !important there,
+          which is the point. */}
+      <div className="dash-header-account" style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
       {/* [INTEGRATION] Accountant nav links — only when role = accountant — May 2026 */}
       {isAccountant && <AccountantNavLinks />}
 
@@ -777,6 +787,9 @@ export function DashboardHeader({
         <ProfileMenu profile={profile} onLogout={onLogout} />
 
       </div>
+      </div>
+      {/* [ZIJBALK-ACCOUNT] end of the corner — the gate reads up to this line, so anything
+          placed after it stays on screen beside the rail. Keep it the last thing in the bar. */}
     </header>
   )
 }

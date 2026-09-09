@@ -193,3 +193,63 @@ test("[KORTE-WEG] the phone bar carries Vandaag, and prints it as a word", async
   const kantoor = draw(<BottomNav role="accountant" />);
   assert.ok(!kantoor.includes('href="/dashboard/vandaag"'));
 });
+
+// [ZIJBALK-ACCOUNT] The account corner, rendered where the owner asked for it. The gate reads the
+// source; only the markup can say whether the name, the bell and the way out actually come out —
+// and that they come out ONLY when an account is handed in, which the accountant's rail, the
+// render tests above and the medewerker's absence all rely on.
+test("[ZIJBALK-ACCOUNT] the rail carries the account corner when handed one, above the navigation", async () => {
+  const { DashboardRail } = await load();
+  pathname = "/dashboard/facturen";
+  const account = { id: "u1", name: "Basil Ibrahim", email: "eigenaar@example.com" };
+  const html = draw(<DashboardRail role="zzper" account={account} />);
+  assert.ok(html.includes("Basil Ibrahim"), "the name is not on the rail");
+  assert.ok(html.includes("eigenaar@example.com"), "the e-mail is not on the rail");
+  assert.ok(html.includes(">BI<"), "the avatar initials are missing");
+  assert.ok(html.includes('aria-label="Meldingen"'), "the bell did not move into the rail");
+  assert.ok(html.includes('href="/dashboard/messages"'), "Berichten did not move");
+  assert.ok(html.includes('href="/dashboard/settings"'), "Instellingen did not move");
+  assert.ok(html.includes('aria-label="Uitloggen"'), "there is no way out on the rail");
+  // Words, never keys.
+  for (const key of ["kop.meldingen", "kop.berichten", "kop.instellingen", "kop.uitloggen", "kop.profielmenu"]) {
+    assert.ok(!html.includes(key), `${key} reached the screen as a key`);
+  }
+  // Above the navigation, where the owner put it.
+  assert.ok(html.indexOf("Basil Ibrahim") < html.indexOf('href="/dashboard/facturen"'), "the account block is below the navigation");
+  // The navigation is still all there beside it, and still marks the current screen.
+  assert.equal(links(html).filter((a) => a.includes('aria-current="page"')).length, 1);
+
+  // Without an account, none of it — the four-row accountant rail and the tests above rely on this.
+  const bare = draw(<DashboardRail role="zzper" />);
+  for (const s of ['aria-label="Uitloggen"', 'href="/dashboard/settings"', 'aria-label="Meldingen"', ">BI<"]) {
+    assert.ok(!bare.includes(s), `${s} renders with no account handed in`);
+  }
+  // The accountant gets it too — their bell and their way out were in the same corner.
+  pathname = "/dashboard/accountant";
+  const kantoor = draw(<DashboardRail role="accountant" account={{ id: "a1", name: "Kantoor Jansen", email: null }} />);
+  assert.ok(kantoor.includes("Kantoor Jansen") && kantoor.includes('aria-label="Uitloggen"'));
+});
+
+// [ZIJBALK-DEUR] The rail row is the tile in miniature: the tile's colour, in the rendered HTML.
+test("[ZIJBALK-DEUR] every rail row is painted in its tile's colour", async () => {
+  const { DashboardRail } = await load();
+  pathname = "/dashboard";
+  const html = draw(<DashboardRail role="zzper" />);
+  const rows = links(html).length;
+  const squares = (html.match(/background:#[0-9A-Fa-f]{6}/g) ?? []).length;
+  assert.ok(rows >= 16, `only ${rows} rows`);
+  assert.ok(squares >= rows, `${squares} tinted squares on ${rows} rows — a row is grey again`);
+  // The teal Facturen tile, the orange Inkoopfacturen tile, the purple Dagomzet tile: the same
+  // three colours, on the rail, on the right rows.
+  for (const [href, tint, glyph] of [
+    ["/dashboard/facturen", "#00897B", "description"],
+    ["/dashboard/incoming/manage", "#E37400", "request_quote"],
+    ["/dashboard/dagomzet", "#7B1FA2", "point_of_sale"],
+  ]) {
+    const at = html.indexOf(`href="${href}"`);
+    assert.ok(at > 0, `${href} is not on the rail`);
+    const row = html.slice(html.lastIndexOf("<a", at), html.indexOf("</a>", at));
+    assert.ok(row.includes(`background:${tint}`), `${href} is not painted ${tint} on the rail`);
+    assert.ok(row.includes(`>${glyph}<`), `${href} does not show the tile's glyph`);
+  }
+});

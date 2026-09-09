@@ -17,12 +17,20 @@
 
 import type { MessageKey } from "./i18n/messages";
 import type { Role } from "./navigation";
+import { M3 } from "./design/tokens";
 
 export interface Destination {
   href: string;
   label: MessageKey;
   /** Material Symbols name. */
   icon: string;
+  /**
+   * [ZIJBALK-DEUR] The colour the home tile paints this door in, as a hex string. The rail draws
+   * the same glyph on the same colour, so a row and a tile read as ONE door. Optional because the
+   * phone bar's primary four never had a tile of their own and that bar is monochrome; every rail
+   * row carries one (asserted in the tests), taken from DOOR_LOOK below.
+   */
+  tint?: string;
   /** Extra paths that should light this destination up (children of it). */
   also?: string[];
   /**
@@ -146,6 +154,61 @@ export function activeHref(pathname: string, items: readonly Destination[]): str
   return best?.href ?? null;
 }
 
+// ── [ZIJBALK-DEUR] The look of a door: one glyph, one colour, declared once ─────────────────────
+//
+// The home screen painted each tile in a colour of its own — teal for Facturen, orange for
+// Inkoopfacturen, purple for Dagomzet — and the rail drew the same doors in grey, with a different
+// glyph for five of them (a receipt where the tile shows a document, a tray where it shows an
+// unread envelope). Same app, two faces, and the owner asked for one.
+//
+// So the look lives here, beside the destinations, and BOTH read it: ZzpDashboard spreads
+// doorLook() into its tiles and railSectionsFor() spreads it into the rail rows. A colour typed
+// into either screen by hand is the two drifting apart again, and the [ZIJBALK-DEUR] gate reads the
+// home for exactly that. Tokens where the palette has the colour, literals where it does not — the
+// teal, the orange and the two blues are the tiles' own and predate tokens.ts.
+//
+// Doors that are on the home and not on the rail (Alles uploaden, Voertuigen) are here too: the
+// table is the look of every door the home draws, not the rail's list.
+
+export interface DoorLook {
+  icon: string;
+  tint: string;
+}
+
+export const DOOR_LOOK = {
+  "/dashboard":                { icon: "home",              tint: M3.primary },
+  "/dashboard/vandaag":        { icon: "today",             tint: M3.primary },
+  "/dashboard/upload":         { icon: "upload_file",       tint: M3.primary },
+  "/dashboard/kassa":          { icon: "storefront",        tint: M3.tertiary },
+  "/dashboard/werk":           { icon: "work",              tint: "#0B57D0" },
+  "/dashboard/facturen":       { icon: "description",       tint: "#00897B" },
+  "/dashboard/incoming":       { icon: "mark_email_unread", tint: "#0288D1" },
+  "/dashboard/incoming/manage": { icon: "request_quote",    tint: "#E37400" },
+  "/dashboard/leveranciers":   { icon: "local_shipping",    tint: M3.warn },
+  "/dashboard/bank":           { icon: "account_balance",   tint: M3.primary },
+  "/dashboard/kas":            { icon: "payments",          tint: "#00897B" },
+  "/dashboard/dagomzet":       { icon: "point_of_sale",     tint: M3.tertiary },
+  "/dashboard/artikelen":      { icon: "inventory_2",       tint: M3.neutral },
+  "/dashboard/uren":           { icon: "schedule",          tint: M3.vault },
+  "/dashboard/voertuigen":     { icon: "directions_car",    tint: "#0B57D0" },
+  "/dashboard/waarheid":       { icon: "monitoring",        tint: "#0B8043" },
+  "/dashboard/aangifte":       { icon: "receipt_long",      tint: M3.vault },
+  "/dashboard/jaar":           { icon: "date_range",        tint: "#0B57D0" },
+  "/dashboard/werkplek":       { icon: "work",              tint: M3.success },
+  "/dashboard/bestanden":      { icon: "folder_open",       tint: "#0B57D0" },
+  "/dashboard/settings/team":  { icon: "person_add",        tint: M3.tertiary },
+  "/dashboard/accountant":     { icon: "home",              tint: M3.primary },
+  "/dashboard/clients/beheer": { icon: "people",            tint: "#00897B" },
+  "/dashboard/quarterly":      { icon: "bar_chart",         tint: "#0B8043" },
+} satisfies Record<string, DoorLook>;
+
+export type DoorHref = keyof typeof DOOR_LOOK;
+
+/** The glyph and the colour of one door — typed on the table's keys, so a door that is not in it is a compile error, not a grey row. */
+export function doorLook(href: DoorHref): DoorLook {
+  return DOOR_LOOK[href];
+}
+
 // ── The desktop rail: the whole home screen, not four of it ─────────────────────────────────────
 //
 // The four above are a PHONE constraint, and the file that held them says so out loud: "Four and
@@ -183,24 +246,27 @@ export interface RailSection {
  * them deserve a permanent rail is their question, not this module's.
  */
 export function railSectionsFor(role: Role | null, counter = false, work = false): RailSection[] {
-  if (role === "accountant") return [{ heading: null, items: ACCOUNTANT }];
+  // [ZIJBALK-DEUR] The accountant's four, in the look of their doors.
+  if (role === "accountant") return [{ heading: null, items: ACCOUNTANT.map((d) => ({ ...d, ...doorLook(d.href as DoorHref) })) }];
 
+  // [ZIJBALK-DEUR] Glyph and colour come from DOOR_LOOK, never typed here: a row and its tile are
+  // one door, and this is the line that keeps them one.
   const administratie: Destination[] = [
-    { href: "/dashboard/facturen", label: "start.tegel.facturen", icon: "receipt_long", also: ["/dashboard/invoice"] },
-    { href: "/dashboard/incoming", label: "start.tegel.inkomend", icon: "inbox", also: ["/dashboard/upload"] },
-    { href: "/dashboard/incoming/manage", label: "start.tegel.inkoop", icon: "request_quote" },
-    { href: "/dashboard/leveranciers", label: "start.tegel.leveranciers", icon: "local_shipping" },
-    { href: "/dashboard/bank", label: "start.tegel.bank", icon: "account_balance" },
-    { href: "/dashboard/kas", label: "start.tegel.kas", icon: "payments" },
-    { href: "/dashboard/dagomzet", label: "start.tegel.dagomzet", icon: "point_of_sale" },
-    { href: "/dashboard/artikelen", label: "start.tegel.artikelen", icon: "inventory_2" },
-    { href: "/dashboard/uren", label: "start.tegel.uren", icon: "schedule" },
+    { href: "/dashboard/facturen", label: "start.tegel.facturen", ...doorLook("/dashboard/facturen"), also: ["/dashboard/invoice"] },
+    { href: "/dashboard/incoming", label: "start.tegel.inkomend", ...doorLook("/dashboard/incoming"), also: ["/dashboard/upload"] },
+    { href: "/dashboard/incoming/manage", label: "start.tegel.inkoop", ...doorLook("/dashboard/incoming/manage") },
+    { href: "/dashboard/leveranciers", label: "start.tegel.leveranciers", ...doorLook("/dashboard/leveranciers") },
+    { href: "/dashboard/bank", label: "start.tegel.bank", ...doorLook("/dashboard/bank") },
+    { href: "/dashboard/kas", label: "start.tegel.kas", ...doorLook("/dashboard/kas") },
+    { href: "/dashboard/dagomzet", label: "start.tegel.dagomzet", ...doorLook("/dashboard/dagomzet") },
+    { href: "/dashboard/artikelen", label: "start.tegel.artikelen", ...doorLook("/dashboard/artikelen") },
+    { href: "/dashboard/uren", label: "start.tegel.uren", ...doorLook("/dashboard/uren") },
   ];
   // [VAK-BRUG] The counter owner reaches the Kassa thirty times a day; it leads their phone bar for
   // that reason and belongs at the top of their rail for the same one.
-  if (counter) administratie.unshift({ href: "/dashboard/kassa", label: "nav.kassa", icon: "storefront" });
+  if (counter) administratie.unshift({ href: "/dashboard/kassa", label: "nav.kassa", ...doorLook("/dashboard/kassa") });
   // [WERK] And the work trade's day leads the rail as it leads the phone bar.
-  if (work) administratie.unshift({ href: "/dashboard/werk", label: "nav.werk", icon: "work" });
+  if (work) administratie.unshift({ href: "/dashboard/werk", label: "nav.werk", ...doorLook("/dashboard/werk") });
 
   return [
     // [KORTE-WEG] Start and Vandaag, above the first heading: where am I, and what do I have to do.
@@ -208,22 +274,22 @@ export function railSectionsFor(role: Role | null, counter = false, work = false
     // in the rail ([ZIJBALK]) — but also because the rail had the same hole the phone did. The one
     // link to this screen on a wide display was the header's text link, which the sub-page bar
     // replaces on most routes.
-    { heading: null, items: [OWNER[0], VANDAAG] },
+    { heading: null, items: [{ ...OWNER[0], ...doorLook("/dashboard") }, { ...VANDAAG, ...doorLook("/dashboard/vandaag") }] },
     { heading: "start.administratie", items: administratie },
     {
       heading: "start.cijfers",
       items: [
-        { href: "/dashboard/waarheid", label: "start.waarheid", icon: "monitoring" },
-        { href: "/dashboard/aangifte", label: "start.conceptBtw", icon: "receipt" },
-        { href: "/dashboard/jaar", label: "start.jaar", icon: "calendar_month" },
+        { href: "/dashboard/waarheid", label: "start.waarheid", ...doorLook("/dashboard/waarheid") },
+        { href: "/dashboard/aangifte", label: "start.conceptBtw", ...doorLook("/dashboard/aangifte") },
+        { href: "/dashboard/jaar", label: "start.jaar", ...doorLook("/dashboard/jaar") },
       ],
     },
     {
       heading: "start.meer",
       items: [
-        { href: "/dashboard/werkplek", label: "start.tegel.werkplek", icon: "work" },
-        { href: "/dashboard/bestanden", label: "nav.files", icon: "folder_open" },
-        { href: "/dashboard/settings/team", label: "start.tegel.team", icon: "group_add" },
+        { href: "/dashboard/werkplek", label: "start.tegel.werkplek", ...doorLook("/dashboard/werkplek") },
+        { href: "/dashboard/bestanden", label: "nav.files", ...doorLook("/dashboard/bestanden") },
+        { href: "/dashboard/settings/team", label: "start.tegel.team", ...doorLook("/dashboard/settings/team") },
       ],
     },
   ];

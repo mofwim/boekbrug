@@ -679,6 +679,53 @@ input::placeholder, textarea::placeholder {
   }
 }
 
+/* ── [INTAKE-VOORTGANG] The progress bar under an upload ─────────────────────── */
+/* A number while bytes move (.progress-fill at a width); a slide while the app waits on something
+   with no known length (.progress-indeterminate) — the fit before the upload and the read after
+   it. Logical inset, so the slide runs with the writing direction. The reduced-motion rule slows
+   it rather than stopping it: a bar that does not move at all reads as a hang. */
+.progress-track {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  background: #e0e0e0;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+.progress-indeterminate::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: -40%;
+  width: 40%;
+  border-radius: 999px;
+  background: #1a73e8;
+  animation: progress-slide 1.2s ease-in-out infinite;
+}
+@keyframes progress-slide {
+  from { inset-inline-start: -40%; }
+  to { inset-inline-start: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress-indeterminate::after {
+    animation-duration: 3s;
+  }
+}
+
+/* [ZIJBALK-ACCOUNT] The home bar's account corner — the Vandaag link, Berichten, the bell and
+   the avatar menu — is drawn in the rail from 1024px (RailAccount.tsx). Hidden here at the SAME
+   breakpoint that shows the rail, so at no width is it in both places or in neither. The element
+   sets display:flex inline; !important is what makes this rule win over it. */
+@media (min-width: 1024px) {
+  .dash-header-account {
+    display: none !important;
+  }
+}
+
 /* ── Inkoopfacturen toolbar ──────────────────────────────────────────────────── */
 /* [TOOLBAR-ROW] "Meerdere betalen" and "Matchen met bank & kas" used to be two
    separate blocks, one under the other. On a phone that is right — together they
