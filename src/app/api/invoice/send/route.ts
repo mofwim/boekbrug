@@ -48,6 +48,7 @@ import { ublAttachmentForInvoice } from '@/lib/ubl-for-email'
 // [KOR-FACTUUR] Geen btw onder de KOR — gecontroleerd vlak vóór het nummer wordt uitgegeven.
 import { checkKorInvoice } from '@/lib/kor-invoice'
 import { checkReverseChargeInvoice } from '@/lib/reverse-charge-invoice'
+import { checkEuZeroRatedInvoice } from '@/lib/client-country'
 // [FACTUUR-DATUMS] Een vervaldatum vóór de factuurdatum — laatste kans vóór het nummer.
 import { checkInvoiceDates } from '@/lib/invoice-dates'
 import { generateInvoiceNumber, type InvoiceNumberType } from '@/lib/invoice-numbering'
@@ -469,6 +470,21 @@ export async function POST(request: NextRequest) {
       })
       if (!verlegdCheck.ok) {
         return NextResponse.json({ error: verlegdCheck.error, code: verlegdCheck.code, lines: verlegdCheck.lines }, { status: 400 })
+      }
+
+      // [KLANT-LAND] A 0% factuur to a business in another member state without the customer's
+      // btw-id is not zero-rated at all (art. 138 BTW-richtlijn): the seller owes the 21%. Refused
+      // before the number, beside the KOR and verlegd checks. An unknown country reads as the
+      // Netherlands, so nothing changes for an owner who never recorded one.
+      const euCheck = checkEuZeroRatedInvoice({
+        clientCountry: (invoice as { client_country?: string | null }).client_country,
+        clientBtwNumber: (invoice as { client_btw_number?: string | null }).client_btw_number,
+        invoiceType: finalType,
+        korActive: (sellerProfile as { kor_active?: boolean | null } | null)?.kor_active,
+        lines: (lines ?? []) as { btw_rate?: number | null; vat_treatment?: string | null }[],
+      })
+      if (!euCheck.ok) {
+        return NextResponse.json({ error: euCheck.error, code: euCheck.code }, { status: 400 })
       }
     }
 

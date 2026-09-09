@@ -5,6 +5,7 @@
 // Material You design — BoekBrug Design System v1.0 — May 2026
 
 import { useRouter, useSearchParams } from 'next/navigation'
+import { countryNameNl } from '@/lib/client-country'
 // [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
 import { failureText } from '@/lib/server-message'
 import { M3, R, STICKY_BELOW_HEADER, PAGE_HEADER_HEIGHT, columnInner, COLUMN } from '@/lib/design/tokens'
@@ -36,10 +37,12 @@ interface Client {
   // [BESTE] Optional: absent on an installation behind on clients_term_phone.sql.
   phone?: string | null
   payment_term_days?: number | null
+  // [KLANT-LAND] ISO code (client_country.sql); absent on an installation behind on it.
+  country?: string | null
 }
 
 const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
-const EMPTY = { name: '', email: '', kvk_number: '', btw_number: '', iban: '', address: '', postal_code: '', city: '', phone: '', payment_term_days: '' }
+const EMPTY = { name: '', email: '', kvk_number: '', btw_number: '', iban: '', address: '', postal_code: '', city: '', country: '', phone: '', payment_term_days: '' }
 
 /** The form as it starts for an existing customer: every null shown as an empty field. */
 function formFor(client: Client): typeof EMPTY {
@@ -52,6 +55,7 @@ function formFor(client: Client): typeof EMPTY {
     address:     client.address     ?? '',
     postal_code: client.postal_code ?? '',
     city:        client.city        ?? '',
+    country:     client.country     ?? '',
     phone:       client.phone       ?? '',
     payment_term_days: client.payment_term_days == null ? '' : String(client.payment_term_days),
   }
@@ -183,6 +187,7 @@ export default function KlantenClient({ profile, openByClient = null }: {
       email: form.email || null, kvk_number: form.kvk_number || null,
       btw_number: form.btw_number || null, iban: form.iban || null,
       address: form.address || null, postal_code: form.postal_code || null, city: form.city || null,
+      country: form.country || null,
       phone: form.phone || null, payment_term_days: form.payment_term_days || null,
     }
     const res = await fetch('/api/clients', {
@@ -271,6 +276,9 @@ export default function KlantenClient({ profile, openByClient = null }: {
     { key: 'address',     label: t('nieuw.klant.adres'),    placeholder: 'Straatnaam 1' },
     { key: 'postal_code', label: t('nieuw.klant.postcode'), placeholder: '1234 AB' },
     { key: 'city',        label: t('nieuw.klant.stad'),     placeholder: 'Amsterdam' },
+    // [KLANT-LAND] The ISO code, two letters. It decides the 0%-guard at the send door and the
+    // country line on a foreign customer's invoice; empty reads as the Netherlands.
+    { key: 'country',     label: t('kl.veld.land'),         placeholder: 'NL' },
     // [BESTE] Phone and the agreed payment term. The term pre-fills the due date on a new invoice
     // for this customer; empty means the app default.
     { key: 'phone',       label: t('kl.veld.telefoon'),     placeholder: '06 12345678' },
@@ -415,7 +423,7 @@ export default function KlantenClient({ profile, openByClient = null }: {
                         {client.iban        && <InfoLine label="IBAN" value={client.iban} />}
                         {client.phone       && <InfoLine label={t('kl.veld.telefoon')} value={client.phone} />}
                         {client.payment_term_days != null && <InfoLine label={t('kld.termijn')} value={t('kl.termijnDagen', { days: client.payment_term_days })} />}
-                        {client.address     && <InfoLine label={t('inst.adres')} value={[client.address, client.postal_code, client.city].filter(Boolean).join(', ')} />}
+                        {client.address     && <InfoLine label={t('inst.adres')} value={[client.address, client.postal_code, client.city, client.country && client.country !== 'NL' ? countryNameNl(client.country) : null].filter(Boolean).join(', ')} />}
                       </div>
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                         {/* [KLANTEN] Open the mini-CRM detail: history, notes, totals. */}

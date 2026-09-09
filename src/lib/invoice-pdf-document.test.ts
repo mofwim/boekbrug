@@ -768,3 +768,13 @@ test("[VERLEGD-VERKOOP] a document discount over two rows at rate 0 is split, no
   assert.ok(!text.includes("over € 400,00"), "the whole rate-0 allowance was subtracted from one row");
   assert.ok(text.includes("900,00"), "the total is the header's");
 });
+
+// ─── [KLANT-LAND] The country under the city, for a foreign customer only ──────────────
+test("[KLANT-LAND] a foreign customer's invoice names the country; a Dutch one prints the block it always did", async () => {
+  const de = await pdfText(await renderInvoicePdf({ ...INVOICE, invoice_number: "2026-031", client_country: "DE", client_btw_number: "DE123456789" }, ZERO_LINE, PROFILE));
+  assert.ok(de.includes("Duitsland"), "art. 35a: the address of a foreign customer includes the country");
+  const nl = await pdfText(await renderInvoicePdf({ ...INVOICE, invoice_number: "2026-032", client_country: "NL" }, ZERO_LINE, PROFILE));
+  assert.ok(!nl.includes("Nederland"), "a Dutch customer's block is unchanged");
+  const geen = await pdfText(await renderInvoicePdf({ ...INVOICE, invoice_number: "2026-033" }, ZERO_LINE, PROFILE));
+  assert.ok(!geen.includes("Nederland"), "…and so is one without a recorded country");
+});
