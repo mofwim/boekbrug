@@ -270,6 +270,9 @@ const DIENST: WorkSkin = {
   fields: [
     { key: "referentie", type: "text", labelKey: "werk.veld.referentie", onCard: true },
     { key: "afgesproken_uren", type: "number", labelKey: "werk.veld.afgesprokenUren", onCard: true },
+    // [OFFERTE-WERK] The agreed amount. An accepted offerte fills it, and from that moment the
+    // opdracht is measured against what the customer said yes to.
+    { key: "begroot", type: "number", labelKey: "werk.veld.begroot" },
     // [RETAINER] A fixed amount per period turns this opdracht into a retainer, billed by period —
     // the same arithmetic as the schoonmaak contract, because it is the same fact: money that
     // arrives every month for work that keeps running. The end date counts down to the renewal.
@@ -803,6 +806,49 @@ export function canInvoicePeriod(row: { status: string; repeat_every?: string | 
   if (row.status === "geannuleerd" || row.status === "gefactureerd") return false;
   if (!isPeriod(period) || period > periodOf(today)) return false;
   return !(row.billed_periods ?? []).some((p) => p.period === period);
+}
+
+// ── [OFFERTE-WERK] The accepted offerte becomes the work ──────────────────────────────────────
+//
+// The customer said yes to an amount. For a trade with a work screen that is the START of the
+// work, not the end of the sale: the hours and the purchases come after it. Everything the owner
+// would otherwise retype is already on the offerte, so it travels: the client, the lines, and the
+// agreed amount as the begroting the work is measured against while it runs.
+//
+// The line's KIND is the one thing an offerte does not carry. It is guessed from the unit (an
+// hour is arbeid), and the owner can change it — a wrong kind costs a label, never an amount.
+
+/** One line as an offerte stores it. */
+export interface OfferteLine {
+  description: string | null;
+  quantity: number | null;
+  unit: string | null;
+  unit_price: number | null;
+  btw_rate: number | null;
+}
+
+/** The offerte's lines as work lines: the amounts unchanged, the kind guessed from the unit. */
+export function workLinesFromOfferte(skin: WorkSkin, lines: readonly OfferteLine[]): WorkLine[] {
+  const kinds = skin.lineKinds;
+  const fallback = kinds[0];
+  return lines
+    // A price or a quantity that is not THERE is not zero — Number(null) is 0, and a line billed
+    // at nothing is money the owner never gets back. The same trap as in opdrachtgevers.ts.
+    .filter((l) => l.unit_price !== null && l.unit_price !== undefined && l.quantity !== null && l.quantity !== undefined
+      && Number.isFinite(Number(l.unit_price)) && Number.isFinite(Number(l.quantity)))
+    .map((l) => {
+      const unit = (l.unit ?? "").trim().toLowerCase();
+      const kind = kinds.find((k) => k.unit.toLowerCase() === unit) ?? fallback;
+      return {
+        kind: kind.kind,
+        description: String(l.description ?? "").slice(0, 200) || kind.kind,
+        quantity: round2(Number(l.quantity) || 0),
+        unit: l.unit && l.unit.trim() ? l.unit.trim() : kind.unit,
+        unit_price: round2(Number(l.unit_price) || 0),
+        btw_rate: typeof l.btw_rate === "number" ? l.btw_rate : (kind.btw ?? DEFAULT_LINE_BTW),
+      };
+    })
+    .slice(0, LINES_MAX);
 }
 
 // ── [STRIPPENKAART] Hours sold up front, drawn down by the work ───────────────────────────────

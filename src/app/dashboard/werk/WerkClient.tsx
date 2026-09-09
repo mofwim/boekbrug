@@ -29,7 +29,7 @@ import { failureText } from '@/lib/server-message'
 import { sendWithFit } from '@/lib/upload-fit'
 import { useDialog } from '@/components/ui/Dialog'
 import { normalizeKenteken, isKentekenShape, displayKenteken } from '@/lib/vehicle'
-import { amsterdamToday } from '@/lib/format-nl'
+import { amsterdamToday, formatEuroNL } from '@/lib/format-nl'
 import {
   workSkin, REPEAT_KEYS, canDelete, hoursBudget, phoneTarget, readyMessageNL, dueOn, inWindow, linesTotalInc, financialReadiness, overBudget, contractFee, periodOf, periodLabelNL,
   type WorkStatus, type WorkLine, type WorkMargin, type ContractStat,
@@ -53,7 +53,12 @@ type Detail = {
   margin: WorkMargin
   history: WorkHistory[]
   candidates: { hours: AttachedHours[]; costs: AttachedCost[] } | null
+  /** [OFFERTE-WERK] The accepted offerte this work came from, by name. */
+  offerte: { id: string; invoice_number: string | null } | null
 }
+
+/** [OFFERTE-WERK] One offerte that can still become work. */
+type OfferteOptie = { id: string; invoice_number: string | null; client_name: string | null; total_ex_btw: number | null; akkoord: boolean }
 
 type Filter = 'open' | 'vandaag' | 'week' | 'all' | 'contracten'
 
@@ -84,6 +89,9 @@ export default function WerkClient({ vak }: { vak: string }) {
   const [note, setNote] = useState('')
   const [suggestions, setSuggestions] = useState<LineSuggestion[]>([])
   const [previous, setPrevious] = useState<WorkLine[] | null>(null)
+  // [OFFERTE-WERK] The offertes that can still become work, and the one the owner picked.
+  const [offertes, setOffertes] = useState<OfferteOptie[]>([])
+  const [offerteId, setOfferteId] = useState('')
   // [CONTRACT] The portfolio, loaded when the chip is chosen; per client, this period's figures.
   const [contracts, setContracts] = useState<{ period: string; groups: Array<{ client_name: string; contracts: ContractStat[] }>; readFailed: boolean } | null>(null)
   // [WERK-STAND] What the screen opens on: the money position. null = not read yet; 'failed' = said so.
@@ -151,7 +159,7 @@ export default function WerkClient({ vak }: { vak: string }) {
       const res = await fetch(`/api/werk/${id}${withCandidates ? '?candidates=1' : ''}`)
       const json = await res.json()
       if (!res.ok) { setError(failureText(res.status, json, t('werk.fout.laden'))); return }
-      setDetail({ row: json.row, hours: json.hours ?? [], hoursTotal: json.hoursTotal ?? 0, costs: json.costs ?? [], documents: json.documents ?? [], invoice: json.invoice ?? null, margin: json.margin, history: json.history ?? [], candidates: json.candidates ?? null })
+      setDetail({ row: json.row, hours: json.hours ?? [], hoursTotal: json.hoursTotal ?? 0, costs: json.costs ?? [], documents: json.documents ?? [], invoice: json.invoice ?? null, margin: json.margin, history: json.history ?? [], candidates: json.candidates ?? null, offerte: json.offerte ?? null })
       const dirty = JSON.stringify(linesRef.current) !== JSON.stringify(detail?.row.lines ?? [])
       if (!(keepLines && dirty)) setLines(json.row.lines ?? [])
       setEditing(false)
@@ -163,7 +171,30 @@ export default function WerkClient({ vak }: { vak: string }) {
 
   function startCreate() {
     setForm({ ...EMPTY_FORM }); setLines([]); setPrevious(null); setError(''); setCreating(true)
+    setOfferteId('')
     void loadSuggestions()
+    // [OFFERTE-WERK] A failed read leaves the picker away; typing the work by hand still works.
+    void (async () => {
+      try {
+        const res = await fetch('/api/werk?offertes=1')
+        const json = await res.json().catch(() => ({}))
+        setOffertes(res.ok && Array.isArray(json.offertes) ? json.offertes : [])
+      } catch { setOffertes([]) }
+    })()
+  }
+
+  /** [OFFERTE-WERK] Picking an offerte fills what it knows; the lines and the amount come from
+   *  the server when the work is saved, so the agreement travels whole. */
+  function pickOfferte(id: string) {
+    setOfferteId(id)
+    const o = offertes.find((x) => x.id === id)
+    if (!o) return
+    setForm((f) => ({
+      ...f,
+      client_name: o.client_name ?? f.client_name,
+      title: f.title.trim() ? f.title : (o.invoice_number ? `Offerte ${o.invoice_number}` : f.title),
+    }))
+    setPrevious(null)
   }
 
   // "Regels van vorige keer": the courier's fixed tariff for this opdrachtgever, one tap.
@@ -190,11 +221,12 @@ export default function WerkClient({ vak }: { vak: string }) {
           kenteken: skin.vehicle && form.kenteken ? normalizeKenteken(form.kenteken) : undefined,
           fields: form.fields, lines,
           repeat_every: skin.recurring && form.repeat_every ? form.repeat_every : null,
+          offerte_id: offerteId || undefined,
         }),
       })
       const json = await res.json()
       if (!res.ok) { setError(failureText(res.status, json, t('werk.fout.opslaan'))); return }
-      setCreating(false); setForm({ ...EMPTY_FORM }); setLines([]); setPrevious(null)
+      setCreating(false); setForm({ ...EMPTY_FORM }); setLines([]); setPrevious(null); setOfferteId('')
       await load()
     } catch {
       setError(t('werk.fout.opslaan'))
@@ -445,6 +477,23 @@ export default function WerkClient({ vak }: { vak: string }) {
 
       {creating && (
         <WorkSheet title={t('werk.nieuw', { noun })} onClose={() => !busy && setCreating(false)} testId="work-create-sheet" error={error}>
+          {/* [OFFERTE-WERK] The accepted offerte becomes the work: its lines and its agreed
+              amount travel, and the offerte moves to the archive so there is one door to the money. */}
+          {offertes.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <label style={{ display: 'block', fontFamily: FONT, fontSize: 13, color: M3.onSurfaceVariant, marginBottom: 5 }} htmlFor="werk-offerte">{t('werk.offerte.kies')}</label>
+              <select id="werk-offerte" value={offerteId} disabled={busy} onChange={(e) => pickOfferte(e.target.value)}
+                style={{ width: '100%', fontFamily: FONT, fontSize: 15, padding: '10px 12px', borderRadius: 10, border: `1px solid ${M3.outlineVariant}`, background: M3.surface, color: M3.onSurface }}>
+                <option value="">{t('werk.offerte.geen')}</option>
+                {offertes.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {[o.invoice_number, o.client_name, o.total_ex_btw !== null ? formatEuroNL(o.total_ex_btw) : null, o.akkoord ? t('werk.offerte.akkoord') : null].filter(Boolean).join(' · ')}
+                  </option>
+                ))}
+              </select>
+              {offerteId && <p style={{ fontFamily: FONT, fontSize: 12.5, color: M3.onSurfaceVariant, margin: '6px 0 0' }}>{t('werk.offerte.uitleg')}</p>}
+            </div>
+          )}
           <WorkForm skin={skin} value={form} onChange={(v) => { setForm(v); if (v.client_name !== form.client_name) setPrevious(null) }} t={t} disabled={busy} />
           <button type="button" onClick={() => void lookupPrevious(form.client_name)} disabled={busy || !form.client_name.trim()} style={{ ...ghostButton, marginTop: 8 }}>{t('werk.vorigeZoeken')}</button>
           {previous && (
@@ -559,6 +608,14 @@ export default function WerkClient({ vak }: { vak: string }) {
             <MarginLine margin={detail.margin} hoursTotal={detail.hoursTotal} t={t} budget={hoursBudget(detail.row.fields, detail.hoursTotal)}
               estimate={overBudget(detail.row, detail.hours.filter((h) => !h.invoice_id && h.hourly_rate !== null).reduce((s, h) => s + h.hours * (h.hourly_rate ?? 0), 0))} />
           </div>
+
+          {/* [OFFERTE-WERK] Where this work came from. The offerte is archived, so this line is the
+              only place it is still named — and the number is what the customer said yes to. */}
+          {detail.offerte && (
+            <p style={{ fontFamily: FONT, fontSize: 13, color: M3.onSurfaceVariant, margin: '12px 0 0' }}>
+              {t('werk.offerte.uit', { nummer: detail.offerte.invoice_number ?? '—' })}
+            </p>
+          )}
 
           {detail.history.length > 0 && (
             <>

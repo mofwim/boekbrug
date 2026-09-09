@@ -28894,6 +28894,15 @@ test("[WERK] the trade's own work is one primitive, built on the app, and never 
   assert.match(stand, /if \(h\.work_item_id && bundleIds\.has\(h\.work_item_id\)\) continue;/, "prepaid hours are never counted as waiting for an invoice");
   assert.match(pure, /if \(oud && oud\.n > 0\) out\.push\(\{ kind: "hours_unbilled_old"/, "and a read that did not run raises nothing");
 
+  // [OFFERTE-WERK] The accepted offerte becomes the work. One offerte becomes ONE piece of work
+  // (a unique index), and the offerte is archived the moment it does — an agreement with two open
+  // doors to the money is an agreement that can be invoiced twice. If it cannot be archived the
+  // work is deleted again, and deleting the work reopens the offerte.
+  assert.match(code("supabase/migrations/work_items_offerte.sql"), /CREATE UNIQUE INDEX IF NOT EXISTS work_items_offerte_once_idx/);
+  assert.match(api, /if \(offerteId\) \{[\s\S]*?status: "archived"[\s\S]*?from\("work_items"\)\.delete\(\)/, "an offerte that cannot be archived takes its work with it");
+  assert.match(api, /if \(current\.offerte_id\) \{[\s\S]{0,300}?update\(\{ status: "sent" \}\)/, "deleting the work reopens its offerte");
+  assert.match(pure, /l\.unit_price !== null && l\.unit_price !== undefined/, "a line without a price is left out, never copied as zero");
+
   assert.ok(existsSync("tests/render/werk.test.tsx"), "the screen is on the render line");
 });
 

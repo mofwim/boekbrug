@@ -476,6 +476,8 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('work_items.sql', 'column', 'work_item_id', 'documents', 'public'),
   ('work_items.sql', 'index', 'idx_documents_work_item', null, 'public'),
   ('work_items.sql', 'index', 'idx_invoices_work_item', null, 'public'),
+  ('work_items_offerte.sql', 'column', 'offerte_id', 'work_items', 'public'),
+  ('work_items_offerte.sql', 'index', 'work_items_offerte_once_idx', null, 'public'),
   ('work_items_periods.sql', 'column', 'billed_periods', 'work_items', 'public'),
   ('work_items_repeat.sql', 'column', 'repeat_every', 'work_items', 'public'),
   ('work_items_repeat.sql', 'column', 'visits', 'work_items', 'public'),
