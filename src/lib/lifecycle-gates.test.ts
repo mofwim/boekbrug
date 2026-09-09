@@ -29397,3 +29397,64 @@ test("[ONDERHANDEN-WERK] the figure is dated, priced by the invoice's own arithm
   // figure into an addition instead of a contradiction.
   assert.match(panel, /t\('ohw\.nietInSaldo'\)/);
 });
+
+// ─── [RITTEN] The kilometre log: a deduction set by law, and travel a customer still owes ─────
+//
+// A zzp'er who drives to customers in a private car has two amounts riding on one habit: writing
+// the trip down on the day. € 0,23 per business kilometre comes off the profit, and the travel
+// agreed with a customer has to reach an invoice. Both go missing together.
+//
+// Two rules, and the first is the one that would rot quietly:
+//
+//   1. The statutory rate is a LAW, looked up by year, and never stored on a row. A rate frozen
+//      into four thousand rows is a rate nobody can correct when it changes — and the correction
+//      would be a migration over somebody's filed tax return.
+//   2. A trip that is on an invoice is no longer an input field (art. 52 AWR: the evidence under
+//      an invoice has to keep agreeing with it). Every write says so to the database.
+test("[RITTEN] the rate follows the year, a billed trip is frozen, and a private one is neither a deduction nor a debt", () => {
+  const pure = code("src/lib/ritten.ts");
+  const route = code("src/app/api/ritten/route.ts");
+  const panel = code("src/app/dashboard/uren/RittenPanel.tsx");
+  const migration = readFileSync("supabase/migrations/kilometeradministratie.sql", "utf8");
+
+  // Rule 1: a table by year, and no rate column for the deduction anywhere in the schema.
+  assert.match(pure, /export function kmDeductionRate\(year: number\): number/);
+  assert.match(pure, /\{ from: 2024, rate: 0\.23 \}/);
+  assert.match(pure, /\{ from: 2023, rate: 0\.21 \}/);
+  assert.doesNotMatch(migration, /deduction_rate|aftrek_tarief/,
+    "the statutory rate must never be frozen into a row");
+  // An unknown future year keeps the newest rate — a zero would silently erase a deduction.
+  assert.match(pure, /return 0\.19;/);
+
+  // Rule 2: every write refuses a trip that is already on an invoice, and says which of the two
+  // reasons it was — "something went wrong" leaves an owner who lost a correction with nothing.
+  assert.equal(route.match(/\.is\("invoice_id", null\)/g)?.length, 2,
+    "PATCH and DELETE must both refuse a billed trip at the database, not in a branch");
+  assert.equal(route.match(/code: "already_billed"/g)?.length, 2);
+  // [NO-SILENT-EMPTY] A failed read is not an empty log — the deduction hangs on this number.
+  assert.match(route, /code: "load_failed" \}, \{ status: 503 \}/);
+  assert.match(panel, /\{failed && \(/);
+
+  // A private trip is neither a deduction nor a debt; an absent column reads as business, because
+  // a business trip is the only kind anyone writes down here.
+  assert.match(pure, /return entry\.business !== false;/);
+  assert.match(pure, /if \(!isBusiness\(entry\)\) continue;/);
+  // Null and zero are different answers: "not charged on" against "travel offered free".
+  assert.match(pure, /if \(rate === null \|\| rate === undefined\) return null;/);
+  // [CENT] The value is rounded once, where the invoice line will round it.
+  assert.match(pure, /return round2\(km \* r\);/);
+
+  // The log carries what a kilometre log has to carry, and every field is required in the schema
+  // rather than in a screen that can be bypassed.
+  for (const column of ["driven_on", "from_place", "to_place", "purpose", "kilometers"]) {
+    assert.match(migration, new RegExp(`${column}\\s+\\S+[^,]*NOT NULL`),
+      `${column} is part of what makes this a log the Belastingdienst can read`);
+  }
+  assert.match(migration, /invoice_id\s+uuid REFERENCES public\.invoices\(id\) ON DELETE SET NULL/,
+    "throw the concept away and those kilometres are billable again — they were still driven");
+  assert.match(migration, /ALTER TABLE public\.mileage_entries ENABLE ROW LEVEL SECURITY/);
+  assert.equal(migration.match(/CREATE POLICY mileage_entries_/g)?.length, 4);
+
+  // The log lives on the hours screen, not behind a door of its own ([KORTE-WEG]).
+  assert.match(code("src/app/dashboard/uren/UrenClient.tsx"), /\{tab === 'km' && <RittenPanel clients=\{clients\} \/>\}/);
+});

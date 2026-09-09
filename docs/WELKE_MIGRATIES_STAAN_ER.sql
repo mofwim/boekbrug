@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 144 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 145 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 17 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -327,6 +327,12 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('invoices_deposit.sql', 'index', 'invoices_deposit_on_offerte_idx', null, 'public'),
   ('invoices_first_viewed.sql', 'column', 'first_viewed_at', 'invoices', 'public'),
   ('kas_opening_balance.sql', 'column', 'kas_opening_balance', 'profiles', 'public'),
+  ('kilometeradministratie.sql', 'index', 'idx_mileage_entries_invoice', null, 'public'),
+  ('kilometeradministratie.sql', 'index', 'idx_mileage_entries_owner', null, 'public'),
+  ('kilometeradministratie.sql', 'policy', 'mileage_entries_delete_own', 'mileage_entries', 'public'),
+  ('kilometeradministratie.sql', 'policy', 'mileage_entries_insert_own', 'mileage_entries', 'public'),
+  ('kilometeradministratie.sql', 'policy', 'mileage_entries_select_own', 'mileage_entries', 'public'),
+  ('kilometeradministratie.sql', 'policy', 'mileage_entries_update_own', 'mileage_entries', 'public'),
   ('kluis_subscriptions.sql', 'index', 'kluis_subscriptions_session_uidx', null, 'public'),
   ('kluis_subscriptions.sql', 'index', 'kluis_subscriptions_user_idx', null, 'public'),
   ('kluis_subscriptions.sql', 'policy', 'kluis_subscriptions_select_own', 'kluis_subscriptions', 'public'),
@@ -608,7 +614,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 161
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 162
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen
