@@ -257,6 +257,30 @@ const INVOICE = {
   total_inc_btw: 1000,
 };
 const ZERO_LINE = [{ description: "Advies", quantity: 1, unit_price: 1000, btw_rate: 0, line_total: 1000 }];
+
+// ─── [KORTING-EENMAAL] A header-only invoice is already net of its discount ────────────
+//
+// With no lines the PDF synthesizes one rate row FROM the stored header total — and that total is
+// what the owner's screen computed, discount included. Running the header discount over that row
+// again printed a EUR 1.089 invoice (900 ex after 10%) as EUR 980,10, with no warning and a payment
+// QR that quietly vanished because its amount no longer matched the page.
+test("[KORTING-EENMAAL] a header-only invoice with a discount prints its stored total, once discounted", async () => {
+  const kop = { ...INVOICE, invoice_number: "2026-014", total_ex_btw: 900, btw_amount: 189, total_inc_btw: 1089,
+    discount_type: "percent", discount_value: 10 };
+  const text = await pdfText(await renderInvoicePdf(kop, [], PROFILE));
+  assert.ok(text.includes("1.089,00"), "the total the header carries — the customer's amount");
+  assert.ok(!text.includes("980,10"), "not the header total discounted a second time");
+  assert.ok(!text.includes("Korting"), "no lines, no discount row: the discount is already inside the header");
+});
+
+test("[KORTING-EENMAAL] …while an invoice WITH lines still shows and applies its discount, once", async () => {
+  const kop = { ...INVOICE, invoice_number: "2026-015", total_ex_btw: 900, btw_amount: 189, total_inc_btw: 1089,
+    discount_type: "percent", discount_value: 10 };
+  const text = await pdfText(await renderInvoicePdf(kop,
+    [{ description: "Advies", quantity: 10, unit_price: 100, btw_rate: 21, line_total: 1000 }], PROFILE));
+  assert.ok(text.includes("Korting (10%)"), "the discount row is named");
+  assert.ok(text.includes("1.089,00"), "…and the page adds up to the stored total");
+});
 const NOTE = "Vrijgesteld van btw op grond van artikel 11-1-o Wet OB (onderwijs).";
 
 test("[BTW-VERKLARING] a KOR invoice says why it charges nothing", async () => {

@@ -223,6 +223,11 @@ export async function GET(req: NextRequest) {
       )
       .in("sender_id", chunk)
       .eq("direction", "outgoing")
+      // [WIK-VORDERING] Only a factuur can be owed. An offerte is 'sent' too, with its "geldig
+      // tot" in due_date, and reminderTierDue already refused to write it a letter — but the
+      // claims loop below sums the CANDIDATE set, and an expired quote walked into the hoofdsom.
+      // Refused twice, here and in claimableForWik, because the sum is a legal amount.
+      .eq("invoice_type", "factuur")
       .in("status", ["sent", "overdue"])
       .eq("reminders_paused", false)
       .not("due_date", "is", null)

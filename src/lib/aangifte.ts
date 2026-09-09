@@ -52,7 +52,14 @@ export type AangifteInput = Pick<
   // OB). Not part of FinancialResult because it changes nothing there: the invoice carries no BTW,
   // so it is a plain cost. It changes the AANGIFTE on two lines at once — owed in 2a, deducted in
   // 5b — and those two must be the same number or they stop cancelling. See verlegde-btw.ts.
-  verlegdNaarMij?: { grondslag: number; btw: number; aantal: number } | null;
+  // [VERLEGD-AFTREK] `aftrekbaar` is what of that BTW the owner may deduct: equal to `btw` for a
+  // full right of deduction (absent means exactly that), less under the exempt regime, and the
+  // caller's business to compute because only it knows the regime. See totaalVerlegd.
+  verlegdNaarMij?: { grondslag: number; btw: number; aantal: number; aftrekbaar?: number } | null;
+  // [KOR] The owner has declared the kleineondernemersregeling. Under it there is no right of
+  // deduction at all (art. 25 Wet OB), so verlegde BTW is owed in 2a and nothing of it returns in
+  // 5b — whatever share the caller computed.
+  korActive?: boolean;
 };
 
 export interface AangifteCompleteness {
@@ -209,7 +216,10 @@ export function buildAangifte(
   // sale invoiced earlier — has a genuinely negative 3b, and clamping that to zero would leave
   // the credit sitting in 1e while the ICP-opgaaf beside it reports the negative. The two are
   // handed to the same accountant; they may not contradict each other.
-  const intraEu = Math.round(input.intraEuOmzet ?? 0);
+  // euro(), not Math.round: this file's own header says why, and a net-negative EU quarter is
+  // where the two differ (Math.round(-1.5) is -1, euro(-1.5) is -2 — the 1e bucket it must match
+  // is rounded with euro, so the two would disagree about the same credit note).
+  const intraEu = euro(input.intraEuOmzet ?? 0);
   const e1 = euro(om1e);
   // Only ever move what 1e actually holds, in the direction it holds it. Mixed signs (positive
   // EU turnover against a negative 0%-bucket, or the reverse) move nothing: there is no honest
@@ -241,8 +251,21 @@ export function buildAangifte(
   }
 
   const verschuldigd = rows.reduce((s, r) => s + r.btw, 0); // 5a — sum of rounded rubrieken
-  // 5b = de gedocumenteerde voorbelasting PLUS de verlegde BTW die hierboven in 2a is aangegeven.
-  const voorbelasting = euro(input.btwVoorbelasting) + verlegdBtw;
+  // 5b = de gedocumenteerde voorbelasting PLUS het AFTREKBARE deel van de verlegde BTW uit 2a.
+  //
+  // [VERLEGD-AFTREK] What of 2a returns in 5b follows the owner's RIGHT of deduction, not the
+  // rubriek. With a full right — every owner without a regime — it is the same rounded number as
+  // 2a and the two cancel, which is the case the comment above describes. Under the KOR there is
+  // no right of deduction at all (art. 25 Wet OB): 2a is owed and nothing comes back. Under the
+  // exempt regime each verlegde purchase follows the owner's attribution and the pro-rata
+  // percentage, exactly like the ordinary voorbelasting does in financial-result. Before this, 5b
+  // took the whole 2a amount for everyone: a partly exempt owner (pro rata 20%) with EUR 10.000 of
+  // subcontracting deducted EUR 2.100 where EUR 420 was allowed — EUR 1.680 understated on a
+  // return they sign, and the note beside it said "per saldo betaal je er niets over".
+  const verlegdAftrek = !verlegd || input.korActive
+    ? 0
+    : euro(typeof verlegd.aftrekbaar === "number" ? verlegd.aftrekbaar : verlegd.btw);
+  const voorbelasting = euro(input.btwVoorbelasting) + verlegdAftrek;
   const saldo = verschuldigd - voorbelasting;                // 5g
 
   // ── Honest notes — no false reassurance. Every figure states what it depends on. ──
@@ -439,10 +462,20 @@ export function buildAangifte(
   // factuur — die draagt geen BTW — dus het is afgeleid uit wat er geleverd is, en dat hoort de
   // eigenaar te weten voordat zijn boekhouder het indient.
   if (verlegd && verlegd.aantal > 0) {
+    // [VERLEGD-AFTREK] The middle sentence states what 5b really took back, because "per saldo
+    // betaal je er niets over" is only true for an owner with a full right of deduction.
+    const aftrekZin = input.korActive
+      ? "Die BTW staat als verschuldigd in rubriek 2a. Onder de KOR heb je geen recht op aftrek, dus in " +
+        "5b komt er niets van terug: je betaalt die BTW."
+      : verlegdAftrek === verlegdBtw
+        ? "Die BTW staat als verschuldigd in rubriek 2a én is in dezelfde aangifte weer afgetrokken (5b), " +
+          "dus per saldo betaal je er niets over."
+        : `Die BTW (€${verlegdBtw.toLocaleString("nl-NL")}) staat als verschuldigd in rubriek 2a; daarvan is ` +
+          `€${verlegdAftrek.toLocaleString("nl-NL")} in 5b afgetrokken, volgens je toewijzing van die inkopen aan ` +
+          "belast of vrijgesteld werk en je pro-rata-percentage. Het verschil betaal je.";
     notes.push(
       `Er ${verlegd.aantal === 1 ? "is 1 inkoopfactuur" : `zijn ${verlegd.aantal} inkoopfacturen`} waarop de ` +
-      "leverancier de BTW naar jou heeft verlegd. Die BTW staat als verschuldigd in rubriek 2a én is " +
-      "in dezelfde aangifte weer afgetrokken (5b), dus per saldo betaal je er niets over. Let op: op " +
+      `leverancier de BTW naar jou heeft verlegd. ${aftrekZin} Let op: op ` +
       "zo'n factuur staat GEEN tarief — dat volgt uit wat er geleverd is. Controleer dat met je boekhouder.",
     );
   }

@@ -21,6 +21,7 @@
 import { useMemo, useState } from 'react'
 // [TZ] One clock for every door — see the note at amsterdamToday().
 import { deliveryFailure } from '@/lib/invoice-delivery'
+import { lineNetEx } from '@/lib/invoice-discount'
 import { amsterdamToday } from '@/lib/format-nl'
 import { translator } from '@/lib/i18n/t'
 import { useLocale } from '@/lib/i18n/use-locale'
@@ -116,13 +117,19 @@ export default function AccountantFactuur({ klanten, gekoppeld = [], vooraf = nu
   //
   // Dezelfde reden waarom de twee eigenaars-editors deze kopie al kwijt zijn. Dit scherm stond
   // buiten de poort die dat bewaakt: die liep langs drie met de hand getypte bestanden.
+  // [REGEL-AFRONDING] And with each line ROUNDED first, the way the server stores it. Without
+  // line_total, computeInvoiceTotals falls back to quantity × unit_price unrounded — its own doc
+  // comment names this caller shape as the hazard — and the screen drifts a cent from the
+  // document again, by another road: 2 × (1,5 uur @ 33,33) showed 120,99 here against the 121,00
+  // /api/invoice/draft stores and the customer receives. lineNetEx is what the owner's two editors
+  // hand it, so all three screens and the server round the same line the same way.
   const totalen = useMemo(() => {
     const t = computeInvoiceTotals(
-      regels.map((r) => ({
-        quantity: naarGetal(r.quantity),
-        unit_price: naarGetal(r.unit_price),
-        btw_rate: r.btw_rate,
-      })),
+      regels.map((r) => {
+        const quantity = naarGetal(r.quantity)
+        const unit_price = naarGetal(r.unit_price)
+        return { quantity, unit_price, btw_rate: r.btw_rate, line_total: lineNetEx({ quantity, unit_price }) }
+      }),
     )
     return { ex: t.total_ex_btw, btw: t.btw_amount, inc: t.total_inc_btw }
   }, [regels])

@@ -34,7 +34,7 @@ import { matchArticles, foldText, type Article } from '@/lib/articles'
 import { COMMON_PAYMENT_TERMS, DEFAULT_PAYMENT_TERM, MAX_PAYMENT_TERM_DAYS, parsePaymentTerm, dueDateFromTerm, longPaymentTermNotice } from '@/lib/payment-term'
 import { applyDiscount, parseDiscount, discountLabel, lineNetEx } from '@/lib/invoice-discount'
 // [AANBETALING] A deposit on an offerte and its settlement on the final invoice — see aanbetaling.ts.
-import { depositLines, settlementLines, parseDepositPercent } from '@/lib/aanbetaling'
+import { depositLines, settlementLines, parseDepositPercent, discountLines, type OfferteSource } from '@/lib/aanbetaling'
 // [REGEL-AFRONDING] round2: de uitsplitsing hieronder rekent over dezelfde afgeronde
 // regelbedragen als het totaal, en als invoice_lines.line_total.
 import { round2 } from '@/lib/invoice-totals'
@@ -189,6 +189,20 @@ type InvoiceLine = {
   // [BOEK-031] AI translation support per line
   translating?: boolean
   rawInput?: string
+}
+
+// [AANBETALING-KORTING] The offerte's document discount as credit lines for the final invoice. Only
+// read when a deposit is settled — a header discount over a subtotal that already holds the
+// settlement discounts the deposit twice. Why and how: aanbetaling.ts.
+function offerteDiscountLines(
+  offLines: OfferteSource['lines'] | null,
+  offHead: { discount_type?: unknown; discount_value?: unknown; invoice_number?: string | null } | null,
+): InvoiceLine[] {
+  return discountLines({
+    lines: offLines ?? [],
+    discount: parseDiscount(offHead?.discount_type, offHead?.discount_value),
+    invoiceNumber: offHead?.invoice_number ?? null,
+  }).map(l => ({ ...l, unit: null }))
 }
 
 // ─── Config ────────────────────────────────────────────────────────────────────
@@ -607,6 +621,8 @@ function NewInvoicePageContent() {
   const depositPct = offerteParam ? parseDepositPercent(aanbetalingParam) : null
   // [AANBETALING] The numbers of the deposits the final invoice settles — for the banner only.
   const [settledDeposits, setSettledDeposits] = useState<string[]>([])
+  // [AANBETALING-KORTING] The offerte's document discount travelled as credit lines (see the load).
+  const [discountAsLines, setDiscountAsLines] = useState(false)
 
   // [SUBNAV] Dynamic title (factuur / offerte / creditnota) + the offerte
   // "Omzetten naar factuur" action, pushed into the shared sub-page header.
@@ -724,6 +740,7 @@ function NewInvoicePageContent() {
           .select('discount_type, discount_value, invoice_number')
           .eq('id', offerteParam)
           .maybeSingle()
+        let discountTravelledAsLines = false
         if (depositPct) {
           // [AANBETALING] Not the offerte's lines: a share of them, per btw rate, after the
           // offerte's own discounts. No document discount on the deposit — it is already inside
@@ -749,9 +766,14 @@ function NewInvoicePageContent() {
           // [AANBETALING] Every ISSUED deposit on this offerte comes off as a credit line per rate.
           const deposits = await issuedDepositsOn(supabase, offerteParam)
           setSettledDeposits(deposits.numbers)
-          setLines([...fromOfferte, ...deposits.lines])
+          // [AANBETALING-KORTING] With a deposit to settle, the document discount comes along as
+          // credit lines, not as the header discount — see offerteDiscountLines above.
+          const korting = deposits.lines.length > 0 ? offerteDiscountLines(offLines, offHead) : []
+          discountTravelledAsLines = korting.length > 0
+          setDiscountAsLines(discountTravelledAsLines)
+          setLines([...fromOfferte, ...korting, ...deposits.lines])
         }
-        if (!depositPct && (offHead?.discount_type === 'percent' || offHead?.discount_type === 'amount')) {
+        if (!depositPct && !discountTravelledAsLines && (offHead?.discount_type === 'percent' || offHead?.discount_type === 'amount')) {
           setDiscountType(offHead.discount_type)
           setDiscountValue(offHead.discount_value == null ? '' : String(offHead.discount_value))
         }
@@ -1647,7 +1669,7 @@ function NewInvoicePageContent() {
                     <><strong>{t('nieuw.banner.aanbetaling', { pct: depositPct })}</strong> — {t('nieuw.banner.aanbetalingUitleg')}</>
                   ) : (
                     <><strong>{t('nieuw.banner.vanOfferte')}</strong> — {t('nieuw.banner.vanOfferteUitleg')}
-                    {settledDeposits.length > 0 && <> · {t('nieuw.banner.aanbetalingVerrekend', { numbers: settledDeposits.join(', ') })}</>}</>
+                    {settledDeposits.length > 0 && <> · {t('nieuw.banner.aanbetalingVerrekend', { numbers: settledDeposits.join(', ') })}</>}{discountAsLines && <> · {t('nieuw.banner.kortingAlsRegel')}</>}</>
                   )}
                 </p>
               </div>

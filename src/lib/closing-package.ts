@@ -138,7 +138,8 @@ import { resolveSchemeSettlements, mergeSchemeOpts } from "./kas-payment-events-
 // and the result engine use, so the accountant's package cannot show different rubrieken.
 import { fetchRateShares } from "./btw-rate-split-fetch";
 import { collectVatExemption } from "./vat-exemption-collect";
-import { exemptShareOf } from "./vat-exemption";
+import { verlegdeBtwOpInkoop, totaalVerlegd } from "./verlegde-btw";
+import { exemptShareOf, getVatDeduction } from "./vat-exemption";
 import { round2 } from "./invoice-totals";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -155,6 +156,8 @@ export interface PackageInvoice {
   total_ex_btw: number | null;
   btw_amount: number | null;
   total_inc_btw: number | null;
+  // [VERLEGD-NAAR-MIJ] The reader's marks; `_btw_verlegd` is what puts a purchase in rubriek 2a.
+  field_confidence?: Record<string, unknown> | null;
   invoice_date: string | null;
   due_date: string | null;
   pdf_url: string | null;            // outgoing PDF (FACTUUR-A)
@@ -1349,7 +1352,7 @@ const INVOICE_FIELDS =
   // [CREDIT-REF] original_invoice_id rijdt mee zodat de creditnota-e-factuur in het pakket
   // dezelfde BillingReference draagt als zijn gemailde/gedownloade tweeling — twee e-facturen
   // van één document die verschillen is precies de drift waar ubl-inputs.ts tegen bestaat.
-  "id, invoice_number, client_name, status, direction, invoice_type, tax_kind, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, client_address, client_postal_code, client_city, marked_paid_at, payment_method, payment_date, source, sender_id, receiver_id, discount_type, discount_value, original_invoice_id" as const;
+  "id, invoice_number, client_name, status, direction, invoice_type, tax_kind, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, client_address, client_postal_code, client_city, marked_paid_at, payment_method, payment_date, source, sender_id, receiver_id, field_confidence, discount_type, discount_value, original_invoice_id" as const;
 
 /**
  * [DATE-GAP] Verified invoices that carry NO invoice_date. Postgres range filters
@@ -2927,9 +2930,42 @@ export async function buildClosingPackageZip(args: {
       message: "De bankregels konden niet volledig worden gelezen. Daarom zit er geen concept-BTW-aangifte in dit pakket — die zou bankmutaties missen. De facturen en bestanden zijn wel compleet. Genereer het pakket opnieuw.",
     });
   }
+  // ── [VERLEGD-NAAR-MIJ] Rubriek 2a, from the same rows and the same rule as /api/aangifte. This
+  //    package is the concept the accountant signs off, so it may not lack a rubriek the owner's
+  //    screen shows — the two concepts then disagree about 5a and 5b for one quarter, and the
+  //    person who has to explain that to the Belastingdienst is reading the wrong one.
+  //    [VERLEGD-AFTREK] The deductible share follows the owner's regime, exactly as in the route:
+  //    none under the KOR (art. 25 Wet OB), the attribution and pro rata under the exempt regime.
+  //    [VERLEGD-GRONDSLAG] The stored header first; the reader's frozen grondslag only when the
+  //    header carries nothing.
+  const aftrekDeelVan = (invoiceId: string | null | undefined): number => {
+    if (korActive) return 0;
+    if (!exemption.active) return 1;
+    switch (getVatDeduction(invoiceId ? exemption.deductionByInvoice.get(invoiceId) : null)) {
+      case "direct_taxed": return 1;
+      case "direct_exempt": return 0;
+      default: return typeof result.proRataPercent === "number" ? result.proRataPercent / 100 : 0;
+    }
+  };
+  const verlegdeVondsten = incoming
+    .filter((i) => ["received", "paid"].includes(String(i.status ?? "")))
+    .map((i) => {
+      const fc = i.field_confidence;
+      const merk = fc && typeof fc === "object" ? (fc._btw_verlegd as { grondslag: number | null } | undefined) : undefined;
+      if (!merk) return null;
+      const kop = Number(i.total_ex_btw);
+      return verlegdeBtwOpInkoop({
+        text: "btw verlegd",
+        totalExBtw: Number.isFinite(kop) && kop !== 0 ? kop : merk.grondslag,
+        btwAmount: i.btw_amount,
+        aftrekDeel: aftrekDeelVan(i.id),
+      });
+    })
+    .filter((v): v is NonNullable<typeof v> => v !== null);
+
   const conceptAangifte = hasDeclarable && !ledgerReadFailed
     ? buildAangifte(
-        { ...result, intraEuOmzet: icp.totalExBtw },
+        { ...result, intraEuOmzet: icp.totalExBtw, verlegdNaarMij: totaalVerlegd(verlegdeVondsten), korActive },
         { ...completeness, euPurchaseNote: foreignPurchaseNote(euPurchases) },
         `Q${quarter} ${year}`, regimeNotes,
       )

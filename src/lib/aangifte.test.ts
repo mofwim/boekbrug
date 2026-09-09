@@ -654,6 +654,54 @@ console.log("\n— [VERLEGD-NAAR-MIJ] zonder verlegging blijft de aangifte preci
   check("een nul-verlegging levert geen rubriek op", !nul.rows.some((r) => r.code === "2a"));
 }
 
+console.log("\n— [VERLEGD-AFTREK] wat van 2a in 5b terugkomt volgt het recht op aftrek —");
+{
+  // 5b nam het hele 2a-bedrag voor iedereen. Een deels vrijgestelde eigenaar (pro rata 20%) met
+  // € 10.000 onderaanneming trok zo € 2.100 af waar € 420 mocht — € 1.680 te weinig aangegeven,
+  // en de notitie ernaast zei "per saldo betaal je er niets over".
+  const basis: AangifteInput = {
+    salesByRate: [{ rate: 21, omzet: 50000, btw: 10500 }],
+    btwVoorbelasting: 3000,
+    cashOmzetZonderBtw: 0,
+  };
+  const pro = buildAangifte(
+    { ...basis, exemptRegime: true, proRataPercent: 20, verlegdNaarMij: { grondslag: 10000, btw: 2100, aantal: 1, aftrekbaar: 420 } },
+    compl(), "Q2 2026",
+  );
+  check("2a blijft het volle bedrag: 2.100", pro.rows.find((r) => r.code === "2a")?.btw === 2100);
+  check("5a telt het volle bedrag: 10.500 + 2.100 = 12.600", pro.verschuldigd === 12600);
+  check("5b neemt alleen het aftrekbare deel: 3.000 + 420 = 3.420", pro.voorbelasting === 3420);
+  check("5g draagt het verschil: 12.600 − 3.420 = 9.180", pro.saldo === 9180);
+  check("de notitie noemt beide bedragen", pro.notes.some((n) => n.includes("€2.100") && n.includes("€420")));
+  check("…en belooft niet langer dat het per saldo niets kost",
+    !pro.notes.some((n) => n.includes("per saldo betaal je er niets over")));
+
+  // KOR: geen recht op aftrek (art. 25 Wet OB) — wat de aanroeper ook meegeeft.
+  const kor = buildAangifte(
+    { ...basis, korActive: true, verlegdNaarMij: { grondslag: 10000, btw: 2100, aantal: 1, aftrekbaar: 2100 } },
+    compl(), "Q2 2026",
+  );
+  check("onder de KOR komt er niets terug in 5b", kor.voorbelasting === 3000);
+  check("…terwijl 5a 2a wél draagt", kor.verschuldigd === 12600);
+  check("de notitie zegt dat je die BTW betaalt", kor.notes.some((n) => n.includes("Onder de KOR heb je geen recht op aftrek")));
+
+  // Een aanroeper zonder aftrekbaar-veld (volledig recht op aftrek): precies het oude gedrag.
+  const oud = buildAangifte({ ...basis, verlegdNaarMij: { grondslag: 10000, btw: 2100, aantal: 1 } }, compl(), "Q2 2026");
+  check("zonder aftrekbaar-veld valt 2a tegen 5b weg", oud.voorbelasting === 5100 && oud.saldo === 7500);
+}
+
+console.log("\n— [EURO] 3b rondt af zoals de rest van het formulier —");
+{
+  // Een netto-negatief EU-kwartaal van € −1,50. Math.round gaf −1 tegen een 1e-pot die met euro()
+  // op −2 stond: € −1 bleef in 1e achter naast een ICP-opgaaf die −2 zegt.
+  const a = buildAangifte(
+    { salesByRate: [{ rate: 0, omzet: -1.5, btw: 0 }], intraEuOmzet: -1.5, btwVoorbelasting: 0, cashOmzetZonderBtw: 0 },
+    compl(), "Q1 2026",
+  );
+  check("3b = −2, hetzelfde als euro(−1,5)", a.rows.find((r) => r.code === "3b")?.omzet === -2);
+  check("niets blijft in 1e achter", !a.rows.some((r) => r.code === "1e"));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
 

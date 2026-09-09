@@ -946,3 +946,32 @@ test("[CREDIT-VERVALDATUM] a creditnota without an IBAN says out loud that the d
   );
   assert.ok(warnings.some((w) => /due date/.test(w)), "a dropped legal date is a fact, and warnings is where facts go");
 });
+
+// ─── [KORTING-EENMAAL] A header-only invoice is already net of its discount ────────────────
+//
+// effectiveLines synthesizes one summary line from the STORED totals when the row has no lines,
+// and those totals are what the owner's screen computed — discount included. Running the header
+// discount over that line again exported a 1.089,00 invoice as PayableAmount 980.10: EUR 108,90
+// short, in a file that was still delivered, with the mismatch reaching nothing but a warning.
+test("[KORTING-EENMAAL] a header-only invoice with a discount exports the header's own totals", () => {
+  const { xml, warnings } = buildInvoiceUbl(
+    header({ total_ex_btw: 900, btw_amount: 189, total_inc_btw: 1089, discount_type: "percent", discount_value: 10 }),
+    [],
+    supplier,
+  );
+  assert.match(xml, /<cbc:TaxExclusiveAmount currencyID="EUR">900\.00</);
+  assert.match(xml, /<cbc:TaxAmount currencyID="EUR">189\.00</);
+  assert.match(xml, /<cbc:PayableAmount currencyID="EUR">1089\.00</);
+  assert.doesNotMatch(xml, /AllowanceCharge/, "no lines, no allowance: the discount is inside the header");
+  assert.ok(!warnings.some((w) => /differs from derived/.test(w)), `the file agrees with its header: ${warnings.join(" | ")}`);
+});
+
+test("[KORTING-EENMAAL] …while a line-carrying invoice still applies it, once", () => {
+  const { xml } = buildInvoiceUbl(
+    header({ total_ex_btw: 900, btw_amount: 189, total_inc_btw: 1089, discount_type: "percent", discount_value: 10 }),
+    [line({ quantity: 10, unit_price: 100, line_total: 1000, discount_type: null, discount_value: null })],
+    supplier,
+  );
+  assert.match(xml, /AllowanceCharge/);
+  assert.match(xml, /<cbc:PayableAmount currencyID="EUR">1089\.00</);
+});
