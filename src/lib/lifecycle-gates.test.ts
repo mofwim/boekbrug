@@ -28860,7 +28860,7 @@ test("[VERLEGD-AFTREK] the route and the package hand 2a the owner's right of de
   assert.match(code("src/lib/verlegde-btw.ts"), /aftrekbaar \+= v\.bedrag \* v\.aftrekDeel;/,
     "the 2a total no longer carries its deductible share");
   // The package can only read the mark if it asks for the column.
-  assert.match(code("src/lib/closing-package.ts"), /original_invoice_id, field_confidence" as const;/,
+  assert.match(code("src/lib/closing-package.ts"), /INVOICE_FIELDS =[\s\S]{0,700}receiver_id, field_confidence, discount_type/,
     "INVOICE_FIELDS dropped field_confidence — every verlegde purchase then silently leaves the ZIP's 2a");
 });
 
@@ -28888,8 +28888,10 @@ test("[KORTING-EENMAAL] the PDF and the UBL apply the header discount only over 
 // over-declared the BTW consistently with the invoice.
 test("[AANBETALING-KORTING] the create screen turns the offerte's discount into credit lines beside the settlement", () => {
   const page = code("src/app/dashboard/invoice/new/page.tsx");
-  assert.match(page, /const korting = deposits\.lines\.length > 0\s*\?\s*discountLines\(\{/,
+  assert.match(page, /const korting = deposits\.lines\.length > 0 \? offerteDiscountLines\(offLines, offHead\) : \[\]/,
     "the offerte's document discount no longer becomes credit lines when there is a deposit to settle");
+  assert.match(page, /function offerteDiscountLines\([\s\S]{0,400}?discountLines\(\{/,
+    "…and the helper no longer reads the module that owns the apportionment");
   assert.match(page, /if \(!depositPct && !discountTravelledAsLines && \(offHead\?\.discount_type === 'percent'/,
     "the header discount is set beside the credit lines — the deposit is discounted twice again");
   assert.match(page, /t\('nieuw\.banner\.kortingAlsRegel'\)/, "the banner no longer says where the discount went");

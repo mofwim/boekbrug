@@ -1352,7 +1352,7 @@ const INVOICE_FIELDS =
   // [CREDIT-REF] original_invoice_id rijdt mee zodat de creditnota-e-factuur in het pakket
   // dezelfde BillingReference draagt als zijn gemailde/gedownloade tweeling — twee e-facturen
   // van één document die verschillen is precies de drift waar ubl-inputs.ts tegen bestaat.
-  "id, invoice_number, client_name, status, direction, invoice_type, tax_kind, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, client_address, client_postal_code, client_city, marked_paid_at, payment_method, payment_date, source, sender_id, receiver_id, discount_type, discount_value, original_invoice_id, field_confidence" as const;
+  "id, invoice_number, client_name, status, direction, invoice_type, tax_kind, total_ex_btw, btw_amount, total_inc_btw, invoice_date, due_date, pdf_url, document_id, client_btw_number, client_address, client_postal_code, client_city, marked_paid_at, payment_method, payment_date, source, sender_id, receiver_id, field_confidence, discount_type, discount_value, original_invoice_id" as const;
 
 /**
  * [DATE-GAP] Verified invoices that carry NO invoice_date. Postgres range filters
