@@ -21774,6 +21774,55 @@ test("[INTAKE-VOORTGANG] the add-button shows the upload's progress honestly, an
   assert.match(css, /inset-inline-start: -40%/, "…and it must run with the writing direction, not with `left`");
 });
 
+// ── [AUTO-UITLEG] A badge the app awarded on its own judgement is explained on screen ────────
+//
+// "Automatisch" means the app read and booked the invoice itself because shouldAutoAdvanceInvoice
+// passed; "Bon · al afgerekend" that it marked a receipt paid on the till's own tender line;
+// "Cijfers van de leverancier" that the figures are the supplier's, not a reading. Each was
+// explained in a title attribute, which a phone never shows. The owner asked for the sentence above
+// the list. What a gate must hold is the WORDING — every clause a check the rule actually runs, and
+// the two claims no retranslation may soften — and that the legend follows the rows: shown for a
+// badge in view, never for one that is not. The crossed-out chip and sentence go with it.
+test("[AUTO-UITLEG] the badges the app awards on its own judgement are explained once above the list, in words it can stand behind", () => {
+  const legend = code("src/components/ui/BadgeLegend.tsx");
+  assert.doesNotMatch(legend, /\bt\(/, "a component holds no language of its own");
+  assert.match(legend, /<strong>\{it\.badge\}<\/strong>/, "the line does not lead with the badge's own label");
+
+  const manage = code("src/app/dashboard/incoming/manage/IncomingManageClient.tsx");
+  // Each line only while a row on screen carries the badge — and labelled from the badge's OWN key.
+  assert.match(manage, /displayed\.some\(isAutoVerified\) \? \[\{ id: 'auto', icon: 'auto_awesome', badge: t\('inkoop\.automatisch'\), text: t\('ink\.autoUitleg'\) \}\]/);
+  assert.match(manage, /displayed\.some\(\(inv\) => autoPaidBasis\(inv\) !== null\) \? \[\{ id: 'bon', icon: 'receipt_long', badge: t\('inkoop\.bonAfgerekend'\), text: t\('ink\.bonAutoUitleg'\) \}\]/);
+  assert.match(manage, /displayed\.some\(\(inv\) => eInvoiceBadge\(inv\) !== null\) \? \[\{ id: 'efactuur', icon: 'verified', badge: t\('inkoop\.cijfersLeverancier'\), text: t\('ink\.eFactuurLegenda'\) \}\]/);
+  // The badges' own tooltips stay: a phone never shows a title, a desktop still does.
+  assert.match(manage, /title=\{t\('ink\.autoVerifiedUitleg'\)\}/);
+  // The Dutch of the first line: what the app did, on what ground, and the two claims that may not
+  // soften. Short, because it stands at rest ([RUSTIG]): the checks themselves are on every card.
+  const cat = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  const nl = /'ink\.autoUitleg': \{\s*nl: '([^']+)'/.exec(cat)?.[1] ?? "";
+  for (const clause of ["las en boekte deze factuur zelf", "elke controle slaagde", "Niets is betaald", "vóór je betaalt"]) {
+    assert.ok(nl.includes(clause), `the explanation lost: "${clause}"`);
+  }
+  assert.ok(nl.trim().split(/\s+/).length <= 20, "the explanation stands at rest and grew past twenty words — say it at the card instead");
+  assert.doesNotMatch(nl, /^Automatisch/, "the badge's label comes from the badge's own key, not typed into the sentence");
+  // The receipt line names what the paper must say for the app to have acted — the rule in
+  // receipt-auto-settle.ts — and the way back.
+  const bon = /'ink\.bonAutoUitleg': \{\s*nl: '([^']+)'/.exec(cat)?.[1] ?? "";
+  for (const clause of ["de bon noemt de betaalwijze", "Zet de betaling terug"]) {
+    assert.ok(bon.includes(clause), `the receipt explanation lost: "${clause}"`);
+  }
+
+  // The cash book's 🔗 marker, the same way: once above the ledger, only while such an entry is on screen.
+  const kas = code("src/app/dashboard/kas/KasClient.tsx");
+  assert.match(kas, /filteredEntries\.some\(\(e\) => e\.category === 'betaling'\)\s*\?\s*\[\{ id: 'betaling', icon: 'link', badge: '🔗', text: t\('kas\.betalingAutomatisch'\) \}\]/);
+
+  // …and the crossed-out block is gone: no "Zonder vervaldatum" chip, no total sentence. The total
+  // moved into the counter line ("287 van 502"), and only while the read is whole.
+  assert.doesNotMatch(manage, /'zonderDatum', t\(/, "the crossed-out chip is back");
+  assert.doesNotMatch(manage, /ink\.totaalDisclosure/, "the crossed-out sentence is back");
+  assert.doesNotMatch(cat, /'ink\.totaalDisclosure'|'ink\.bak\.zonderDatum'/, "an orphan key survived");
+  assert.match(manage, /hiddenCount > 0 && !loadIncomplete\s*\?\s*t\('ink\.tellingVan'/, "the total left the screen entirely — the counter must still say 'van {total}'");
+});
+
 test("[MEDEWERKER] the sales member has a way back, a bell and a way out", () => {
   // A whole persona worked in an app with no navigation at all. The layout hides the chrome, the
   // search and the bottom bar for a verkoopmedewerker — with a good argument, written out in

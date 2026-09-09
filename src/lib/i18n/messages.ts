@@ -6563,7 +6563,6 @@ export const MESSAGES = {
   'ink.bak.verlopen': { nl: 'Verlopen', ar: 'متأخرة', en: 'Overdue' },
   'ink.bak.dezeWeek': { nl: 'Deze week', ar: 'هذا الأسبوع', en: 'This week' },
   'ink.bak.later': { nl: 'Later', ar: 'لاحقاً', en: 'Later' },
-  'ink.bak.zonderDatum': { nl: 'Zonder vervaldatum', ar: 'بدون تاريخ استحقاق', en: 'No due date' },
   'ink.filter.zonderOrigineel': {
     nl: 'Zonder origineel',
     ar: 'بدون مستند أصلي',
@@ -8042,6 +8041,34 @@ export const MESSAGES = {
     ar: '{facturen} · مستحقة الدفع: {open} · مدفوعة: {paid}',
     en: '{facturen} · {open} to pay · {paid} paid',
   },
+  // [AUTO-UITLEG] The same line when the list is a window on a larger archive (the paid query
+  // stops at 200): the total in three words, where a whole sentence used to say it.
+  'ink.tellingVan': {
+    nl: '{facturen} van {total} · {open} te betalen · {paid} betaald',
+    ar: '{facturen} من أصل {total} · مستحقة الدفع: {open} · مدفوعة: {paid}',
+    en: '{facturen} of {total} · {open} to pay · {paid} paid',
+  },
+  // [AUTO-UITLEG] What the badges the app awards on its own judgement mean, said once above the
+  // list (BadgeLegend). The badge's own label is printed in front of each line from the badge's
+  // own key, so these hold the explanation only. They stand AT REST, so each is short by the
+  // standard in docs/RUSTIG.md ([RUSTIG] counts): what the app did, on what ground, and what the
+  // owner still does. The checks themselves are on every card ([CONTROLES-INKLAPPEN]); the two
+  // claims a retranslation may never soften are "niets is betaald" and "vóór je betaalt".
+  'ink.autoUitleg': {
+    nl: 'De app las en boekte deze factuur zelf: elke controle slaagde. Niets is betaald — controleer vóór je betaalt.',
+    ar: 'قرأ التطبيق هذه الفاتورة وقيّدها بنفسه: كل فحص نجح. لم يُدفع شيء — تحقّق قبل الدفع.',
+    en: 'The app read and booked this invoice itself: every check passed. Nothing is paid — check before you pay.',
+  },
+  'ink.bonAutoUitleg': {
+    nl: 'De app boekte deze bon zelf als betaald: de bon noemt de betaalwijze. Klopt het niet? Zet de betaling terug.',
+    ar: 'قيّد التطبيق هذا الإيصال كمدفوع بنفسه: الإيصال يذكر طريقة الدفع. أليس صحيحاً؟ تراجع عن الدفعة.',
+    en: 'The app booked this receipt as paid itself: the receipt names the payment method. Not right? Undo the payment.',
+  },
+  'ink.eFactuurLegenda': {
+    nl: 'Deze cijfers stuurde de leverancier zelf als e-factuur; er is niets van een pagina gelezen.',
+    ar: 'هذه الأرقام أرسلها المورّد بنفسه فاتورةً إلكترونية؛ لم يُقرأ شيء من صفحة.',
+    en: 'The supplier sent these figures themselves as an e-invoice; nothing was read off a page.',
+  },
   'ink.terugdraaien': {
     nl: 'Terugdraaien',
     ar: 'تراجع',
@@ -8101,11 +8128,6 @@ export const MESSAGES = {
     nl: 'Toon alleen deze',
     ar: 'اعرض هذه فقط',
     en: 'Show only these',
-  },
-  'ink.totaalDisclosure': {
-    nl: 'Je hebt er {total} in totaal. Deze lijst toont de {open} openstaande en de {paid} meest recente betaalde.',
-    ar: 'لديك {total} في المجموع. تعرض هذه القائمة المفتوحة وعددها {open} وأحدث المدفوعة وعددها {paid}.',
-    en: 'You have {total} in total. This list shows the {open} outstanding ones and the {paid} most recently paid.',
   },
   'ink.totaalLabel': {
     nl: 'totaal',
