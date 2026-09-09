@@ -1221,6 +1221,25 @@ export const MESSAGES = {
   // ─── [VANDAAG] De takenlijst van vandaag ────────────────────────────────────────────────────
 
   // ── [OFFERTE-OPVOLGING] Offertes die verlopen ────────────────────────────────
+  // [CREDIT-TERUG] The creditnotas that still owe the customer money. The button named is the sales list's, as written there.
+  'vandaag.terugbetalen': { nl: 'Terug te betalen aan je klant', ar: 'مبالغ يجب ردّها إلى عميلك', en: 'To refund to your customer' },
+  'vandaag.terugbetalenUitleg': {
+    nl: 'Een creditnota die je nog moet terugstorten. Daarna: Voldaan! op de facturenlijst.',
+    ar: 'إشعار دائن ما زال عليك ردّ قيمته. بعدها: «سُدّدت!» في قائمة الفواتير.',
+    en: 'A credit note you still have to refund. Then: Settled! on the invoice list.',
+  },
+  'vandaag.terugbetalenEen': { nl: '1 creditnota', ar: 'إشعار دائن واحد', en: '1 credit note' },
+  'vandaag.terugbetalenMeer': { nl: "{n} creditnota's", ar: '{n} إشعارات دائنة', en: '{n} credit notes' },
+  'vandaag.terugbetalenLos': {
+    nl: 'Factuur buiten BoekBrug — controleer of de klant al betaald had.',
+    ar: 'فاتورة خارج BoekBrug — تحقّق هل كان العميل قد دفع.',
+    en: 'Invoice outside BoekBrug — check whether the customer had already paid.',
+  },
+  'vandaag.terugbetalenMislukt': {
+    nl: "De creditnota's konden niet worden gelezen.",
+    ar: 'تعذّرت قراءة الإشعارات الدائنة.',
+    en: 'The credit notes could not be read.',
+  },
   'vandaag.offertes': { nl: 'Offertes die aandacht vragen', ar: 'عروض أسعار تحتاج انتباهك', en: 'Quotes needing attention' },
   'vandaag.offertesUitleg': {
     nl: 'Geaccepteerd of bijna verlopen',

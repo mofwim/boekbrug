@@ -1261,12 +1261,25 @@ test("[RENDER-GATE] Vandaag renders the lists it is famous for getting wrong", a
           inv({ id: "v5", due_date: null }),
         ],
         remind: [inv({ id: "o1", direction: "outgoing", status: "overdue", due_date: "2026-01-15" })],
+        // [CREDIT-TERUG] A creditnota against a paid invoice: money the owner owes, with the amount
+        // the pure rule decided — and a standalone one, flagged, so both row branches are reached.
+        refunds: [
+          { id: "cr1", invoiceNumber: "CR-2026-01", invoiceDate: "2026-08-01", clientName: "Bakkerij Jansen", amount: 121, standalone: false },
+          { id: "cr2", invoiceNumber: "CR-2026-02", invoiceDate: "2026-08-02", clientName: "Slagerij de Vries", amount: 50, standalone: true },
+        ],
         loadFailed: false,
         toVerifyCount: 3,
         datelessPayableCount: 1,
       }))),
   );
   assert.ok(html.length > 500, "Vandaag rendered its lists");
+
+  // [CREDIT-TERUG] The refund section, with the amount the rule handed it — not a total it
+  // recomputed — and the flag on the creditnota that had no invoice to compare with.
+  assert.ok(html.includes("Terug te betalen aan je klant"), "the refund section must render");
+  assert.ok(html.includes("€ 121,00") && html.includes("Bakkerij Jansen"), "…with the amount that has to go back");
+  assert.ok(html.includes("Factuur buiten BoekBrug"), "…and the standalone creditnota flagged");
+  assert.ok(html.includes("2 creditnota"), "…and counted");
 
   // [PARTIAL-PAY] Not just "it rendered" — the number it rendered. v2 is EUR 872 with EUR 400 paid,
   // so the amount on the card is the EUR 472 that is still owed. Showing the invoice total there
