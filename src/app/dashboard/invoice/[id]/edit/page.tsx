@@ -37,6 +37,8 @@ import DateFieldNL from '@/components/ui/DateFieldNL'
 import { MAX_EXTRA_LINE_LENGTH } from '@/lib/client-extra-lines'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+// [CREDITNOTA-EXTERN] The door's own rule for a standalone creditnota, asked here first.
+import { checkStandaloneCreditnota } from '@/lib/creditnota'
 
 // [VERLEGD-VERKOOP] The rate menu's sentinel for 'btw verlegd': not a rate, so a value no rate can
 // collide with, translated back into (0%, vat_treatment='reverse_charge') the moment it is chosen.
@@ -104,6 +106,12 @@ export default function InvoiceEditPage() {
   const [clientCity, setClientCity] = useState('')
   const [clientEmail, setClientEmail] = useState('')
   const [clientBtw, setClientBtw] = useState('')
+  // [CREDITNOTA-EXTERN] A standalone creditnota names the invoice it corrects (art. 219) — the
+  // number and date the owner typed for an invoice issued outside BoekBrug. A linked creditnota
+  // carries original_invoice_id instead and never shows these two.
+  const [creditedNumber, setCreditedNumber] = useState('')
+  const [creditedDate, setCreditedDate] = useState('')
+  const [originalInvoiceId, setOriginalInvoiceId] = useState<string | null>(null)
   // [KLANT-EXTRA] Twee vrije regels direct onder de klantnaam op het document — "t.a.v. …", een
   // afdeling of het inkoopordernummer dat de klant op de factuur wil zien. Leeg is de normale
   // toestand en levert precies het documentblok op dat er altijd al stond.
@@ -212,6 +220,10 @@ export default function InvoiceEditPage() {
       setClientPostal(invoice.client_postal_code || '')
       setClientCity(invoice.client_city || '')
       setClientBtw(invoice.client_btw_number || '')
+      // [CREDITNOTA-EXTERN] select('*') carries the two columns wherever the migration has run.
+      setOriginalInvoiceId(invoice.original_invoice_id ?? null)
+      setCreditedNumber((invoice as { credited_invoice_number?: string | null }).credited_invoice_number || '')
+      setCreditedDate((invoice as { credited_invoice_date?: string | null }).credited_invoice_date || '')
       setClientExtra1(invoice.client_extra_line1 || '')
       setClientExtra2(invoice.client_extra_line2 || '')
       setClientExtra3(invoice.client_extra_line3 || '')
@@ -378,6 +390,10 @@ export default function InvoiceEditPage() {
         // onderscheidt van "een oudere pagina die het veld niet kent".
         discount_type: invoiceType === 'creditnota' ? null : discountType,
         discount_value: invoiceType === 'creditnota' ? null : discountValue,
+        // [CREDITNOTA-EXTERN] Only a standalone creditnota carries these; the route writes them apart.
+        ...(invoiceType === 'creditnota' && !originalInvoiceId
+          ? { credited_invoice_number: creditedNumber, credited_invoice_date: creditedDate || null }
+          : {}),
         lines
       })
     })
@@ -416,6 +432,12 @@ export default function InvoiceEditPage() {
       setError(lineFault)
       return
     }
+    // [CREDITNOTA-EXTERN] The send door refuses a standalone creditnota that names no invoice
+    // (art. 219); asked here first, where the field is on the screen.
+    if (!checkStandaloneCreditnota({ invoiceType, originalInvoiceId, creditedNumber }).ok) {
+      setError(t('nieuw.fout.creditVerwijzing'))
+      return
+    }
 
     setSending(true)
     setError('')
@@ -446,6 +468,10 @@ export default function InvoiceEditPage() {
         // onherroepelijk mee de deur uit tegen de volle prijs.
         discount_type: invoiceType === 'creditnota' ? null : discountType,
         discount_value: invoiceType === 'creditnota' ? null : discountValue,
+        // [CREDITNOTA-EXTERN] Only a standalone creditnota carries these; the route writes them apart.
+        ...(invoiceType === 'creditnota' && !originalInvoiceId
+          ? { credited_invoice_number: creditedNumber, credited_invoice_date: creditedDate || null }
+          : {}),
         lines,
       }),
     })
@@ -652,6 +678,27 @@ export default function InvoiceEditPage() {
               />
             </div>
           </div>
+          {/* [CREDITNOTA-EXTERN] The invoice this standalone creditnota corrects — named, or the
+              document is not a creditnota at all (art. 219). Printed on the PDF, carried in the e-factuur. */}
+          {invoiceType === 'creditnota' && !originalInvoiceId && (
+            <div className="grid grid-cols-2 gap-3 mt-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('nieuw.credit.verwijzingNummer')}</label>
+                <input
+                  type="text" value={creditedNumber}
+                  onChange={e => setCreditedNumber(e.target.value)}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
+                  placeholder="2026-0123"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('nieuw.credit.verwijzingDatum')}</label>
+                {/* [DATE-NL] Typed in dd-mm-jjjj, like every other date on this screen. */}
+                <DateFieldNL value={creditedDate} onChange={setCreditedDate} aria-label={t('nieuw.credit.verwijzingDatum')} />
+              </div>
+              <p className="col-span-2 text-xs text-gray-500">{t('nieuw.credit.verwijzingHint')}</p>
+            </div>
+          )}
         </div>
 
         {/* Datums */}

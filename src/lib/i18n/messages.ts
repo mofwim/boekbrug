@@ -10266,6 +10266,19 @@ export const MESSAGES = {
     ar: 'هل الفاتورة الأصلية موجودة في BoekBrug؟ اعكِسها إذن',
     en: 'Is the original invoice in BoekBrug after all? Then credit it',
   },
+  // [CREDITNOTA-EXTERN] The invoice a standalone creditnota corrects (art. 219 btw-richtlijn).
+  'nieuw.credit.verwijzingNummer': { nl: 'Nummer van de gecrediteerde factuur', ar: 'رقم الفاتورة المُصحَّحة', en: 'Number of the credited invoice' },
+  'nieuw.credit.verwijzingDatum': { nl: 'Datum van die factuur', ar: 'تاريخ تلك الفاتورة', en: 'Date of that invoice' },
+  'nieuw.credit.verwijzingHint': {
+    nl: 'Verplicht: een creditnota noemt de factuur die ze corrigeert (art. 219 btw-richtlijn).',
+    ar: 'إلزامي: الإشعار الدائن يذكر الفاتورة التي يصحّحها (المادة 219 من توجيه btw).',
+    en: 'Required: a credit note names the invoice it corrects (art. 219 VAT Directive).',
+  },
+  'nieuw.fout.creditVerwijzing': {
+    nl: 'Vul het nummer in van de factuur die deze creditnota corrigeert.',
+    ar: 'أدخل رقم الفاتورة التي يصحّحها هذا الإشعار الدائن.',
+    en: 'Enter the number of the invoice this credit note corrects.',
+  },
   'nieuw.credit.uitleg': {
     nl: 'bedragen worden automatisch negatief. Vul het formulier in zoals een gewone factuur. Gebruik dit voor een factuur die niet in BoekBrug staat.',
     ar: 'تصبح المبالغ سالبة تلقائياً. املأ النموذج كفاتورة عادية. استخدم هذا لفاتورة غير موجودة في BoekBrug.',

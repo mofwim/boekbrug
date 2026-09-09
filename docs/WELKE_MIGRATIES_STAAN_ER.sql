@@ -206,6 +206,8 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('company_members_sales_role.sql', 'function', 'next_invoice_seq', null, 'public'),
   ('company_members_sales_role.sql', 'index', 'clients_created_by_idx', null, 'public'),
   ('company_members_sales_role.sql', 'index', 'company_member_invites_owner_idx', null, 'public'),
+  ('creditnota_external_reference.sql', 'column', 'credited_invoice_date', 'invoices', 'public'),
+  ('creditnota_external_reference.sql', 'column', 'credited_invoice_number', 'invoices', 'public'),
   ('creditnota_partial.sql', 'function', 'assert_credit_within_original', null, 'public'),
   ('creditnota_per_rate_ceiling.sql', 'function', 'assert_credit_within_rate', null, 'public'),
   ('crm_backbone.sql', 'column', 'client_id', 'invoices', 'public'),
