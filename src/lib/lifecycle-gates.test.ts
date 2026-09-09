@@ -3135,10 +3135,13 @@ test("[VRIJGESTELD-KOPIE] every route that copies invoice lines carries vat_trea
   // copiers share. Followed there, not relaxed: this assertion is the one that must survive.
   assert.match(code("src/lib/creditnota-lines.ts"), /\.\.\.optionalLineFields\(line\)/,
     "…and that mirror must take its optional columns from the shared copier");
+  // [REGEL-BEHANDELING] The hardening moved once more, into line-vat-treatment.ts: one helper
+  // that admits exactly the two literals ('exempt', 'reverse_charge'), so a third value never
+  // has to be chased into four inline copies by somebody who knows all four exist.
   assert.match(
     code("src/lib/invoice-line-copy.ts"),
-    /vat_treatment === "exempt" \? "exempt" : null/,
-    "…which must harden vat_treatment like every other writer",
+    /vat_treatment: storedVatTreatment\(line\.vat_treatment\)/,
+    "…which must harden vat_treatment through the shared helper like every other writer",
   );
 
   // [REGEL-KOPIE] /duplicate and the recurring cron copy LINES, and both now do it through the
@@ -3158,12 +3161,13 @@ test("[VRIJGESTELD-KOPIE] every route that copies invoice lines carries vat_trea
       /vat_treatment/,
       `${path} copies invoice lines but never mentions vat_treatment — a copied exempt line becomes taxed 0% turnover in the aangifte`,
     );
-    // And it must HARDEN, not pass through: only the literal 'exempt' may mean exempt. An unknown
-    // value reaching the column would claim an exemption nobody declared.
+    // And it must HARDEN, not pass through: only the literals may mean exempt or verlegd. An
+    // unknown value reaching the column would claim an exemption nobody declared, or shift btw
+    // onto a customer who never agreed to account for it.
     assert.match(
       src,
-      /vat_treatment === 'exempt' \? 'exempt' : null/,
-      `${path} must harden vat_treatment the same way every other writer does`,
+      /regel\.vat_treatment = storedVatTreatment\(l\.vat_treatment\)/,
+      `${path} must harden vat_treatment through line-vat-treatment.ts like every other writer`,
     );
   }
 });
@@ -4628,9 +4632,9 @@ test("[OFFERTE-OMZETTEN-VOLLEDIG] converting a quote carries everything the quot
   assert.ok(conv.length < 2600, `the slice must be that block alone — it is ${conv.length} chars`);
   assert.match(conv, /unit:\s+l\.unit \?\? null,/, "…and the unit must reach the new line");
   assert.match(
-    conv, /vat_treatment: l\.vat_treatment === 'exempt' \? 'exempt' : null,/,
-    "…and the exemption flag, hardened the same way every other writer hardens it: only the " +
-      "literal 'exempt' counts, so no stray value can create an exemption",
+    conv, /vat_treatment: storedVatTreatment\(l\.vat_treatment\),/,
+    "…and the treatment flag, hardened the way every other writer hardens it (line-vat-treatment.ts): " +
+      "only the literals count, so no stray value can create an exemption or a verlegging",
   );
 
   // The discount is on the header, so it needs its own read. A line-only load cannot see it.
@@ -28959,4 +28963,71 @@ test("[AANBETALING-KORTING] the create screen turns the offerte's discount into 
     "depositLines no longer reads the shared apportionment");
   assert.match(m, /export function discountLines[\s\S]*?const off = allowanceByGroup\(groups, src\);/,
     "discountLines no longer reads the shared apportionment");
+});
+
+// ── [VERLEGD-VERKOOP] The verleggingsregeling on a SALES invoice, complete on every surface ──────
+//
+// A subcontractor in bouw invoices without btw and the hoofdaannemer accounts for it (art. 12 lid
+// 5 Wet OB jo. art. 24b Uitvoeringsbesluit). The app knew that regime on the purchase side only
+// (rubriek 2a); on the selling side the owner picked 0% and typed the words, the PDF printed no
+// statutory sentence, the e-invoice found the words by regex or exported plain Z, and nobody asked
+// for the customer's btw-id (art. 35a lid 1 sub d and sub j). The first test companies are
+// bouwbedrijven, where a subcontractor cannot issue their basic invoice without it.
+test("[VERLEGD-VERKOOP] the option, the refusal, the sentence, the e-invoice category and the migration", () => {
+  // The column admits the value — a migration the owner applies, and the app does not write the
+  // value into a constraint that refuses it silently.
+  const mig = readFileSync("supabase/migrations/vat_reverse_charge.sql", "utf8");
+  assert.match(mig, /CHECK \(vat_treatment IS NULL OR vat_treatment IN \('taxed', 'exempt', 'reverse_charge'\)\)/,
+    "the CHECK no longer admits 'reverse_charge' — every verlegd line then fails at the database");
+
+  // Both editors offer it, never under the KOR (nothing to shift there; the door refuses anyway).
+  const nieuw = code("src/app/dashboard/invoice/new/page.tsx");
+  assert.match(nieuw, /\{!korActief && <option value=\{REVERSE_CHARGE_OPTION\}>\{t\('nieuw\.regel\.verlegd'\)\}<\/option>\}/,
+    "the create screen lost the verlegd option, or offers it under the KOR");
+  assert.match(nieuw, /function markLineReverseCharged\(i: number\)/, "verlegd is 0% PLUS the flag, set together");
+  assert.match(nieuw, /if \(hasReverseChargeLine\(lines\) && !clientBtw\.trim\(\)\) \{/,
+    "the create screen no longer asks for the customer's btw-id before a verlegd invoice leaves");
+  const bewerk = code("src/app/dashboard/invoice/[id]/edit/page.tsx");
+  assert.match(bewerk, /<option value=\{REVERSE_CHARGE_OPTION\}>\{t\('nieuw\.regel\.verlegd'\)\}<\/option>/,
+    "the edit screen lost the verlegd option");
+  assert.match(bewerk, /vat_treatment: newRate > 0 \|\| l\.vat_treatment === 'reverse_charge' \? null : l\.vat_treatment,/,
+    "a rate that charges btw must clear the verlegd flag, and a re-chosen 0% must keep an exemption");
+
+  // The door refuses before the number, exactly where the KOR check stands.
+  const send = code("src/app/api/invoice/send/route.ts");
+  assert.match(send, /const verlegdCheck = checkReverseChargeInvoice\(\{/, "the send route must run the check");
+  const checkAt = send.indexOf("const verlegdCheck = checkReverseChargeInvoice(");
+  const numberAt = send.indexOf("generateInvoiceNumber(");
+  assert.ok(checkAt > 0 && numberAt > checkAt, "the verlegd check must run before a number is issued");
+  const mod = code("src/lib/reverse-charge-invoice.ts");
+  assert.match(mod, /code: "verlegd_zonder_btw_nummer"/, "a verlegd invoice without the customer's btw-id must be refused");
+  assert.match(mod, /code: "verlegd_onder_kor"/, "…and one under the KOR");
+  assert.match(mod, /code: "verlegd_met_btw"/, "…and a verlegd line that charges btw");
+  assert.doesNotMatch(mod, /btw_rate:\s*0|\.map\(\(l[^)]*\) => \(\{/, "this module corrects nothing — it only reports");
+
+  // The document prints the statutory words with the customer's number, EU sentence first.
+  const pdf = code("src/lib/invoice-pdf.tsx");
+  assert.match(pdf, /\}\) \?\? domesticReverseChargeNotice\(\{/, "the PDF no longer prints the domestic sentence");
+  assert.match(pdf, /reverseChargeStated: !!reverseCharge/, "…and vat-statement must stay silent beside it");
+  assert.match(mod, /Btw verlegd — artikel 12 lid 5 Wet OB 1968\. BTW-nummer afnemer: \$\{nr\}\./,
+    "the sentence lost the words the law asks for verbatim, or the customer's number");
+  // One summary row per legal category, keyed like the UBL's TaxSubtotal.
+  assert.match(pdf, /const key = `\$\{rate\}\|\$\{treatment \?\? ''\}`/,
+    "btwBreakdown merges exempt, verlegd and 0% into one row again");
+  assert.match(pdf, /if \(g\.treatment === 'reverse_charge'\) return `Btw verlegd over \$\{formatEuroNL\(g\.ex\)\}`/);
+  assert.match(pdf, /if \(g\.treatment === 'exempt'\) return `Vrijgesteld van btw over \$\{formatEuroNL\(g\.ex\)\}`/);
+  assert.match(pdf, /const netRateLines = rateLines\.map\(\(g, i\) => \{\s*const off = afgetrokken\.get\(i\) \?\? 0/,
+    "the discount is keyed on the rate again — two rows at rate 0 then subtract it twice");
+
+  // The e-invoice reads the flag, not the regex, and lands in AE with art. 12 lid 5 as its ground.
+  const ubl = code("src/lib/ubl-export.ts");
+  assert.match(ubl, /if \(line\.vat_treatment === "reverse_charge"\) return "reverse_charge";/,
+    "lineVatKind no longer reads the flag — a verlegd line exports as plain zero-rated");
+  const flagAt = ubl.indexOf('if (line.vat_treatment === "reverse_charge") return "reverse_charge";');
+  const regexAt = ubl.indexOf("if (RE_REVERSE_CHARGE.test(line.description");
+  assert.ok(flagAt > 0 && regexAt > flagAt, "the flag must be read before the description regex");
+
+  // The deposit on a verlegde offerte stays verlegd.
+  assert.match(code("src/lib/aanbetaling.ts"), /g\.treatment === "reverse_charge" \? "\(btw verlegd\)"/,
+    "a deposit line on a verlegde offerte would charge btw the customer was told to account for");
 });

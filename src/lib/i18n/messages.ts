@@ -209,6 +209,10 @@ export const MESSAGES = {
   'nieuw.regel.prijsExcl': { nl: 'Prijs excl. (€)', ar: 'السعر بدون ضريبة (€)', en: 'Price excl. (€)' },
   'nieuw.regel.prijsIncl': { nl: 'Prijs incl. (€)', ar: 'السعر شامل الضريبة (€)', en: 'Price incl. (€)' },
   'nieuw.regel.vrijgesteld': { nl: 'Vrijgesteld', ar: 'مُعفى', en: 'Exempt' },
+  // [VERLEGD-VERKOOP] The verleggingsregeling on a line, and what the owner must fill in for it.
+  'nieuw.regel.verlegd': { nl: 'Btw verlegd', ar: 'الضريبة محوَّلة إلى العميل', en: 'VAT reverse-charged' },
+  'nieuw.regel.verlegdHint': { nl: 'Btw verlegd naar de klant: het btw-nummer van de klant komt op de factuur.', ar: 'الضريبة محوَّلة إلى العميل: يُطبع رقم BTW الخاص بالعميل على الفاتورة.', en: 'VAT shifted to the customer: the customer’s VAT number goes on the invoice.' },
+  'nieuw.fout.verlegdZonderBtw': { nl: 'Een regel met btw verlegd vraagt om het btw-nummer van de klant. Vul het in bij de klant.', ar: 'بند بضريبة محوَّلة يتطلب رقم BTW الخاص بالعميل. أدخله في بيانات العميل.', en: 'A reverse-charged line needs the customer’s VAT number. Enter it on the customer.' },
 
   'nieuw.prijsmodus': { nl: 'Prijzen invoeren', ar: 'إدخال الأسعار', en: 'Entering prices' },
   'nieuw.prijsmodus.aria': { nl: 'Prijzen invoeren inclusief of exclusief btw', ar: 'إدخال الأسعار شاملةً الضريبة أو بدونها', en: 'Enter prices including or excluding VAT' },

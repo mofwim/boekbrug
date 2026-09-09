@@ -38,6 +38,10 @@ import { MAX_EXTRA_LINE_LENGTH } from '@/lib/client-extra-lines'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 
+// [VERLEGD-VERKOOP] The rate menu's sentinel for 'btw verlegd': not a rate, so a value no rate can
+// collide with, translated back into (0%, vat_treatment='reverse_charge') the moment it is chosen.
+const REVERSE_CHARGE_OPTION = -2
+
 type InvoiceLine = {
   description: string
   quantity: number
@@ -253,8 +257,21 @@ export default function InvoiceEditPage() {
   }
   /** [TARIEF] In incl-modus blijft de prijs voor de klant staan; in excl-modus de ingetypte prijs. */
   function updateLineRate(index: number, newRate: number) {
+    // [VERLEGD-VERKOOP] A rate that charges btw cannot stay exempt or verlegd. A re-chosen 0% keeps
+    // an exemption (this screen has no option to set one, so it must not lose one either) and drops
+    // a verlegging, which has its own option below.
     setLines(lines.map((l, i) => i === index
-      ? { ...l, btw_rate: newRate, unit_price: repriceForRateChange(l.unit_price, l.btw_rate, newRate, priceMode) }
+      ? {
+          ...l,
+          btw_rate: newRate,
+          unit_price: repriceForRateChange(l.unit_price, l.btw_rate, newRate, priceMode),
+          vat_treatment: newRate > 0 || l.vat_treatment === 'reverse_charge' ? null : l.vat_treatment,
+        }
+      : l))
+  }
+  function markLineReverseCharged(index: number) {
+    setLines(lines.map((l, i) => i === index
+      ? { ...l, btw_rate: 0, vat_treatment: 'reverse_charge', unit_price: repriceForRateChange(l.unit_price, l.btw_rate, 0, priceMode) }
       : l))
   }
 
@@ -807,13 +824,17 @@ export default function InvoiceEditPage() {
               </div>
               <div className="col-span-2">
                 <select
-                  value={line.btw_rate}
-                  onChange={e => updateLineRate(index, parseFloat(e.target.value))}
+                  value={line.vat_treatment === 'reverse_charge' ? REVERSE_CHARGE_OPTION : line.btw_rate}
+                  onChange={e => { const v = parseFloat(e.target.value); if (v === REVERSE_CHARGE_OPTION) markLineReverseCharged(index); else updateLineRate(index, v) }}
                   className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm"
                 >
                   <option value={21}>21%</option>
                   <option value={9}>9%</option>
                   <option value={0}>0%</option>
+                  {/* [VERLEGD-VERKOOP] Not under the KOR: nothing to shift there, and the send door refuses it. */}
+                  {!(profile as { kor_active?: boolean | null } | null)?.kor_active && (
+                    <option value={REVERSE_CHARGE_OPTION}>{t('nieuw.regel.verlegd')}</option>
+                  )}
                 </select>
               </div>
               <div className="col-span-1 flex justify-center">

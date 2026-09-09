@@ -16,6 +16,7 @@
 // =====================================================
 
 import { NextRequest, NextResponse } from 'next/server'
+import { storedVatTreatment } from '@/lib/line-vat-treatment'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
 // [BTW-ROUND] De totalen komen uit één module, dezelfde die /api/invoice/send gebruikt bij
 // uitgifte. Hier stond een eigen berekening die de BTW PER REGEL optelde en één keer afrondde;
@@ -105,10 +106,11 @@ function schoonRegel(invoiceId: string, l: NormLine): Record<string, unknown> {
   // aangifte — EUR 1.000 in de verkeerde rubriek van een ingediende aangifte, en de vrijgestelde
   // share verdwijnt uit het pro-rata beeld van de voorbelasting.
   //
-  // Dezelfde harding als bij het schrijven elders: alleen de letterlijke waarde 'exempt' telt,
-  // al het andere wordt NULL. Een onbekende waarde mag nooit als vrijstelling gelden.
+  // Dezelfde harding als bij het schrijven elders, uit één module (line-vat-treatment.ts): alleen
+  // de letterlijke waarden 'exempt' en 'reverse_charge' tellen, al het andere wordt NULL. Een
+  // onbekende waarde mag nooit als vrijstelling of als verlegging gelden.
   if (l.vat_treatment !== undefined) {
-    regel.vat_treatment = l.vat_treatment === 'exempt' ? 'exempt' : null
+    regel.vat_treatment = storedVatTreatment(l.vat_treatment)
   }
   // [REGEL-KORTING] Alleen meesturen als er een korting IS.
   //

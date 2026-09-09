@@ -36,6 +36,8 @@
 // which has no lines. So a column that is absent from the source row is absent from the copy, and
 // the copy is then exactly what it would have been before that column existed.
 
+import { storedVatTreatment } from "./line-vat-treatment";
+
 /** As much of a line as a copy needs. The DB row and every writer's shape satisfy this. */
 export interface CopyableLine {
   description?: string | null;
@@ -62,10 +64,11 @@ export function optionalLineFields(line: CopyableLine): Record<string, unknown> 
   return {
     // [UNIT] A copy is the same delivery, so it carries the same unit.
     ...(line.unit !== undefined ? { unit: line.unit ?? null } : {}),
-    // [VRIJGESTELD-KOPIE] Only the literal value counts. An unknown value becomes NULL, never an
-    // exemption — the same hardening every writer of this column applies.
+    // [VRIJGESTELD-KOPIE] Only the literal values count. An unknown value becomes NULL, never an
+    // exemption and never a verlegging — the one hardening every writer of this column applies,
+    // in line-vat-treatment.ts, so a copy carries exactly what the original claimed.
     ...(line.vat_treatment !== undefined
-      ? { vat_treatment: line.vat_treatment === "exempt" ? "exempt" : null }
+      ? { vat_treatment: storedVatTreatment(line.vat_treatment) }
       : {}),
     // [REGEL-KORTING] The agreed discount travels with the line it was agreed on. A value without
     // a type is not a discount, so it is dropped rather than carried as a number nothing reads.

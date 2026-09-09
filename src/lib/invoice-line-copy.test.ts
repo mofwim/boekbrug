@@ -92,3 +92,15 @@ test("[REGEL-KOPIE] a whole invoice copies in order, every line onto the new one
   assert.ok(out.every((l) => l.invoice_id === NEW_ID));
   assert.deepEqual(out.map((l) => l.discount_value), [10, 55]);
 });
+
+// ─── [VERLEGD-VERKOOP] The verlegd flag survives every copy, and nothing else becomes one ──────
+test("[VERLEGD-VERKOOP] optionalLineFields keeps 'reverse_charge' and hardens everything else to NULL", () => {
+  assert.deepEqual(optionalLineFields({ vat_treatment: "reverse_charge" }), { vat_treatment: "reverse_charge" });
+  assert.deepEqual(optionalLineFields({ vat_treatment: "exempt" }), { vat_treatment: "exempt" });
+  assert.deepEqual(optionalLineFields({ vat_treatment: "verlegd" }), { vat_treatment: null }, "a word is not the flag");
+  assert.deepEqual(optionalLineFields({ vat_treatment: "taxed" }), { vat_treatment: null });
+  assert.deepEqual(optionalLineFields({}), {}, "a row without the column writes no column");
+  // Through the full copier too: a creditnota or a duplicate of a verlegde invoice is verlegd.
+  const copy = copiedLineFor({ ...FULL, btw_rate: 0, line_total: 100, vat_treatment: "reverse_charge" }, NEW_ID) as { vat_treatment?: string | null };
+  assert.equal(copy.vat_treatment, "reverse_charge");
+});
