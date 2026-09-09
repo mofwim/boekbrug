@@ -160,10 +160,21 @@ export async function POST(request: NextRequest) {
     // [HERSTEL] corrected=true is the FALLBACK signal from the edit route for a database where
     // invoice_corrected_at.sql is still open. Where the column exists, the row itself says
     // whether this delivery is a corrected one — see the derivation under the status check.
-    const { invoiceId, convertOnly = false, resend = false, corrected = false } = body
-    // convertOnly=true: "Maak factuur aan" flow — convert pro_forma to factuur
+    const { invoiceId, resend = false, corrected = false } = body
     // resend=true: [FACTUUR-A] re-deliver PDF+e-mail for an already-sent
     //   invoice — number/status untouched
+    // [OFFERTE-GEEN-OMZETTING] convertOnly is gone. It turned a SENT quote into a numbered factuur
+    // in place — the same row, without the deposit settlement, the discount as lines and the
+    // archived quote of the new-invoice path. A quote is mailed as a quote
+    // (/api/invoice/[id]/send-offerte) and invoiced through /dashboard/invoice/new?from_offerte=…
+    // Refused, not ignored: a caller that asked for a conversion and got a plain send would mint
+    // a number by surprise.
+    if ((body as { convertOnly?: unknown }).convertOnly === true) {
+      return NextResponse.json(
+        { error: 'Een offerte wordt niet meer omgezet: verstuur hem als offerte en maak de factuur via "Maak factuur aan".', code: 'conversion_retired' },
+        { status: 410 },
+      )
+    }
     if (!invoiceId) {
       return NextResponse.json({ error: 'invoiceId verplicht' }, { status: 400 })
     }
@@ -206,8 +217,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ── 5. Status check ────────────────────────────────────────
-    // normal send:  only drafts
-    // convertOnly:  sent pro_formas / offertes (Maak factuur aan flow)
+    // normal send:  only drafts, and never a quote ([OFFERTE-GEEN-OMZETTING] below)
     // resend:       already-issued invoices with a number — re-delivery only
     if (resend) {
       if (!RESENDABLE_STATUSES.includes(invoice.status) || !invoice.invoice_number) {
@@ -216,16 +226,21 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         )
       }
-    } else if (!convertOnly && invoice.status !== 'draft') {
+    } else if (invoice.status !== 'draft') {
       return NextResponse.json(
         { error: 'Factuur kan niet meer worden verzonden — al verzonden' },
         { status: 400 }
       )
     }
-    if (convertOnly && invoice.invoice_type !== 'pro_forma' && invoice.invoice_type !== 'offerte') {
+    // [OFFERTE-GEEN-OMZETTING] A quote never passes this door. Every path through here used to
+    // CONVERT it: a draft pro_forma came out as a numbered factuur, mailed, in one tap, so the
+    // quote and the invoice were one row and the new-invoice path — the deposit settlement, the
+    // discount as lines, the archived quote — never ran. Refused before anything is minted. The
+    // resend branch above cannot reach a quote either: a quote never carries a number.
+    if (!resend && (invoice.invoice_type === 'pro_forma' || invoice.invoice_type === 'offerte')) {
       return NextResponse.json(
-        { error: 'Alleen pro forma facturen kunnen worden omgezet' },
-        { status: 400 }
+        { error: 'Een offerte verstuur je als offerte; de factuur maak je via "Maak factuur aan".', code: 'quote_not_sendable_here' },
+        { status: 409 },
       )
     }
 
@@ -245,19 +260,6 @@ export async function POST(request: NextRequest) {
       invoice.invoice_type === 'factuur' &&
       (invoice.corrected_at != null ||
         (corrected === true && !isActingForOther(acting) && ['sent', 'overdue'].includes(invoice.status)))
-    // [TRUST-NUMBER] A conversion keeps the row's own status (see step 9), and the branch above
-    // skips the draft check for convertOnly — so a DRAFT pro forma would come out of here with a
-    // number from the doorlopende reeks while still sitting in the one status the owner may edit
-    // and delete. Deleting it puts a permanent hole in the sequence, which is precisely what the
-    // "POINT OF NO RETURN" further down exists to prevent. Converting is for a document that has
-    // already gone out; a draft is simply sent.
-    if (convertOnly && invoice.status === 'draft') {
-      return NextResponse.json(
-        { error: 'Een concept wordt verstuurd, niet omgezet — verstuur het eerst.' },
-        { status: 409 }
-      )
-    }
-
     // ── 6. Required fields validation ──────────────────────────
     if (!invoice.client_email) {
       return NextResponse.json({ error: 'Klant e-mail ontbreekt' }, { status: 400 })
@@ -351,20 +353,15 @@ export async function POST(request: NextRequest) {
     // The authoritative total for the e-mail + accountant notification below.
     const finalTotalInc = computedTotals?.total_inc_btw ?? invoice.total_inc_btw
 
-    // ── 7. Pro forma / Offerte → convert to official Factuur upon sending ─
-    // Per Belastingdienst: only official facturen count — pro forma is not a legal invoice
-    const isConversion = !resend &&
-      (invoice.invoice_type === 'pro_forma' || invoice.invoice_type === 'offerte')
-    const finalType: string = resend
-      ? (invoice.invoice_type ?? 'factuur')
-      : isConversion ? 'factuur' : (invoice.invoice_type ?? 'factuur')
+    // ── 7. The document's type. A quote was refused in step 5, so this is a factuur or a creditnota ─
+    const finalType: string = invoice.invoice_type ?? 'factuur'
 
     // [LEVERDATUM] Resolved ONCE, here, because two things downstream need the same answer: the
     // UPDATE that commits the number, and the PDF that is rendered from the PRE-update row. Fixing
     // only the database would have left the document that actually reaches the customer without
     // the leverdatum — the row would be right and the invoice still wrong. Null when there is
     // nothing to do, which is every ordinary send. See the UPDATE below for the full argument.
-    const leverdatumBijConversie: string | null =
+    const leverdatumBijVerzending: string | null =
       !resend &&
       'delivery_date' in invoice &&
       !invoice.delivery_date &&
@@ -603,7 +600,7 @@ export async function POST(request: NextRequest) {
 
     // Always for conversion, only if missing for regular drafts
     let finalNumber: string = invoice.invoice_number ?? ''
-    if (!resend && (isConversion || !finalNumber)) {
+    if (!resend && !finalNumber) {
       const numberType: InvoiceNumberType =
         finalType === 'creditnota' ? 'creditnota' : 'factuur'
 
@@ -633,43 +630,42 @@ export async function POST(request: NextRequest) {
     // ── 9. UPDATE DB — commit number + type (legal trigger) ───
     // Per Belastingdienst: once number is committed, invoice is legally issued.
     // POINT OF NO RETURN — no rollback past this line (Art. 35, no gaps).
-    // convertOnly: keep status='sent', just update number + type
     // resend: nothing to commit — delivery only
     if (!resend) {
       // [TRUST-NUMBER] COMPARE-AND-SWAP. The status check in step 5 read a fetched
       // row; two concurrent sends (or a double-click that races the first commit)
       // both passed it and both minted a number under an id-only UPDATE, so one
       // number was orphaned as a permanent gap AND the invoice was e-mailed twice.
-      // We now guard the UPDATE on the ORIGINAL state (draft for a send, pro_forma/
-      // offerte for a conversion) and require exactly one affected row. The loser of
-      // the race writes nothing and does NOT deliver — it gets a clean 409.
+      // We now guard the UPDATE on the ORIGINAL state (draft) and require exactly one
+      // affected row. The loser of the race writes nothing and does NOT deliver — it
+      // gets a clean 409.
       let updateQ = supabase
         .from('invoices')
 
         .update({
-          ...(convertOnly ? {} : { status: 'sent' as const }),
+          status: 'sent' as const,
           invoice_number: finalNumber,
           invoice_type: finalType as 'factuur' | 'creditnota' | 'pro_forma' | 'offerte',
           // [LEVERDATUM] Art. 35a lid 1 sub f — the date of supply, on the ONE line where a
           // document that had none becomes a document that needs one.
           //
           // An offerte is stored with delivery_date NULL, and rightly so: an offer delivers
-          // nothing. Pressing "Versturen" on it does not send the offer — it CONVERTS it into a
-          // numbered factuur (isConversion above). That factuur went out without a leverdatum, and
+          // nothing. A factuur drafted without one used to go out, numbered, without a leverdatum, and
           // the PDF simply omitted the row, because showLeverdatum needs a value to print. A
           // mandatory element missing from a legal invoice, invisibly — and past this line the
           // number is committed, so it can never be edited, only credited (Art. 35).
           //
           // FILLED, not refused. The invoice date is what /api/invoice/draft already uses when the
           // owner names no separate leverdatum, so this is the same default applied one step later,
-          // not a new claim about when the work was done. Refusing here would break conversion for
-          // every existing offerte, and the check would have to sit before the number is minted.
+          // not a new claim about when the work was done. Refusing here would strand every draft
+          // made before the draft door filled it, and the check would have to sit before the number
+          // is minted.
           //
           // The key only travels when the column is really there. This UPDATE is the point of no
           // return; on a deployment where the FACTUUR-A migration is still open, an unknown column
           // fails the WHOLE statement — the invoice would be numbered nowhere and sent nowhere.
           // `select('*')` above returns the key iff the column exists, so the row itself answers.
-          ...(leverdatumBijConversie ? { delivery_date: leverdatumBijConversie } : {}),
+          ...(leverdatumBijVerzending ? { delivery_date: leverdatumBijVerzending } : {}),
           ...(computedTotals ?? {}),
           // [FACTUUR-BIJLAGE] Vastleggen WAT er meeging, en alleen als het scherm zich erover
           // uitsprak. Zonder dit zou opnieuw versturen de bijlage vergeten die de klant de eerste
@@ -689,12 +685,9 @@ export async function POST(request: NextRequest) {
         .eq('id', invoiceId)
         // [ACTING-FOR] De eigenaar, niet de mens die op de knop drukte.
         .eq('sender_id', ownerId)
-      updateQ = convertOnly
-        // [TRUST-NUMBER] The type guard alone let a row that became a draft between the read and
-        // this write still take a number. The status is re-asserted here for the same reason the
-        // send path guards on 'draft': the check in step 5 read a fetched row.
-        ? updateQ.in('invoice_type', ['pro_forma', 'offerte']).neq('status', 'draft')
-        : updateQ.eq('status', 'draft')
+      // [TRUST-NUMBER] The status is re-asserted here because the check in step 5 read a
+      // fetched row; a row that left 'draft' between the read and this write takes no number.
+      updateQ = updateQ.eq('status', 'draft')
       const { data: updatedRows, error: updateError } = await updateQ.select('id')
 
       if (updateError) {
@@ -734,7 +727,7 @@ export async function POST(request: NextRequest) {
           invoice_number: invoice.invoice_number,  // null or preview
         },
         newValue: {
-          status: convertOnly ? invoice.status : 'sent',
+          status: 'sent',
           invoice_number: finalNumber,
         },
         ipAddress: getClientIP(request),
@@ -802,8 +795,8 @@ export async function POST(request: NextRequest) {
             // [LEVERDATUM] The same value the UPDATE just committed. `invoice` is the row as it
             // was read, so without this line the stored invoice would carry a leverdatum and the
             // PDF in the customer's mailbox would not.
-            ...(leverdatumBijConversie ? { delivery_date: leverdatumBijConversie } : {}),
-            status: resend || convertOnly ? invoice.status : 'sent',
+            ...(leverdatumBijVerzending ? { delivery_date: leverdatumBijVerzending } : {}),
+            status: resend ? invoice.status : 'sent',
           },
           lines ?? [],
           profile ?? {}
@@ -850,7 +843,6 @@ export async function POST(request: NextRequest) {
         success: true,
         invoice_number: finalNumber,
         invoice_type: finalType,
-        converted: isConversion,
         delivered: false,
         warning: 'pdf_failed',
       })
@@ -957,10 +949,7 @@ export async function POST(request: NextRequest) {
     )
 
     // ── 14. Send e-mail WITH the PDF attached ──────────────────
-    // convertOnly previously skipped the e-mail — [FACTUUR-A] it no longer
-    // does: the conversion mints a NEW legal factuur (new number) and
-    // Art. 35a requires that document to reach the recipient. The earlier
-    // pro forma e-mail was not a legal invoice.
+    // [FACTUUR-A] Art. 35a requires the numbered document to reach the recipient.
     let emailFailed = false
     try {
       await sendInvoiceToClient({
@@ -1117,7 +1106,6 @@ export async function POST(request: NextRequest) {
         success: true,
         invoice_number: finalNumber,
         invoice_type: finalType,
-        converted: isConversion,
         warning: 'email_failed',
       })
     }
@@ -1126,7 +1114,6 @@ export async function POST(request: NextRequest) {
       success: true,
       invoice_number: finalNumber,
       invoice_type: finalType,
-      converted: isConversion,
       // [VERSTUURD] The address a reply lands on, so the confirmation can NAME it instead of
       // promising it. It is profiles.email (filled from auth.users at registration) and it is
       // passed to sendInvoiceToClient as senderEmail — the same value, read once. Null when the

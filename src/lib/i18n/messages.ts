@@ -304,7 +304,6 @@ export const MESSAGES = {
   },
   'nieuw.fout.aanmaken': { nl: 'Aanmaken mislukt — probeer opnieuw', ar: 'فشل الإنشاء — حاول مرة أخرى', en: 'Could not create it — please try again' },
   'nieuw.fout.versturen': { nl: 'Verzenden mislukt — de factuur is opgeslagen als concept', ar: 'فشل الإرسال — حُفظت الفاتورة كمسودة', en: 'Sending failed — the invoice was saved as a draft' },
-  'nieuw.fout.omzetten': { nl: 'Omzetten mislukt', ar: 'فشل التحويل', en: 'Conversion failed' },
   'nieuw.fout.catalogus': { nl: 'Opslaan in de catalogus lukte niet.', ar: 'تعذّر الحفظ في الكتالوج.', en: 'Could not save it to the catalogue.' },
   // [MIN-REGEL] A credit line inside an invoice is ordinary — a return the supplier settles on the
   // next invoice. Once the credits outweigh the deliveries the document gives money back, and that
@@ -328,9 +327,6 @@ export const MESSAGES = {
   'nieuw.banner.overnemen': { nl: 'Overnemen', ar: 'استيرادها', en: 'Use it' },
   'nieuw.banner.opnieuw': { nl: 'Nee, opnieuw beginnen', ar: 'لا، ابدأ من جديد', en: 'No, start over' },
 
-  'nieuw.omzetten': { nl: 'Omzetten naar factuur', ar: 'تحويله إلى فاتورة', en: 'Convert to invoice' },
-  'nieuw.omzetten.zeker': { nl: 'Weet u het zeker?', ar: 'هل أنت متأكد؟', en: 'Are you sure?' },
-  'nieuw.omzetten.ja': { nl: 'Ja, maak factuur aan', ar: 'نعم، أنشئ الفاتورة', en: 'Yes, create the invoice' },
 
   'nieuw.eenheid.aangepast': { nl: 'Aangepast', ar: 'مخصّص', en: 'Custom' },
   'nieuw.eenheid.bewaar': { nl: 'Bewaar', ar: 'احفظ', en: 'Save' },
@@ -368,7 +364,6 @@ export const MESSAGES = {
   'lijst.verwijderen': { nl: 'Verwijderen', ar: 'حذف', en: 'Delete' },
   'lijst.versturen': { nl: 'Versturen', ar: 'إرسال', en: 'Send' },
   'lijst.opnieuwVersturen': { nl: 'Opnieuw versturen', ar: 'إعادة الإرسال', en: 'Send again' },
-  'lijst.omzetten': { nl: 'Omzetten naar factuur', ar: 'تحويله إلى فاتورة', en: 'Convert to invoice' },
 
   'lijst.betaald': { nl: 'Betaald', ar: 'مدفوعة', en: 'Paid' },
   'lijst.betaaldBedrag': { nl: 'Betaald bedrag', ar: 'المبلغ المدفوع', en: 'Amount paid' },
@@ -535,6 +530,14 @@ export const MESSAGES = {
   'detail.onbekendeFout': { nl: 'Onbekende fout — probeer opnieuw', ar: 'خطأ غير معروف — حاول مرة أخرى', en: 'Unknown error — please try again' },
 
   'bewerk.versturenNaar': { nl: 'Versturen naar {name}?', ar: 'إرسال إلى {name}؟', en: 'Send to {name}?' },
+  // [OFFERTE-GEEN-OMZETTING] Sending a quote from its edit screen sends it AS a quote; the invoice
+  // comes later, from the sales list. The button it names is written as that list writes it.
+  'bewerk.offerteVersturen': { nl: 'Offerte versturen', ar: 'إرسال عرض السعر', en: 'Send the quote' },
+  'bewerk.offerteBevestig': {
+    nl: 'Deze offerte gaat als offerte naar je klant, zonder factuurnummer. Een factuur maak je later via "Maak factuur aan".',
+    ar: 'يُرسَل عرض السعر هذا كعرض سعر إلى عميلك، دون رقم فاتورة. تُنشئ الفاتورة لاحقاً عبر "أنشئ الفاتورة".',
+    en: 'This quote goes to your customer as a quote, without an invoice number. You create the invoice later via "Create the invoice".',
+  },
   'bewerk.geldigTot': { nl: 'Deze offerte is geldig tot', ar: 'عرض السعر هذا صالح حتى', en: 'This quote is valid until' },
   // [REGELS-GELEZEN] Het bewerkscherm vervangt bij het opslaan ALLE regels door wat het toont. Kon
   // het de bestaande regels niet lezen, dan is een leeg formulier geen leeg formulier maar een
@@ -4838,16 +4841,6 @@ export const MESSAGES = {
     nl: 'Het factuurnummer ligt na verzending vast. De factuur zelf kun je corrigeren zolang hij niet betaald of verwerkt is — je klant krijgt dan automatisch de gecorrigeerde versie.',
     ar: 'رقم الفاتورة يثبت بعد الإرسال. أما الفاتورة نفسها فيمكنك تصحيحها ما دامت غير مدفوعة وغير مُرحَّلة — وعندها يستلم عميلك النسخة المصحّحة تلقائياً.',
     en: 'The invoice number is fixed once sent. The invoice itself you can correct while it is not paid or booked — your customer then automatically receives the corrected version.',
-  },
-  'bewerk.omzettenVersturen': {
-    nl: 'Omzetten naar factuur en versturen',
-    ar: 'التحويل إلى فاتورة والإرسال',
-    en: 'Convert to invoice and send',
-  },
-  'bewerk.omzetWaarschuwing': {
-    nl: 'Hiermee wordt deze offerte een OFFICIËLE FACTUUR met een nummer uit je reeks — niet terug te draaien; corrigeren gaat met een creditnota. Alleen de offerte bijwerken? Gebruik "Wijzigingen opslaan".',
-    ar: 'بهذا يصبح عرض السعر فاتورة رسمية برقم من سلسلتك — لا يمكن التراجع؛ التصحيح يتم بإشعار دائن (creditnota). تريد تحديث عرض السعر فقط؟ استخدم «حفظ التغييرات».',
-    en: 'This turns the quote into an OFFICIAL INVOICE with a number from your sequence — not undoable; you correct with a credit note. Only updating the quote? Use "Save changes".',
   },
   'bewerk.opslaan': {
     nl: 'Wijzigingen opslaan',
@@ -10181,11 +10174,6 @@ export const MESSAGES = {
     ar: 'يُمنح عند الإرسال',
     en: 'Assigned when sending',
   },
-  'lijst.send.proForma': {
-    nl: 'Deze pro forma wordt omgezet naar een officiële factuur met een nieuw factuurnummer.',
-    ar: 'سيُحوَّل هذا العرض المبدئي إلى فاتورة رسمية برقم فاتورة جديد.',
-    en: 'This pro forma will be converted into an official invoice with a new invoice number.',
-  },
   'lijst.send.titel': {
     nl: 'Versturen naar {name}?',
     ar: 'الإرسال إلى {name}؟',
@@ -10288,11 +10276,6 @@ export const MESSAGES = {
     ar: 'رقم btw {number} ليس بطول ذلك البلد الأوروبي. تحقّق منه لدى العميل (أو عبر VIES) — فهو يحدّد إن كان يجوز تحويل الضريبة وإن كان العميل يدخل في بيان ICP-opgaaf.',
     en: 'VAT number {number} does not have that EU country\'s length. Check it with the client (or via VIES) — it decides whether the VAT may be reverse-charged and whether the client goes on the ICP-opgaaf.',
   },
-  'nieuw.fout.verstuurConcept': {
-    nl: 'Verzenden mislukt — opgeslagen als concept',
-    ar: 'فشل الإرسال — حُفظت كمسودة',
-    en: 'Sending failed — saved as a draft',
-  },
   'nieuw.gegevens.adresKvk': {
     nl: 'adres/KVK',
     ar: 'العنوان/KVK',
@@ -10332,11 +10315,6 @@ export const MESSAGES = {
     nl: 'bijv. 10',
     ar: 'مثلاً 10',
     en: 'e.g. 10',
-  },
-  'nieuw.omzetten.uitleg': {
-    nl: 'Controleer de gegevens voor het aanmaken van de factuur. Een nieuw factuurnummer wordt automatisch toegewezen. De offerte wordt gearchiveerd.',
-    ar: 'تحقّق من البيانات قبل إنشاء الفاتورة. يُخصَّص رقم فاتورة جديد تلقائياً. وسيُؤرشف عرض السعر.',
-    en: 'Check the details before the invoice is created. A new invoice number is assigned automatically. The quote will be archived.',
   },
   'nieuw.prijsmodus.exclKnop': {
     nl: 'excl. btw',
