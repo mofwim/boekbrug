@@ -12,6 +12,7 @@
 //   3. Whole euros, and 5a is the SUM of the rounded rubrieken (as the Belastingdienst
 //      form computes it), so our concept reconciles line-for-line with the accountant's.
 
+import { VERLEGD_DEFAULT_RATE } from "./verlegde-btw";
 import type { FinancialResult } from "./financial-result";
 import { telWoord, woordBij, vervoeg } from "./nl-plural";
 
@@ -60,6 +61,13 @@ export type AangifteInput = Pick<
   // deduction at all (art. 25 Wet OB), so verlegde BTW is owed in 2a and nothing of it returns in
   // 5b — whatever share the caller computed.
   korActive?: boolean;
+  // [BUITENLANDSE-INKOOP] Purchases from abroad whose btw is shifted to this owner: rubriek 4a
+  // (a supplier outside the EU) and 4b (another member state). The same shape and the same rule as
+  // 2a — owed in the rubriek, the deductible share back in 5b, nothing back under the KOR. Absent
+  // (undefined) means the caller does not compute them; null means it did and found nothing.
+  // See foreign-purchase-vat.ts.
+  verlegdBuitenEu?: { grondslag: number; btw: number; aantal: number; aftrekbaar?: number } | null;
+  verlegdBinnenEu?: { grondslag: number; btw: number; aantal: number; aftrekbaar?: number } | null;
 };
 
 export interface AangifteCompleteness {
@@ -67,7 +75,9 @@ export interface AangifteCompleteness {
   quarterDays: number;           // calendar days in the quarter
   incomingInvoiceCount: number;  // purchase invoices feeding 5b (voorbelasting)
   outgoingInvoiceCount: number;  // sales invoices feeding 1a/1b
-  hasEuPurchase: boolean;        // an incoming invoice from outside NL (rubriek 4b — not auto-computed)
+  // An incoming invoice with an EU btw-nummer. Only a caller that does NOT compute 4b (verlegdBinnenEu
+  // left undefined) gets the bare sentence below; the route and the package compute it.
+  hasEuPurchase: boolean;
   // [ICP] The richer version of the line above: the EU purchases NAMED, built by
   // foreignPurchaseNote(). When present it replaces the bare "there are EU purchases" sentence.
   euPurchaseNote?: string | null;
@@ -84,7 +94,7 @@ export interface AangifteCompleteness {
 }
 
 export interface AangifteRow {
-  code: "1a" | "1b" | "1c" | "1e" | "2a" | "3b";
+  code: "1a" | "1b" | "1c" | "1e" | "2a" | "3b" | "4a" | "4b";
   label: string;
   omzet: number;                 // whole euros
   btw: number;                   // whole euros (0 for 1e)
@@ -101,6 +111,9 @@ export interface ConceptAangifte {
   // exemption is not a rate, so there is no box on the form it belongs in. 0 off-regime.
   vrijgesteldeOmzet: number;
   notes: string[];               // honest limits — what each figure depends on
+  // [KOR-AANGIFTE-UIT] The owner is in the kleineondernemersregeling: the sales rubrieken and 5b
+  // are switched off (see buildAangifte), and the screen shows a panel instead of a table.
+  korActive: boolean;
   isConcept: true;
 }
 
@@ -174,7 +187,12 @@ const RATE_LABEL: Record<string, string> = {
   "1c": "Leveringen/diensten belast met overige tarieven, behalve 0%",
   "1e": "Leveringen/diensten belast met 0% of niet bij u belast",
   "3b": "Leveringen naar landen binnen de EU",
+  "4a": "Leveringen/diensten uit landen buiten de EU",
+  "4b": "Leveringen/diensten uit landen binnen de EU",
 };
+
+/** The order of the paper form, whatever order the rows were found in. */
+const RUBRIEK_ORDER = ["1a", "1b", "1c", "1e", "2a", "3b", "4a", "4b"];
 
 /**
  * Map the reconciled result into a concept aangifte. 21% -> 1a, 9% -> 1b, 0% -> 1e, any
@@ -201,11 +219,24 @@ export function buildAangifte(
     else { om1c += s.omzet; btw1c += s.btw; }
   }
 
-  const rows: AangifteRow[] = [
-    { code: "1a", label: RATE_LABEL["1a"], omzet: euro(om1a), btw: euro(btw1a) },
-    { code: "1b", label: RATE_LABEL["1b"], omzet: euro(om1b), btw: euro(btw1b) },
-  ];
-  if (euro(om1c) !== 0 || euro(btw1c) !== 0) rows.push({ code: "1c", label: RATE_LABEL["1c"], omzet: euro(om1c), btw: euro(btw1c) });
+  // [KOR-AANGIFTE-UIT] Under the KOR the owner files no btw return: no btw on sales and no right of
+  // deduction (art. 25 Wet OB). So the sales rubrieken are switched off — the way Moneybird and
+  // Exact switch the whole return off — with the two exceptions the law keeps: btw that IS stated
+  // on a sales invoice is owed whatever the regime (art. 37 Wet OB), and btw shifted TO the owner
+  // (2a, 4a, 4b) is owed and must be declared. Everything else stays empty on purpose, and the
+  // notes say so. Before this, a KOR owner read a full table with a note underneath saying the
+  // figures did not apply — a return that contradicts itself on the screen it is filed from.
+  const kor = input.korActive === true;
+  const rows: AangifteRow[] = [];
+  const sales = (code: "1a" | "1b" | "1c", om: number, btw: number, always: boolean): void => {
+    const o = euro(om), b = euro(btw);
+    // Off the KOR: 1a and 1b always (the form has them), 1c only when it holds something.
+    // Under the KOR: only a row whose btw was actually stated on an invoice (art. 37).
+    if (kor ? b !== 0 : always || o !== 0 || b !== 0) rows.push({ code, label: RATE_LABEL[code], omzet: o, btw: b });
+  };
+  sales("1a", om1a, btw1a, true);
+  sales("1b", om1b, btw1b, true);
+  sales("1c", om1c, btw1c, false);
   // [ICP] Intra-EU supplies are 0%-turnover that the rate alone cannot distinguish, so they land
   // in the 1e bucket above. Move them to 3b, where the Belastingdienst cross-checks them against
   // the ICP-opgaaf. Capped at what 1e actually holds: 1e can never go negative, and turnover that
@@ -220,7 +251,9 @@ export function buildAangifte(
   // where the two differ (Math.round(-1.5) is -1, euro(-1.5) is -2 — the 1e bucket it must match
   // is rounded with euro, so the two would disagree about the same credit note).
   const intraEu = euro(input.intraEuOmzet ?? 0);
-  const e1 = euro(om1e);
+  // [KOR-AANGIFTE-UIT] Under the KOR, 0%-turnover is exempt turnover: no box on a return that is
+  // not filed. 1e and 3b therefore stay empty; the ICP block beside the concept is the route's.
+  const e1 = kor ? 0 : euro(om1e);
   // Only ever move what 1e actually holds, in the direction it holds it. Mixed signs (positive
   // EU turnover against a negative 0%-bucket, or the reverse) move nothing: there is no honest
   // amount to shift, and the note still names the ICP lines.
@@ -250,6 +283,27 @@ export function buildAangifte(
     rows.push({ code: "2a", label: RATE_LABEL["2a"], omzet: euro(verlegd.grondslag), btw: verlegdBtw });
   }
 
+  // [BUITENLANDSE-INKOOP] 4a and 4b, exactly the way 2a is handled: one rounded figure per rubriek
+  // on the owed side, and the deductible share — never more than the rubriek, nothing under the
+  // KOR — back in 5b. A zzp'er's Adobe, AWS and UK invoices all live here; before this the return
+  // was silent on two lines and, under the KOR, short by the whole amount.
+  const buitenlands = (v: { grondslag: number; btw: number; aantal: number; aftrekbaar?: number } | null | undefined) => {
+    if (!v) return { btw: 0, aftrek: 0 };
+    const btw = euro(v.btw);
+    const aftrek = input.korActive ? 0 : euro(typeof v.aftrekbaar === "number" ? v.aftrekbaar : v.btw);
+    return { btw, aftrek };
+  };
+  const v4a = buitenlands(input.verlegdBuitenEu);
+  const v4b = buitenlands(input.verlegdBinnenEu);
+  if (input.verlegdBuitenEu && (input.verlegdBuitenEu.grondslag !== 0 || v4a.btw !== 0)) {
+    rows.push({ code: "4a", label: RATE_LABEL["4a"], omzet: euro(input.verlegdBuitenEu.grondslag), btw: v4a.btw });
+  }
+  if (input.verlegdBinnenEu && (input.verlegdBinnenEu.grondslag !== 0 || v4b.btw !== 0)) {
+    rows.push({ code: "4b", label: RATE_LABEL["4b"], omzet: euro(input.verlegdBinnenEu.grondslag), btw: v4b.btw });
+  }
+  // The form's order, whatever order the rows were found in — 2a between 1e and 3b, 4a/4b last.
+  rows.sort((a, b) => RUBRIEK_ORDER.indexOf(a.code) - RUBRIEK_ORDER.indexOf(b.code));
+
   const verschuldigd = rows.reduce((s, r) => s + r.btw, 0); // 5a — sum of rounded rubrieken
   // 5b = de gedocumenteerde voorbelasting PLUS het AFTREKBARE deel van de verlegde BTW uit 2a.
   //
@@ -265,7 +319,10 @@ export function buildAangifte(
   const verlegdAftrek = !verlegd || input.korActive
     ? 0
     : euro(typeof verlegd.aftrekbaar === "number" ? verlegd.aftrekbaar : verlegd.btw);
-  const voorbelasting = euro(input.btwVoorbelasting) + verlegdAftrek;
+  // [KOR-AANGIFTE-UIT] No right of deduction at all under the KOR: the documented voorbelasting is
+  // a cost, never a claim. verlegdAftrek and the 4a/4b shares are already 0 under the KOR.
+  const gedocumenteerd = kor ? 0 : euro(input.btwVoorbelasting);
+  const voorbelasting = gedocumenteerd + verlegdAftrek + v4a.aftrek + v4b.aftrek;
   const saldo = verschuldigd - voorbelasting;                // 5g
 
   // ── Honest notes — no false reassurance. Every figure states what it depends on. ──
@@ -276,37 +333,62 @@ export function buildAangifte(
   // in the quarter while 5a/5b were built from the settlements — a number that could be off by
   // any amount in either direction, printed in the block this page calls its trust layer.
   const onCash = completeness.scheme === "kas";
-  notes.push(
-    `Verkoop-BTW (5a) is berekend uit ${telWoord(completeness.turnoverDays, "dag", "dagen")} dagomzet` +
-    `${completeness.outgoingInvoiceCount
-      ? ` en ${completeness.outgoingInvoiceCount} ${onCash ? "in dit kwartaal betaalde " : ""}${woordBij(completeness.outgoingInvoiceCount, "verkoopfactuur")}`
-      : ""}.`,
-  );
-  if (completeness.turnoverDays > 0 && completeness.turnoverDays < completeness.quarterDays) {
+  if (kor) {
+    // [KOR-AANGIFTE-UIT] What this concept is under the KOR, in the words the owner needs: no
+    // return, and the two things that are owed anyway. Never "nog geen omzet ingevoerd" — the
+    // sales rubrieken are empty by design, not by omission.
     notes.push(
-      `Let op: dit kwartaal heeft ${completeness.quarterDays} dagen, maar er zijn ${completeness.turnoverDays} kassadagen geïmporteerd. ` +
-      "Ontbrekende dagen tellen NIET mee — controleer of alle Z-rapporten erin zitten.",
+      "KOR actief: je doet geen btw-aangifte. Onder de KOR reken je geen btw en heb je geen recht op aftrek " +
+      "(art. 25 Wet OB), dus dit concept toont geen omzetrubrieken en geen voorbelasting.",
     );
-  }
-  // [VRIJGESTELD] The exempt figure counts as turnover HERE too. Without it this sentence tells a
-  // fully exempt owner — a dentist with EUR 132.000 of care turnover, correctly in no rubriek —
-  // that they have "nog geen omzet ingevoerd", which is both false and the opposite of reassuring:
-  // it reads as "your quarter is empty" at the moment their data is complete.
-  if (completeness.turnoverDays === 0 && input.salesByRate.length === 0 && !(input.vrijgesteldeOmzet ?? 0)) {
-    notes.push("Er is nog geen omzet ingevoerd — 5a is leeg tot je dagomzet of verkoopfacturen toevoegt.");
-  }
-  notes.push(
-    onCash
-      ? `Voorbelasting (5b) telt alleen de ${telWoord(completeness.incomingInvoiceCount, "inkoopfactuur")} die je in dit kwartaal hebt BETAALD (kasstelsel). ` +
-        "Een onbetaalde inkoopfactuur telt pas mee zodra je hem betaalt."
-      : `Voorbelasting (5b) telt alleen ${telWoord(completeness.incomingInvoiceCount, "ingevoerde inkoopfactuur")}. ` +
-        "Ontbreekt er een inkoopfactuur, dan is de voorbelasting te laag en het te betalen bedrag te hoog.",
-  );
-  if (input.cashOmzetZonderBtw > 0) {
+    const gesteld = rows.filter((r) => r.code === "1a" || r.code === "1b" || r.code === "1c");
+    if (gesteld.length > 0) {
+      const btwGesteld = gesteld.reduce((sum, r) => sum + r.btw, 0);
+      notes.push(
+        `Op verkoopfacturen van dit kwartaal staat wél btw (€${btwGesteld.toLocaleString("nl-NL")}). Btw die op een factuur ` +
+        "staat is verschuldigd, ook onder de KOR (art. 37 Wet OB). Was dat niet de bedoeling, corrigeer dan met een creditnota.",
+      );
+    }
+    if (rows.some((r) => r.code === "2a" || r.code === "4a" || r.code === "4b")) {
+      notes.push(
+        "Btw die naar jou is verlegd (2a, 4a, 4b) blijft onder de KOR verschuldigd. Krijg je voor dit tijdvak geen " +
+        "aangifte, vraag die dan aan bij de Belastingdienst en geef deze rubrieken aan.",
+      );
+    }
+    if (rows.length === 0) notes.push("Er is dit kwartaal niets aan te geven.");
+  } else {
     notes.push(
-      `€${euro(input.cashOmzetZonderBtw)} omzet heeft nog geen BTW-tarief (contante omzet, bankomzet of een niet-gesplitste kassadag) — die is NIET in 1a/1b ingedeeld. ` +
-      "Ken een tarief toe voor een compleet beeld.",
+      `Verkoop-BTW (5a) is berekend uit ${telWoord(completeness.turnoverDays, "dag", "dagen")} dagomzet` +
+      `${completeness.outgoingInvoiceCount
+        ? ` en ${completeness.outgoingInvoiceCount} ${onCash ? "in dit kwartaal betaalde " : ""}${woordBij(completeness.outgoingInvoiceCount, "verkoopfactuur")}`
+        : ""}.`,
     );
+    if (completeness.turnoverDays > 0 && completeness.turnoverDays < completeness.quarterDays) {
+      notes.push(
+        `Let op: dit kwartaal heeft ${completeness.quarterDays} dagen, maar er zijn ${completeness.turnoverDays} kassadagen geïmporteerd. ` +
+        "Ontbrekende dagen tellen NIET mee — controleer of alle Z-rapporten erin zitten.",
+      );
+    }
+    // [VRIJGESTELD] The exempt figure counts as turnover HERE too. Without it this sentence tells a
+    // fully exempt owner — a dentist with EUR 132.000 of care turnover, correctly in no rubriek —
+    // that they have "nog geen omzet ingevoerd", which is both false and the opposite of reassuring:
+    // it reads as "your quarter is empty" at the moment their data is complete.
+    if (completeness.turnoverDays === 0 && input.salesByRate.length === 0 && !(input.vrijgesteldeOmzet ?? 0)) {
+      notes.push("Er is nog geen omzet ingevoerd — 5a is leeg tot je dagomzet of verkoopfacturen toevoegt.");
+    }
+    notes.push(
+      onCash
+        ? `Voorbelasting (5b) telt alleen de ${telWoord(completeness.incomingInvoiceCount, "inkoopfactuur")} die je in dit kwartaal hebt BETAALD (kasstelsel). ` +
+          "Een onbetaalde inkoopfactuur telt pas mee zodra je hem betaalt."
+        : `Voorbelasting (5b) telt alleen ${telWoord(completeness.incomingInvoiceCount, "ingevoerde inkoopfactuur")}. ` +
+          "Ontbreekt er een inkoopfactuur, dan is de voorbelasting te laag en het te betalen bedrag te hoog.",
+    );
+    if (input.cashOmzetZonderBtw > 0) {
+      notes.push(
+        `€${euro(input.cashOmzetZonderBtw)} omzet heeft nog geen BTW-tarief (contante omzet, bankomzet of een niet-gesplitste kassadag) — die is NIET in 1a/1b ingedeeld. ` +
+        "Ken een tarief toe voor een compleet beeld.",
+      );
+    }
   }
   // [RUBRIEK-1E] What is in 1e, and what the app cannot take out of it.
   //
@@ -316,17 +398,17 @@ export function buildAangifte(
   //   3a  leveringen naar landen BUITEN de EU (uitvoer)
   //   3c  installatie- en afstandsverkopen BINNEN de EU
   //
-  // This concept can emit 1a, 1b, 1c, 1e and 3b, and no others. Everything taxed at 0% that is not
+  // This concept can emit 1a, 1b, 1c, 1e, 2a, 3b, 4a and 4b, and no others. Everything taxed at 0% that is not
   // recognised as intra-EU therefore lands in 1e — including an export to a customer in the UK,
   // Switzerland or the United States, which belongs in 3a. The TOTAL is right either way (all
   // three boxes carry EUR 0 of BTW, so 5a and 5g do not move by a cent), and the FILED RETURN is
   // still wrong: it states domestic 0%/verlegde omzet where there was an export.
   //
-  // Why this is a note and not a computation: 3a and 3c are decided by where the customer is and
-  // what kind of supply it was, and this app holds no country for a customer at all — there is no
-  // country column on clients or invoices, which is the same absence that makes the e-factuur
-  // refuse to name a buyer's country rather than default it to NL ([LAND-ONBEKEND] in
-  // ubl-export.ts). Splitting 1e without that data would be a guess printed on a tax return.
+  // Why this is a note and not a computation: 3a and 3c are decided by where the customer is AND
+  // what kind of supply it was (goods leaving the EU, an installation, a distance sale). The
+  // customer's country exists since [KLANT-LAND]; the kind of supply does not, and half an answer
+  // printed as a rubriek is a guess printed on a tax return. So the split is not built yet, and the
+  // note says exactly that.
   //
   // So the accountant is told exactly what 1e holds and what to look for, and the number is left
   // alone. That is the same shape as the [ICP] block above, which only ever MOVES turnover it can
@@ -337,7 +419,7 @@ export function buildAangifte(
       `€${bedrag1e.toLocaleString("nl-NL")} staat in rubriek 1e. Daar zet deze app ALLE 0%-omzet in die ` +
       "niet als levering binnen de EU herkend is. Verkocht je aan een klant BUITEN de EU, dan hoort " +
       "die omzet in 3a (uitvoer), en installatie- of afstandsverkopen binnen de EU horen in 3c. " +
-      "BoekBrug legt het land van je klant nergens vast en kan dat onderscheid dus niet maken — het " +
+      "Rubriek 3a en 3c rekent dit concept nog niet uit, ook als het land van je klant is vastgelegd — het " +
       "bedrag en de te betalen BTW veranderen er niet door, de rubriek wel. Laat je boekhouder dit " +
       "controleren als je buiten Nederland hebt geleverd.",
     );
@@ -443,7 +525,8 @@ export function buildAangifte(
   }
   if (completeness.euPurchaseNote) {
     notes.push(completeness.euPurchaseNote);
-  } else if (completeness.hasEuPurchase) {
+  } else if (completeness.hasEuPurchase && input.verlegdBinnenEu === undefined) {
+    // Only for a caller that does not compute 4b at all; one that did says so in its own note.
     notes.push(
       "Er zijn inkopen uit het buitenland (EU). BTW-verlegging (rubriek 4b) en de bijbehorende voorbelasting " +
       "worden hier NIET automatisch berekend — je boekhouder verwerkt dit.",
@@ -479,6 +562,29 @@ export function buildAangifte(
       "zo'n factuur staat GEEN tarief — dat volgt uit wat er geleverd is. Controleer dat met je boekhouder.",
     );
   }
+  // [BUITENLANDSE-INKOOP] Each of the two rubrieken says what it took and what came back, like 2a.
+  const buitenlandNote = (
+    code: "4a" | "4b",
+    v: { grondslag: number; btw: number; aantal: number } | null | undefined,
+    aftrek: number,
+  ): void => {
+    if (!v || v.aantal === 0) return;
+    const waar = code === "4a" ? "buiten de EU" : "in een ander EU-land";
+    const facturen = v.aantal === 1 ? "is 1 inkoopfactuur" : `zijn ${v.aantal} inkoopfacturen`;
+    const btw = euro(v.btw);
+    const rest = input.korActive
+      ? "Onder de KOR heb je geen recht op aftrek, dus in 5b komt er niets van terug: je betaalt die btw."
+      : aftrek === btw
+        ? "Dezelfde btw is in 5b weer afgetrokken, dus per saldo betaal je er niets over."
+        : `Daarvan is €${aftrek.toLocaleString("nl-NL")} in 5b afgetrokken, volgens je toewijzing van die inkopen en je pro-rata-percentage; het verschil betaal je.`;
+    notes.push(
+      `Er ${facturen} van een leverancier ${waar} zonder btw: die btw is naar jou verlegd en staat als verschuldigd in ` +
+      `rubriek ${code} (€${btw.toLocaleString("nl-NL")} over €${euro(v.grondslag).toLocaleString("nl-NL")}, tegen het ` +
+      `voorgestelde tarief van ${VERLEGD_DEFAULT_RATE}%). ${rest} Het tarief staat niet op zo'n factuur — controleer het per factuur met je boekhouder.`,
+    );
+  };
+  buitenlandNote("4a", input.verlegdBuitenEu, v4a.aftrek);
+  buitenlandNote("4b", input.verlegdBinnenEu, v4b.aftrek);
   for (const rn of regimeNotes ?? []) notes.push(rn);
 
   return {
@@ -490,6 +596,7 @@ export function buildAangifte(
     cashOmzetZonderBtw: euro(input.cashOmzetZonderBtw),
     vrijgesteldeOmzet: euro(input.vrijgesteldeOmzet ?? 0),
     notes,
+    korActive: kor,
     isConcept: true,
   };
 }
@@ -542,6 +649,11 @@ export function buildAangifteCsv(a: ConceptAangifte): string {
   const L: string[] = [];
   L.push(`BoekBrug — Concept BTW-aangifte ${a.quarterLabel}`);
   L.push("LET OP: concept op basis van de ingevoerde gegevens — GEEN ingediende aangifte. De boekhouder controleert en dient in.");
+  // [KOR-AANGIFTE-UIT] The accountant opening this next to the evidence must not read empty
+  // rubrieken as missing data.
+  if (a.korActive) {
+    L.push("KOR actief: geen btw-aangifte. Alleen de rubrieken hieronder zijn (toch) verschuldigd; is de lijst leeg, dan is er niets aan te geven.");
+  }
   L.push("");
   L.push(["Rubriek", "Omschrijving", "Omzet", "BTW"].map(esc).join(";"));
   for (const r of a.rows) {

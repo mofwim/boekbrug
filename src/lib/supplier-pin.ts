@@ -38,12 +38,19 @@ import { checkVendorIban, checkVendorBtw } from './vendor-identity'
 import type { MessageKey } from './i18n/messages'
 // [LEVERANCIER-STANDAARD] The category vocabulary a default may come from — the bank's own.
 import { ALLOWED_CATEGORIES, type BankCategory } from './bank-categories'
+// [LEVERANCIER-LAND] The supplier's country as a code — what puts their invoices in rubriek 4a/4b.
+import { normalizeCountry } from './client-country'
 
 export interface SupplierPinInput {
   name?: string | null
   iban?: string | null
   kvk?: string | null
   btw?: string | null
+  /**
+   * [LEVERANCIER-LAND] ISO code, two letters. ABSENT (undefined) = not on this form, stored value
+   * untouched — the four-field pin modal does not carry it; '' or null = the owner cleared it.
+   */
+  country?: string | null
   /**
    * [LEVERANCIER-STANDAARD] The two defaults. ABSENT (undefined) means "not on this form" and
    * leaves the stored value alone — the pin modal on an invoice does not carry them. Null or ''
@@ -69,17 +76,19 @@ export interface SupplierPinValues {
   /** undefined = not on the form; null = cleared. */
   defaultBtwRate?: LegalRate | null
   defaultCategory?: BankCategory | null
+  /** [LEVERANCIER-LAND] undefined = not on the form; null = cleared (read as the Netherlands). */
+  country?: string | null
 }
 
 /** Why a form was refused. Each code has exactly one sentence in the catalogue. */
 export type SupplierPinRefusal =
   | 'name_empty' | 'name_unreliable' | 'name_no_key' | 'iban_checksum' | 'kvk_shape' | 'btw_shape'
-  | 'rate_unknown' | 'category_unknown'
+  | 'rate_unknown' | 'category_unknown' | 'country_shape'
 
 export type SupplierPinPlan =
   | { ok: true; values: SupplierPinValues }
   /** It names the FIELD — a form that says "ongeldig" says nothing — and the reason as a code. */
-  | { ok: false; field: 'name' | 'iban' | 'kvk' | 'btw' | 'rate' | 'category'; code: SupplierPinRefusal }
+  | { ok: false; field: 'name' | 'iban' | 'kvk' | 'btw' | 'rate' | 'category' | 'country'; code: SupplierPinRefusal }
 
 /**
  * The sentence behind each refusal, as a catalogue key. Literal keys, not assembled from the code:
@@ -94,6 +103,7 @@ export const SUPPLIER_PIN_REFUSAL_KEY: Record<SupplierPinRefusal, MessageKey> = 
   btw_shape: 'lev.fout.btw',
   rate_unknown: 'lev.fout.tarief',
   category_unknown: 'lev.fout.categorie',
+  country_shape: 'lev.fout.land',
 }
 
 /** A default rate as typed: '', null → cleared; '9', 9 → 9; anything else → not a rate. */
@@ -166,6 +176,17 @@ export function planSupplierPin(input: SupplierPinInput): SupplierPinPlan {
     else if (ALLOWED_CATEGORIES.has(cat as BankCategory)) values.defaultCategory = cat as BankCategory
     else return { ok: false, field: 'category', code: 'category_unknown' }
   }
+  // [LEVERANCIER-LAND] Same discipline: only when the form carries it, cleared by '' — and a typed
+  // country that is not a two-letter code is refused, never stored as NULL (which reads as NL).
+  if ('country' in input) {
+    const raw = String(input.country ?? '').trim()
+    if (raw === '') values.country = null
+    else {
+      const code = normalizeCountry(raw)
+      if (!code) return { ok: false, field: 'country', code: 'country_shape' }
+      values.country = code
+    }
+  }
 
   return { ok: true, values }
 }
@@ -185,12 +206,13 @@ export interface SupplierWritable {
   btw_number: string | null
   default_btw_rate: number | null
   default_category: string | null
+  country: string | null
 }
 
 export function supplierPinChanges(
   current: {
     name?: string | null; iban?: string | null; kvk_number?: string | null; btw_number?: string | null
-    default_btw_rate?: number | null; default_category?: string | null
+    default_btw_rate?: number | null; default_category?: string | null; country?: string | null
   },
   next: SupplierPinValues,
 ): Partial<SupplierWritable> {
@@ -208,6 +230,9 @@ export function supplierPinChanges(
   }
   if (next.defaultCategory !== undefined && (current.default_category ?? null) !== next.defaultCategory) {
     out.default_category = next.defaultCategory
+  }
+  if (next.country !== undefined && (current.country ?? null) !== next.country) {
+    out.country = next.country
   }
   return out
 }

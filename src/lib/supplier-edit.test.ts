@@ -58,3 +58,21 @@ test('[LEVERANCIER-STANDAARD] the trail carries a changed default, old beside ne
   assert.deepEqual(trail.old, { default_btw_rate: null })
   assert.deepEqual(trail.new, { default_btw_rate: 9 })
 })
+
+test('[LEVERANCIER-LAND] the edit plan reads the country against the row, and the trail carries it old beside new', () => {
+  const form = { name: OZER.name, iban: OZER.iban, kvk: OZER.kvk_number, btw: OZER.btw_number }
+  const same = planSupplierEdit({ ...OZER, country: 'DE' }, { ...form, country: 'de' })
+  assert.ok(same.ok)
+  if (!same.ok) return
+  assert.deepEqual(same.changes, {}, 'the same country, typed lower-case, is not a change')
+
+  const moved = planSupplierEdit({ ...OZER, country: null }, { ...form, country: 'US' })
+  assert.ok(moved.ok)
+  if (!moved.ok) return
+  assert.deepEqual(moved.changes, { country: 'US' })
+  assert.equal(moved.iban, null, 'a country change moves no account number')
+
+  const trail = supplierEditTrail({ ...OZER, country: null }, { country: 'US' })
+  assert.deepEqual(trail.old, { country: null })
+  assert.deepEqual(trail.new, { country: 'US' })
+})

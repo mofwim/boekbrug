@@ -571,7 +571,8 @@ console.log("\n— [SUPPLETIE-FANTOOM] het saldo van een INGEDIENDE momentopname
 // bewegen geen cent — en de aangifte is toch onjuist: er staat binnenlandse 0%-omzet waar uitvoer
 // hoorde te staan.
 //
-// Splitsen kan de app niet: er is nergens een land van de klant vastgelegd. Dus zegt hij het.
+// Splitsen doet het concept nog niet — het land van de klant is er sinds [KLANT-LAND], het soort
+// levering niet. Dus zegt hij het.
 console.log("\n[RUBRIEK-1E] wat er in 1e staat, en wat de app er niet uit kan halen");
 {
   const met1e = buildAangifte(
@@ -583,7 +584,7 @@ console.log("\n[RUBRIEK-1E] wat er in 1e staat, en wat de app er niet uit kan ha
   check("…met het bedrag erin", !!zin && /5\.000/.test(zin));
   check("…die 3a noemt voor buiten de EU", !!zin && /3a \(uitvoer\)/.test(zin));
   check("…en 3c voor afstandsverkopen", !!zin && /3c/.test(zin));
-  check("…en waarom de app het niet zelf kan: geen land van de klant", !!zin && /land van je klant nergens vast/.test(zin));
+  check("…en dat het concept 3a/3c nog niet zelf uitrekent", !!zin && /Rubriek 3a en 3c rekent dit concept nog niet uit/.test(zin));
 
   // De cijfers mogen door deze notitie niet bewegen. Dat is de hele veiligheid ervan.
   check("5a blijft de BTW van 1a", met1e.verschuldigd === 210);
@@ -681,7 +682,8 @@ console.log("\n— [VERLEGD-AFTREK] wat van 2a in 5b terugkomt volgt het recht o
     { ...basis, korActive: true, verlegdNaarMij: { grondslag: 10000, btw: 2100, aantal: 1, aftrekbaar: 2100 } },
     compl(), "Q2 2026",
   );
-  check("onder de KOR komt er niets terug in 5b", kor.voorbelasting === 3000);
+  // [KOR-AANGIFTE-UIT] En de gewone voorbelasting evenmin: onder de KOR is 5b nul.
+  check("onder de KOR komt er niets terug in 5b — ook de gewone voorbelasting niet", kor.voorbelasting === 0);
   check("…terwijl 5a 2a wél draagt", kor.verschuldigd === 12600);
   check("de notitie zegt dat je die BTW betaalt", kor.notes.some((n) => n.includes("Onder de KOR heb je geen recht op aftrek")));
 
@@ -700,6 +702,157 @@ console.log("\n— [EURO] 3b rondt af zoals de rest van het formulier —");
   );
   check("3b = −2, hetzelfde als euro(−1,5)", a.rows.find((r) => r.code === "3b")?.omzet === -2);
   check("niets blijft in 1e achter", !a.rows.some((r) => r.code === "1e"));
+}
+
+console.log("\n— [BUITENLANDSE-INKOOP] rubriek 4a en 4b: verlegde btw uit het buitenland, aangegeven én afgetrokken —");
+{
+  // Een zzp'er met Adobe (IE) en AWS (LU) voor € 1.000 en een Britse ontwerper en OpenAI (US) voor
+  // € 4.300. Geen van die facturen draagt Nederlandse btw: die is naar hem verlegd. Vóór dit blok
+  // stond er niets — twee regels fout, en onder de KOR het hele bedrag te weinig aangegeven.
+  const basis: AangifteInput = {
+    salesByRate: [{ rate: 21, omzet: 50000, btw: 10500 }],
+    btwVoorbelasting: 3000,
+    cashOmzetZonderBtw: 0,
+  };
+  const a = buildAangifte(
+    {
+      ...basis,
+      verlegdBinnenEu: { grondslag: 1000, btw: 210, aantal: 2, aftrekbaar: 210 },
+      verlegdBuitenEu: { grondslag: 4300, btw: 903, aantal: 2, aftrekbaar: 903 },
+    },
+    compl({ hasEuPurchase: true }), "Q3 2026",
+  );
+  const row = (c: string) => a.rows.find((r) => r.code === c);
+  check("4b staat op de aangifte: grondslag 1.000 / btw 210", row("4b")?.omzet === 1000 && row("4b")?.btw === 210);
+  check("4a staat op de aangifte: grondslag 4.300 / btw 903", row("4a")?.omzet === 4300 && row("4a")?.btw === 903);
+  check("5a telt beide mee: 10.500 + 210 + 903 = 11.613", a.verschuldigd === 11613);
+  check("5b trekt dezelfde bedragen af: 3.000 + 210 + 903 = 4.113", a.voorbelasting === 4113);
+  check("5g ongewijzigd: 7.500", a.saldo === 7500);
+  // 1a en 1b staan altijd op het formulier (ook op nul, zoals de echte aangifte hierboven).
+  check("de rubrieken staan in de volgorde van het formulier", a.rows.map((r) => r.code).join(",") === "1a,1b,4a,4b");
+  check("4a heeft zijn eigen notitie, met 'buiten de EU'",
+    a.notes.some((n) => n.includes("rubriek 4a") && n.includes("buiten de EU") && n.includes("€903")));
+  check("4b heeft zijn eigen notitie, met 'in een ander EU-land'",
+    a.notes.some((n) => n.includes("rubriek 4b") && n.includes("in een ander EU-land") && n.includes("€210")));
+  check("…die het voorgestelde tarief noemt en zegt dat het niet op de factuur staat",
+    a.notes.some((n) => n.includes("rubriek 4b") && n.includes("21%") && n.includes("staat niet op zo'n factuur")));
+  check("bij volledige aftrek zegt de notitie dat je er per saldo niets over betaalt",
+    a.notes.some((n) => n.includes("rubriek 4b") && n.includes("per saldo betaal je er niets over")));
+  check("de oude terugvalzin ('NIET automatisch berekend') staat er niet meer naast",
+    !a.notes.some((n) => n.includes("NIET automatisch berekend")));
+
+  // Met 2a en 3b erbij: 1a, 2a, 3b, 4a, 4b — de volgorde van het papier, hoe de regels ook binnenkwamen.
+  const vol = buildAangifte(
+    {
+      ...basis,
+      salesByRate: [{ rate: 21, omzet: 1000, btw: 210 }, { rate: 0, omzet: 500, btw: 0 }],
+      intraEuOmzet: 500,
+      verlegdNaarMij: { grondslag: 100, btw: 21, aantal: 1 },
+      verlegdBuitenEu: { grondslag: 100, btw: 21, aantal: 1 },
+      verlegdBinnenEu: { grondslag: 100, btw: 21, aantal: 1 },
+    },
+    compl(), "Q3 2026",
+  );
+  check("1a, 1b, 2a, 3b, 4a, 4b — de volgorde van het formulier", vol.rows.map((r) => r.code).join(",") === "1a,1b,2a,3b,4a,4b");
+  check("5a = 210 + 21 + 21 + 21 = 273", vol.verschuldigd === 273);
+  check("5b = 3.000 + 21 + 21 + 21 = 3.063", vol.voorbelasting === 3063);
+}
+
+console.log("\n— [BUITENLANDSE-INKOOP] KOR en pro rata: wat van 4a/4b in 5b terugkomt —");
+{
+  const basis: AangifteInput = {
+    salesByRate: [{ rate: 21, omzet: 50000, btw: 10500 }],
+    btwVoorbelasting: 3000,
+    cashOmzetZonderBtw: 0,
+  };
+  // KOR: geen recht op aftrek (art. 25 Wet OB) — de verlegde btw is dan echt verschuldigd.
+  const kor = buildAangifte(
+    { ...basis, korActive: true, verlegdBuitenEu: { grondslag: 1000, btw: 210, aantal: 1, aftrekbaar: 210 } },
+    compl(), "Q3 2026",
+  );
+  check("onder de KOR staat 4a er wél: 210 verschuldigd", kor.rows.find((r) => r.code === "4a")?.btw === 210 && kor.verschuldigd === 10710);
+  check("…en komt er niets van terug in 5b — 5b is onder de KOR nul", kor.voorbelasting === 0);
+  check("de notitie zegt dat je die btw betaalt",
+    kor.notes.some((n) => n.includes("rubriek 4a") && n.includes("Onder de KOR heb je geen recht op aftrek")));
+
+  // Pro rata 20%: 4b het volle bedrag, 5b alleen het aftrekbare deel.
+  const pro = buildAangifte(
+    { ...basis, exemptRegime: true, proRataPercent: 20, verlegdBinnenEu: { grondslag: 1000, btw: 210, aantal: 1, aftrekbaar: 42 } },
+    compl(), "Q3 2026",
+  );
+  check("pro rata: 4b vol (210), 5b alleen het aftrekbare deel (3.000 + 42)",
+    pro.rows.find((r) => r.code === "4b")?.btw === 210 && pro.voorbelasting === 3042);
+  check("de notitie noemt het afgetrokken bedrag", pro.notes.some((n) => n.includes("rubriek 4b") && n.includes("€42")));
+  check("…en belooft niet dat het per saldo niets kost",
+    !pro.notes.some((n) => n.includes("rubriek 4b") && n.includes("per saldo betaal je er niets over")));
+
+  // Zonder aftrekbaar-veld (volledig recht op aftrek): hetzelfde getal aan beide kanten.
+  const oud = buildAangifte({ ...basis, verlegdBinnenEu: { grondslag: 1000, btw: 210, aantal: 1 } }, compl(), "Q3 2026");
+  check("zonder aftrekbaar-veld valt 4b tegen 5b weg", oud.voorbelasting === 3210 && oud.saldo === 7500);
+
+  // Null = uitgerekend en niets gevonden: geen rubriek, geen notitie — ook niet de oude terugvalzin,
+  // want de aanroeper heeft 4b zelf uitgerekend. Undefined = niet uitgerekend: die zin blijft.
+  const niets = buildAangifte({ ...basis, verlegdBuitenEu: null, verlegdBinnenEu: null }, compl({ hasEuPurchase: true }), "Q3 2026");
+  check("null: geen 4a/4b-regel en geen notitie", !niets.rows.some((r) => r.code === "4a" || r.code === "4b") && !niets.notes.some((n) => n.includes("rubriek 4")));
+  const nietBerekend = buildAangifte(basis, compl({ hasEuPurchase: true }), "Q3 2026");
+  check("undefined: een aanroeper die 4b niet uitrekent krijgt de terugvalzin nog", nietBerekend.notes.some((n) => n.includes("NIET automatisch berekend")));
+  const nul = buildAangifte({ ...basis, verlegdBuitenEu: { grondslag: 0, btw: 0, aantal: 0 } }, compl(), "Q3 2026");
+  check("een nul-rubriek wordt niet afgedrukt", !nul.rows.some((r) => r.code === "4a"));
+}
+
+console.log("\n— [KOR-AANGIFTE-UIT] onder de KOR staat de aangifte uit, behalve wat de wet verschuldigd houdt —");
+{
+  // Een kapster in de KOR: € 15.000 omzet zonder btw, € 800 btw op inkopen. Vóór dit blok stond
+  // hier een volle tabel met een notitie eronder dat de cijfers niet golden.
+  const kor = buildAangifte(
+    { salesByRate: [{ rate: 0, omzet: 15000, btw: 0 }], btwVoorbelasting: 800, cashOmzetZonderBtw: 0, korActive: true },
+    compl({ outgoingInvoiceCount: 12 }), "Q3 2026",
+  );
+  check("geen enkele rubriek: ook 1a en 1b niet, ook 1e niet", kor.rows.length === 0);
+  check("5a = 0, 5b = 0, 5g = 0", kor.verschuldigd === 0 && kor.voorbelasting === 0 && kor.saldo === 0);
+  check("het concept zegt dat het onder de KOR staat", kor.korActive === true);
+  check("de notitie zegt: geen btw-aangifte, geen omzetrubrieken, geen voorbelasting",
+    kor.notes.some((n) => n.startsWith("KOR actief: je doet geen btw-aangifte")));
+  check("…en dat er niets aan te geven is", kor.notes.some((n) => n === "Er is dit kwartaal niets aan te geven."));
+  check("geen 'Verkoop-BTW (5a) is berekend uit' — de rubrieken zijn leeg op grond, niet door gebrek",
+    !kor.notes.some((n) => n.includes("Verkoop-BTW (5a) is berekend")) && !kor.notes.some((n) => n.includes("Voorbelasting (5b) telt")));
+  check("…en niet 'nog geen omzet ingevoerd'", !kor.notes.some((n) => n.includes("nog geen omzet ingevoerd")));
+  const csv = buildAangifteCsv(kor);
+  check("de CSV zegt waarom de rubrieken leeg zijn", /KOR actief: geen btw-aangifte/.test(csv));
+
+  // Art. 37 Wet OB: btw die op een factuur staat is verschuldigd, KOR of niet.
+  const gesteld = buildAangifte(
+    { salesByRate: [{ rate: 21, omzet: 1000, btw: 210 }, { rate: 0, omzet: 5000, btw: 0 }], btwVoorbelasting: 800, cashOmzetZonderBtw: 0, korActive: true },
+    compl(), "Q3 2026",
+  );
+  check("een factuur mét btw blijft staan: alleen 1a, 1.000 / 210",
+    gesteld.rows.map((r) => r.code).join(",") === "1a" && gesteld.rows[0].omzet === 1000 && gesteld.rows[0].btw === 210);
+  check("5a = 210, 5b blijft 0, 5g = 210", gesteld.verschuldigd === 210 && gesteld.voorbelasting === 0 && gesteld.saldo === 210);
+  check("de notitie noemt art. 37, het bedrag en de creditnota",
+    gesteld.notes.some((n) => n.includes("art. 37 Wet OB") && n.includes("creditnota") && n.includes("€210")));
+  check("de 0%-omzet staat nergens (geen 1e)", !gesteld.rows.some((r) => r.code === "1e"));
+
+  // Verlegde btw (2a/4a/4b) blijft verschuldigd, en het concept zegt hoe je die aangeeft.
+  const verlegd = buildAangifte(
+    {
+      salesByRate: [{ rate: 0, omzet: 15000, btw: 0 }], btwVoorbelasting: 800, cashOmzetZonderBtw: 0, korActive: true,
+      intraEuOmzet: 2000,
+      verlegdNaarMij: { grondslag: 1000, btw: 210, aantal: 1 },
+      verlegdBinnenEu: { grondslag: 500, btw: 105, aantal: 1, aftrekbaar: 105 },
+    },
+    compl(), "Q3 2026",
+  );
+  check("alleen 2a en 4b — geen 1e, geen 3b", verlegd.rows.map((r) => r.code).join(",") === "2a,4b");
+  check("5a = 315, 5b = 0 (geen aftrek), 5g = 315", verlegd.verschuldigd === 315 && verlegd.voorbelasting === 0 && verlegd.saldo === 315);
+  check("de notitie zegt dat je een aangifte voor dit tijdvak aanvraagt",
+    verlegd.notes.some((n) => n.includes("vraag die dan aan bij de Belastingdienst")));
+  check("…en niet dat er niets aan te geven is", !verlegd.notes.some((n) => n === "Er is dit kwartaal niets aan te geven."));
+
+  // Buiten de KOR verandert er niets: 1a en 1b staan er altijd, ook op nul, en 5b telt gewoon.
+  const gewoon = buildAangifte({ salesByRate: [{ rate: 0, omzet: 15000, btw: 0 }], btwVoorbelasting: 800, cashOmzetZonderBtw: 0 }, compl(), "Q3 2026");
+  check("zonder KOR: 1a, 1b en 1e, 5b = 800, korActive false",
+    gewoon.rows.map((r) => r.code).join(",") === "1a,1b,1e" && gewoon.voorbelasting === 800 && gewoon.korActive === false);
+  check("zonder KOR geen KOR-regel in de CSV", !/KOR actief/.test(buildAangifteCsv(gewoon)));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

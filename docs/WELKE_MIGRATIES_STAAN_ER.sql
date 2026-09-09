@@ -420,6 +420,7 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('supplier_aliases.sql', 'policy', 'supplier_aliases_insert_own', 'supplier_aliases', 'public'),
   ('supplier_aliases.sql', 'policy', 'supplier_aliases_select_own', 'supplier_aliases', 'public'),
   ('supplier_aliases.sql', 'policy', 'supplier_aliases_update_own', 'supplier_aliases', 'public'),
+  ('supplier_country.sql', 'column', 'country', 'suppliers', 'public'),
   ('supplier_defaults.sql', 'column', 'default_btw_rate', 'suppliers', 'public'),
   ('supplier_defaults.sql', 'column', 'default_category', 'suppliers', 'public'),
   ('supplier_defaults.sql', 'constraint', 'suppliers_default_btw_rate_legal', null, 'public'),

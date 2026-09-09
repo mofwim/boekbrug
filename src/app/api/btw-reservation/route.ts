@@ -129,6 +129,14 @@ export async function GET() {
   // An UNFILED quarter has no frozen figure, so it is computed. Concurrently — these are the
   // heaviest reads in the app and running them one after another is the waterfall this route was
   // written to keep off the screen in the first place.
+  // [KOR-AANGIFTE-UIT] Under the KOR the concept owes only what was shifted to the owner (and btw
+  // stated on an invoice regardless, art. 37) — so the money to set apart follows it. A failed
+  // read reserves as if btw applied: the safe side for a card that says "zet dit apart".
+  const { data: korProfile, error: korErr } = await pipeline
+    .from("profiles").select("kor_active").eq("id", user.id).maybeSingle();
+  if (korErr) console.warn("[BTW-RESERVERING] kor_active read failed — reserving as if btw applies", { userId: user.id, error: korErr.message });
+  const korActive = !korErr && !!(korProfile as { kor_active?: boolean | null } | null)?.kor_active;
+
   type Uitkomst = { post: QuarterPosition } | { mislukt: string };
 
   const uitkomsten = await Promise.all(
@@ -161,7 +169,7 @@ export async function GET() {
         // counts are still passed truthfully rather than zeroed, so that anyone who later reads
         // more out of this concept is not reading it out of a hollowed-out one.
         const concept = buildAangifte(
-          range.result,
+          { ...range.result, korActive },
           {
             turnoverDays: 0,
             quarterDays: 0,

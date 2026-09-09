@@ -82,17 +82,13 @@ export function detectRegimeFlags(s: RegimeSignals): RegimeFlag[] {
       code: "kor",
       title: "KOR is actief — bereken geen BTW",
       detail:
-        "Je hebt de kleineondernemersregeling (KOR) aangezet. Onder de KOR breng je GEEN BTW in " +
-        "rekening en draag je geen BTW af. De verschuldigde BTW (5a) in dit concept is uit je omzet " +
-        "berekend, maar hoort onder de KOR niet te worden betaald — je boekhouder verwerkt dit " +
-        "KOR-conform. De omzet zelf klopt; alleen de BTW-afdracht vervalt. " +
-        // [KOR-5B] Het spiegelbeeld, en het gevaarlijke van de twee: onder de KOR vervalt ook het
-        // RECHT OP AFTREK. Dit concept rekent 5b gewoon uit je inkoopfacturen, dus er staat een
-        // teruggaaf in waar een KOR-ondernemer geen recht op heeft. Wie alleen las dat "de
-        // afdracht vervalt" mocht redelijkerwijs denken dat de aftrek bleef — en vraagt dan geld
-        // terug dat later met rente wordt nageheven.
-        "LET OP: onder de KOR vervalt ook je RECHT OP AFTREK — de voorbelasting (5b) in dit " +
-        "concept is berekend uit je inkoopfacturen, maar mag NIET worden teruggevraagd. " +
+        // [KOR-AANGIFTE-UIT] The concept no longer shows sales rubrieken or voorbelasting under
+        // the KOR (aangifte.ts), so this note no longer describes figures "in dit concept" that
+        // are not there. It states the regime — including the trap [KOR-5B] named: the right of
+        // deduction lapses too — and the one thing the concept cannot see, the yearly ceiling.
+        "Je hebt de kleineondernemersregeling (KOR) aangezet: geen btw op je facturen, geen aftrek van " +
+        "voorbelasting en geen btw-aangifte — behalve voor btw die naar jou is verlegd, of btw die toch op " +
+        "een verkoopfactuur staat (art. 37 Wet OB). " +
         // [KOR-JAARGRENS] De drempelvlag hieronder toetst op de omzet die deze berekening ziet, en
         // dat is één KWARTAAL. De KOR-grens is een JAARgrens: wie elk kwartaal €6.000 omzet blijft
         // hier onder de €20.000 en overschrijdt de jaargrens toch. Zonder deze zin was dat gat

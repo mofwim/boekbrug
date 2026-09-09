@@ -645,7 +645,15 @@ export async function GET(req: NextRequest) {
   // to 3b cannot change 5a, 5b or 5g (both rubrieken carry €0 BTW), and those three are the only
   // figures this route exposes — so the two concepts are identical here, and rebuilding the ICP
   // just to reach the same numbers would be work that proves nothing.
-  const aangifte = buildAangifte(result, completeness, quarterLabel);
+  // [DEPLOY-SAFE] kor_active is fetched in its OWN query — never folded into the kas_opening_balance
+  // select above — so if the regime_kor.sql migration lags this deploy, a missing column only nulls
+  // korActive (→ no flags), and can NEVER collaterally drop the opening balance (a wrong number).
+  // [KOR-AANGIFTE-UIT] Read BEFORE the concept: under the KOR the concept owes only what was
+  // shifted to the owner, and this route hands its 5a/5b/5g to the readiness board.
+  const { data: korProfile } = await pipeline
+    .from("profiles").select("kor_active").eq("id", ownerId).maybeSingle();
+  const korActive = !!(korProfile as { kor_active?: boolean | null } | null)?.kor_active;
+  const aangifte = buildAangifte({ ...result, korActive }, completeness, quarterLabel);
   const hasUndecidableRate = aangifte.rows.some((r) => r.code === "1c");
 
   // ── 5b) [KAS-NEGATIEF] The running cash drawer — did it ever go below zero this quarter? ──
@@ -665,14 +673,9 @@ export async function GET(req: NextRequest) {
   });
 
   // ── 5c) [REGIME-FLAGS] Special BTW regimes the concept can't auto-compute (KOR / verlegd /
-  // marge). Owner declares KOR (profiles.kor_active); verlegd/marge are phrase-gated on the
-  // owner's own invoice-line texts (fetched by invoice_id, tenant-safe). Surfaced as RISKS.
-  // [DEPLOY-SAFE] kor_active is fetched in its OWN query — never folded into the kas_opening_balance
-  // select above — so if the regime_kor.sql migration lags this deploy, a missing column only nulls
-  // korActive (→ no flags), and can NEVER collaterally drop the opening balance (a wrong number). ──
-  const { data: korProfile } = await pipeline
-    .from("profiles").select("kor_active").eq("id", ownerId).maybeSingle();
-  const korActive = !!(korProfile as { kor_active?: boolean | null } | null)?.kor_active;
+  // marge). Owner declares KOR (profiles.kor_active — read above, before the concept); verlegd/
+  // marge are phrase-gated on the owner's own invoice-line texts (fetched by invoice_id,
+  // tenant-safe). Surfaced as RISKS. ──
   const regimeInvoices: RegimeInvoiceRef[] = invRaw.map((i) => ({
     id: String(i.id),
     direction: effDir(i),

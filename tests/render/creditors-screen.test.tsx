@@ -261,10 +261,10 @@ test("[TAAL] the merge panel carries its own direction and none of the Dutch", a
 // read that says "storing" rather than drawing an empty list, and the sheet itself.
 const CARDS = [
   { id: "s1", name: "CAN Vleesgroothandel B.V.", iban: "NL20ABNA0458266515", kvk: "63458357", btw: "NL852244872B01",
-    autoIncasso: false, defaultBtwRate: 9, defaultCategory: "kosten", invoiceCount: 3, balanceKey: "can vleesgroothandel", updatedOn: "2026-08-03" },
+    autoIncasso: false, defaultBtwRate: 9, defaultCategory: "kosten", country: "DE", invoiceCount: 3, balanceKey: "can vleesgroothandel", updatedOn: "2026-08-03" },
   // No IBAN, on incasso, never edited — the other branches of the description line.
   { id: "s2", name: "Verhuurder Jansen", iban: null, kvk: null, btw: null,
-    autoIncasso: true, defaultBtwRate: null, defaultCategory: null, invoiceCount: 1, balanceKey: "verhuurder jansen", updatedOn: null },
+    autoIncasso: true, defaultBtwRate: null, defaultCategory: null, country: null, invoiceCount: 1, balanceKey: "verhuurder jansen", updatedOn: null },
 ];
 
 test("[LEVERANCIER-BEWERKEN] the registry list draws every row with its identifiers and an edit button", async () => {
@@ -286,6 +286,8 @@ test("[LEVERANCIER-BEWERKEN] the registry list draws every row with its identifi
   assert.match(html, /Alle leveranciers/, "the section is there");
   assert.match(html, /NL20ABNA0458266515/, "the account number is on the line");
   assert.match(html, /KVK 63458357/);
+  // [LEVERANCIER-LAND] A supplier abroad shows its country on the line; a Dutch one shows nothing.
+  assert.match(html, /NL852244872B01 · DE/, "the foreign supplier's country is on the identifier line");
   assert.match(html, /geen rekeningnummer bekend/, "a row without an IBAN says so");
   assert.match(html, /automatische incasso/, "the mandate is visible");
   assert.match(html, /Laatst aangepast op 3 aug 2026/, "an edited row shows when, in the owner's date form");

@@ -30,6 +30,8 @@ export const dynamic = 'force-dynamic'
 import { redirect } from 'next/navigation'
 
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+// [LEVERANCIER-LAND] The recorded country per supplier, in its own tolerant read.
+import { readSupplierCountries } from '@/lib/supplier-country'
 import { getSessionUser } from '@/lib/session-user'
 import { fetchAllRows, fetchAllRowsForIds } from '@/lib/supabase-paginate'
 import { amsterdamToday } from '@/lib/format-nl'
@@ -222,6 +224,10 @@ export default async function Page({
         .eq('user_id', user.id)
         .order('name', { ascending: true })
       if (supplierErr) throw new Error(supplierErr.message)
+      // [LEVERANCIER-LAND] The country in its OWN read: newer than some installations, and a list
+      // that fails over one column would read as "you have no suppliers". Unreadable here is "not
+      // recorded" for every row, which is the Netherlands — what every supplier was before.
+      const landen = await readSupplierCountries(supabase, user.id)
       const rows = (supplierRows ?? []) as {
         id: string; name: string; iban: string | null; kvk_number: string | null
         btw_number: string | null; auto_incasso: boolean | null; created_at: string; updated_at: string
@@ -250,6 +256,7 @@ export default async function Page({
         autoIncasso: row.auto_incasso === true,
         defaultBtwRate: row.default_btw_rate ?? null,
         defaultCategory: row.default_category ?? null,
+        country: landen.byId.get(row.id) ?? null,
         invoiceCount: invoiceRows.filter((i) => i.supplier_id === row.id).length,
         // The balance list groups on the name key (see keyOf above), so this is how a balance line
         // finds its editable row: same key, same company.

@@ -30,6 +30,9 @@ interface Aangifte {
   verschuldigd: number; voorbelasting: number; saldo: number
   cashOmzetZonderBtw: number
   notes: string[]
+  // [KOR-AANGIFTE-UIT] The owner is in the KOR: the rubrieken are switched off, and only what is
+  // owed anyway (btw shifted to them, btw stated on an invoice) is in `rows`.
+  korActive?: boolean
 }
 
 // [BAD-DEBT] Art. 29 Wet OB, both directions — reported alongside the concept, never inside it.
@@ -215,6 +218,10 @@ export default function AangifteClient({ hasAccountant = null }: {
   }, [year, quarter])
 
   const teBetalen = data ? data.saldo >= 0 : true
+  // [KOR-AANGIFTE-UIT] Under the KOR the table is a panel; with nothing owed, the deadline, the
+  // self-file steps and the pre-filing checklist stand for a return that will not be filed.
+  const korUit = data?.korActive === true
+  const korNiets = korUit && (data?.rows.length ?? 0) === 0
   // [FILED-QUARTER] The difference between what was handed in and what this quarter's data says
   // NOW. Both sides are whole euros already (the route rounds, and 5g is a subtraction of two
   // rounded figures), so this is exact — no epsilon, no "verschil van € 0" from a float.
@@ -273,7 +280,7 @@ export default function AangifteClient({ hasAccountant = null }: {
             dat deze ondernemers werkelijk vasthouden stond de deadline dus nergens.
             Alleen voor een kwartaal dat nog NIET is ingediend: voor een ingediend kwartaal staat
             de banner hierboven al, en die is het echte antwoord. */}
-        {!filed && deadline && (
+        {!filed && deadline && !korNiets && (
           <div style={{
             background: deadline.state === 'voorbij' ? M3.errorContainer : deadline.state === 'ruim' ? M3.surfaceVariant : M3.warningContainer,
             color: deadline.state === 'voorbij' ? M3.error : deadline.state === 'ruim' ? M3.onSurface : M3.warning,
@@ -293,7 +300,7 @@ export default function AangifteClient({ hasAccountant = null }: {
             indienen is erger dan geen van beiden.
             De rubrieknummers staan er letterlijk in omdat ze letterlijk overgenomen moeten worden;
             de tabel hieronder draagt exact dezelfde nummers. */}
-        {hasAccountant === false && !filed && (
+        {hasAccountant === false && !filed && !korNiets && (
           <div style={{ background: M3.surface, border: `1px solid ${M3.outlineVariant}`, borderRadius: 12, padding: '14px 16px', margin: '0 0 16px', fontSize: 13.5, lineHeight: 1.6, color: M3.onSurface }}>
             <div style={{ fontWeight: 700, marginBottom: 6 }}>{t('aang.zelf.titel')}</div>
             <ol style={{ margin: 0, paddingInlineStart: 20, display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -372,7 +379,7 @@ export default function AangifteClient({ hasAccountant = null }: {
         {/* [BESTE] The pre-filing checklist. On a quarter that is already filed there is nothing
             to prepare, so it stays away; on an open one it lists what is missing, each item with
             the screen that fixes it. A check that could not run says so ([NO-SILENT-EMPTY]). */}
-        {!filed && data && missing !== null && (
+        {!filed && data && missing !== null && !korNiets && (
           <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, padding: '12px 16px', marginBottom: 12 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: M3.neutral, marginBottom: 4 }}>{t('aang.klaar.kop')}</div>
             {missing === 'failed' ? (
@@ -428,7 +435,20 @@ export default function AangifteClient({ hasAccountant = null }: {
 
         {data && (
           <>
-            {/* Rubrieken */}
+            {/* [KOR-AANGIFTE-UIT] The panel where the table stood. Moneybird and Exact switch the
+                return off under the KOR; this does the same, and keeps visible the one thing the
+                law keeps owed — the rows below, when there are any. */}
+            {korUit && (
+              <div style={{ background: M3.surfaceVariant, color: M3.onSurface, borderRadius: 14, padding: '14px 16px', marginBottom: 16, lineHeight: 1.55 }}>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>{t('aang.kor.titel')}</div>
+                <div style={{ fontSize: 13.5 }}>{t('aang.kor.uitleg')}</div>
+                <div style={{ fontSize: 13.5, marginTop: 6, fontWeight: 600 }}>{korNiets ? t('aang.kor.niets') : t('aang.kor.toch')}</div>
+                {!korNiets && <div style={{ fontSize: 13.5, marginTop: 4 }}>{t('aang.kor.aanvragen')}</div>}
+              </div>
+            )}
+
+            {/* Rubrieken — under the KOR only when something is owed anyway. */}
+            {!korNiets && (<>
             <div style={{ background: M3.surface, borderRadius: 14, border: `1px solid ${M3.outlineVariant}`, overflow: 'hidden', marginBottom: 16 }}>
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
@@ -465,6 +485,7 @@ export default function AangifteClient({ hasAccountant = null }: {
                 strong color={teBetalen ? M3.onSurface : M3.success}
               />
             </div>
+            </>)}
 
             {/* [SUPPLETIE-VERREKEND] Corrections from earlier quarters that are already at the
                 Belastingdienst. Under €1.000 they may be processed in this return — the app has

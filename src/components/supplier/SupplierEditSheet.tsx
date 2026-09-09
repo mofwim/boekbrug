@@ -50,6 +50,8 @@ export interface SupplierEditCard {
   /** [LEVERANCIER-STANDAARD] null = no fixed choice. */
   defaultBtwRate: number | null
   defaultCategory: string | null
+  /** [LEVERANCIER-LAND] ISO code; null = not recorded, read as the Netherlands. */
+  country: string | null
 }
 
 export interface SupplierEditResult {
@@ -80,6 +82,7 @@ export default function SupplierEditSheet({
   const [iban, setIban] = useState(supplier.iban ?? '')
   const [kvk, setKvk] = useState(supplier.kvk ?? '')
   const [btw, setBtw] = useState(supplier.btw ?? '')
+  const [country, setCountry] = useState(supplier.country ?? '')
   const [incasso, setIncasso] = useState(supplier.autoIncasso)
   // Held as strings: '' is "no fixed choice", which the server reads as clear.
   const [rate, setRate] = useState(supplier.defaultBtwRate === null ? '' : String(supplier.defaultBtwRate))
@@ -101,7 +104,7 @@ export default function SupplierEditSheet({
       const res = await fetch(`/api/supplier/${encodeURIComponent(supplier.id)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, iban, kvk, btw, defaultBtwRate: rate, defaultCategory: category }),
+        body: JSON.stringify({ name, iban, kvk, btw, country, defaultBtwRate: rate, defaultCategory: category }),
       })
       const json = (await res.json().catch(() => ({}))) as {
         field?: unknown; name?: unknown; ibanReplaced?: unknown; invoicesRenamed?: unknown
@@ -196,6 +199,9 @@ export default function SupplierEditSheet({
         )}
         {field('kvk', t('lev.kvk'), kvk, setKvk, t('lev.kvk.hint'), '12345678')}
         {field('btw', t('lev.btw'), btw, setBtw, t('lev.btw.hint'), 'NL000000000B00')}
+        {/* [LEVERANCIER-LAND] Two letters. Outside NL the btw on this supplier's invoices is shifted
+            to the owner: rubriek 4b (EU) or 4a (outside the EU), with the deductible part in 5b. */}
+        {field('country', t('lev.land'), country, (v) => setCountry(v.toUpperCase()), t('lev.land.hint'), 'NL')}
 
         {/* [LEVERANCIER-STANDAARD] Decided once, proposed every time — never booked by itself. */}
         <label style={{ display: 'block', marginBottom: 12, textAlign: 'start' }}>
