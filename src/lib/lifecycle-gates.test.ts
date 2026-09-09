@@ -28848,7 +28848,48 @@ test("[WERK] the trade's own work is one primitive, built on the app, and never 
     assert.match(dienstBlok, new RegExp(`key: "${veld}"`), `the dienstverlening opdracht is missing ${veld}`);
   }
 
+  // [UREN-OUD] The dienstverlener's largest leak: hours worked, priced, and on no invoice after a
+  // month. Prepaid hours are excluded — an hour on a strippenkaart is the delivery of an invoice
+  // that is already paid, and billing it again is the one outcome money may not have.
+  assert.match(stand, /\.is\("invoice_id", null\)\.not\("hourly_rate", "is", null\)\.lte\("worked_on", cutoff\)/, "the old-hours read asks for unbilled, priced hours only");
+  assert.match(stand, /if \(h\.work_item_id && bundleIds\.has\(h\.work_item_id\)\) continue;/, "prepaid hours are never counted as waiting for an invoice");
+  assert.match(pure, /if \(oud && oud\.n > 0\) out\.push\(\{ kind: "hours_unbilled_old"/, "and a read that did not run raises nothing");
+
   assert.ok(existsSync("tests/render/werk.test.tsx"), "the screen is on the render line");
+});
+
+// ─── [OPDRACHTGEVER] Who the year's money came from — facts, never a verdict ──────────────────
+//
+// Since 1 January 2025 the Wet DBA is enforced again, and what a zzp'er risks is their own
+// zelfstandigenaftrek. The figures that answer "how many opdrachtgevers, and how big is the
+// biggest" are in this app's invoices and in no package's screens. So the app states them.
+//
+// The rule this gate holds is what the module must NOT do: no threshold, no verdict. "70% from
+// one client" and "three clients" are VAR-era folklore, not law, and a limit printed here would
+// be a confident wrong answer about somebody's largest deduction.
+test("[OPDRACHTGEVER] the year's clients are added up, and the app judges nothing", () => {
+  const pure = code("src/lib/opdrachtgevers.ts");
+  const panel = code("src/components/dba/OpdrachtgeversPanel.tsx");
+  const route = code("src/app/api/opdrachtgevers/route.ts");
+
+  // No rule of thumb anywhere: not as a number, not as a colour, not as a word.
+  assert.doesNotMatch(pure + panel, /\b(70|0\.7|drie opdrachtgevers|schijnzelfstandig)\b/i,
+    "a threshold or a verdict crept into the DBA figures — there is no rule to check against");
+  // The share is of a POSITIVE total, or absent. A percentage of a negative year means nothing.
+  assert.match(pure, /revenue > 0 \? Math\.round\(\(r\.revenue \/ revenue\) \* 1000\) \/ 10 : null/);
+  // An amount that could not be read is skipped, never counted as zero revenue for a real client.
+  assert.match(pure, /if \(iv\.total_ex_btw === null \|\| iv\.total_ex_btw === undefined\) continue;/);
+  // Revenue is a factuur or the creditnota that nets against it — an offerte is not money.
+  assert.match(route, /\.in\("invoice_type", \["factuur", "creditnota"\]\)/);
+  assert.match(route, /\.not\("status", "in", "\(draft,archived,cancelled\)"\)/);
+  // [VOL-GELEZEN] Paged: a truncated year understates the biggest client's share.
+  assert.match(route, /fetchAllRows<OpdrachtgeverInvoice>/);
+  // [NO-SILENT-EMPTY] A failed read is said, on both sides.
+  assert.match(route, /status: 503/);
+  assert.match(panel, /failed \|\| !data \? \(/);
+  // The owner's own year only: no clientId, so an accountant's view of a client never carries it.
+  assert.doesNotMatch(route, /clientId/);
+  assert.match(code("src/app/dashboard/jaar/JaarClient.tsx"), /\{!clientId && <OpdrachtgeversPanel year=\{year\} \/>\}/);
 });
 
 // ── [VERLEGD-AFTREK] What of 2a returns in 5b is the owner's right of deduction, on every surface ──

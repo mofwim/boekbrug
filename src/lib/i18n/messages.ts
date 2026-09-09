@@ -13057,6 +13057,14 @@ export const MESSAGES = {
   // Nederlands, zoals elke administratieve waarheid hier.
   'jaar.titel': { nl: 'Jaaroverzicht voor de IB-aangifte', en: 'Year overview for the income tax return', ar: 'ملخص السنة لإقرار ضريبة الدخل' },
   'jaar.intro': { nl: 'Je jaar, geordend zoals de aangifte inkomstenbelasting erom vraagt. Dit rekent geen belasting uit — het zet je cijfers klaar en zegt wat er nog mist.', en: 'Your year, arranged the way the income tax return asks for it. It computes no tax — it lays out your figures and says what is still missing.', ar: 'سنتك مرتبة كما يطلبها إقرار ضريبة الدخل. لا يحسب ضريبة — يجهّز أرقامك ويقول ما الناقص.' },
+  // [OPDRACHTGEVER] Who this year's money came from. Facts, never a verdict — see the module.
+  'dba.kop': { nl: 'Opdrachtgevers {jaar}', en: 'Clients {jaar}', ar: 'العملاء {jaar}' },
+  'dba.samenvatting': { nl: '{n} opdrachtgevers · {bedrag} · grootste {grootste}%', en: '{n} clients · {bedrag} · largest {grootste}%', ar: '{n} عملاء · {bedrag} · الأكبر {grootste}%' },
+  'dba.samenvattingEen': { nl: '1 opdrachtgever · {bedrag}', en: '1 client · {bedrag}', ar: 'عميل واحد · {bedrag}' },
+  'dba.uren': { nl: '{uren} uur', en: '{uren} hours', ar: '{uren} ساعة' },
+  'dba.geen': { nl: 'Nog geen facturen in dit jaar.', en: 'No invoices in this year yet.', ar: 'لا فواتير في هذه السنة بعد.' },
+  'dba.leesfout': { nl: 'We konden je opdrachtgevers nu niet ophalen.', en: 'We could not fetch your clients right now.', ar: 'تعذّر جلب عملائك الآن.' },
+  'dba.geenOordeel': { nl: 'Dit zijn je eigen facturen, opgeteld. Of je zelfstandig bent hangt van meer af dan deze cijfers.', en: 'These are your own invoices, added up. Whether you are self-employed depends on more than these figures.', ar: 'هذه فواتيرك أنت، مجموعة. استقلالك يعتمد على أكثر من هذه الأرقام.' },
   'jaar.wv.titel': { nl: 'Winst-en-verliesrekening', en: 'Profit and loss', ar: 'حساب الأرباح والخسائر' },
   'jaar.wv.opbrengsten': { nl: 'Opbrengsten', en: 'Revenue', ar: 'الإيرادات' },
   'jaar.wv.kosten': { nl: 'Kosten', en: 'Costs', ar: 'التكاليف' },
@@ -13920,6 +13928,7 @@ export const MESSAGES = {
   'vandaag.werk.sig.contractEinde': { nl: '{n} contracten lopen binnen 60 dagen af.', en: '{n} contracts end within 60 days.', ar: '{n} عقود تنتهي خلال 60 يوماً.' },
   // [VAK-KIEZEN] The trade, chosen from settings.
   'vandaag.werk.sig.strippenkaartOp': { nl: '{n} strippenkaarten zijn op: {uren} uur meer gewerkt dan verkocht.', en: '{n} prepaid bundles are used up: {uren} hours more than sold.', ar: '{n} بطاقات ساعات انتهت: {uren} ساعة أكثر مما بيع.' },
+  'vandaag.werk.sig.urenOud': { nl: '{bedrag} aan gewerkte uren staat na {dagen} dagen nog op geen factuur.', en: '{bedrag} of worked hours is still on no invoice after {dagen} days.', ar: '{bedrag} من ساعات العمل ما زالت بلا فاتورة بعد {dagen} يوماً.' },
   'inst.vak.kop': { nl: 'Mijn vak', en: 'My trade', ar: 'مهنتي' },
   'inst.vak.uitleg': { nl: 'Kies je vak en de app zet jouw werk voorop: werkorders, ritten, klussen of opdrachten.', en: 'Pick your trade and the app puts your work first: work orders, trips, jobs or assignments.', ar: 'اختر مهنتك فيضع التطبيق عملك في المقدمة: أوامر عمل أو رحلات أو مهام أو طلبات.' },
   'inst.vak.geen': { nl: 'Geen vak gekozen', en: 'No trade chosen', ar: 'لم تُختر مهنة' },

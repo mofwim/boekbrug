@@ -10,6 +10,7 @@ import {
   contractFee, canInvoicePeriod, periodInvoiceLines, periodLabelNL, storedPeriods, daysUntil, contractStat, contractGroups, periodOf,
   bundleHours, bundleState, canInvoiceBundle, bundleInvoiceLines,
   type WorkLine,
+  UNBILLED_HOURS_DAYS,
 } from "./werk";
 
 test("[WERK] the layer exists for the four verticals and their sister trades, and for nobody else", () => {
@@ -370,4 +371,18 @@ test("[RETAINER] a dienstverlener's opdracht carries the retainer, the end date 
   // A retainer is the schoonmaak contract's arithmetic on a consultant's row: same fee, same
   // period door, same renewal countdown.
   assert.equal(contractFee({ repeat_every: "maand", fields: { maandbedrag: 1500 } }), 1500);
+});
+
+test("[UREN-OUD] hours worked, priced and still on no invoice after a month are a signal in euros", () => {
+  const signals = workSignals({
+    rows: [], hoursWithoutRate: 0, unlinkedCosts: { n: 0, amount: 0 },
+    hoursByWork: new Map(), oldUnbilledHours: { n: 7, amount: 1512.005 },
+  });
+  assert.deepEqual(signals, [{ kind: "hours_unbilled_old", n: 7, amount: 1512.01, days: UNBILLED_HOURS_DAYS }]);
+});
+
+test("[UREN-OUD] a read that did not run is no signal, and zero old hours is no signal either", () => {
+  const base = { rows: [], hoursWithoutRate: 0, unlinkedCosts: { n: 0, amount: 0 }, hoursByWork: new Map<string, number>() };
+  assert.deepEqual(workSignals(base), [], "absent: the read did not run, so the app says nothing");
+  assert.deepEqual(workSignals({ ...base, oldUnbilledHours: { n: 0, amount: 0 } }), [], "nothing old is not a warning");
 });

@@ -108,7 +108,20 @@ to what the trades needed, because it is arithmetic on rows the app already has.
 - Days from the last hour on an opdracht to its invoice.
 - Revenue share per opdrachtgever this year (the DBA number the owner should know).
 
-## 7. Recommendation
+## 7. Built on 9 September (the owner's decision: build the four, as the primary segment)
+
+| Item | What it is | Where |
+|---|---|---|
+| [DECLARABEL] | A billable flag on every hour. Own time (acquisitie, administratie, leren) counts in full for the urencriterium and never for an invoice; the criterion panel names both halves; own time no longer raises the missing-rate warning. | `time_entries.billable`, `uren.ts`, the hours screen |
+| [RETAINER] | maandbedrag + einddatum on the dienstverlening opdracht — the schoonmaak contract's arithmetic, billed per period under the optimistic lock, with the sixty-day renewal countdown. | `werk.ts` (DIENST skin) |
+| [STRIPPENKAART] | Hours sold up front: invoiced once while the row STAYS OPEN, the balance (sold, used, left) on the work, the overrun stated in hours and never acted on. Prepaid hours are never "waiting for an invoice". | `werk.ts`, `stampBundle`, the work door |
+| [UREN-OUD] | Hours worked, priced, and still on no invoice after thirty days — in euros, on Vandaag and on the Werk screen, leading to the hours screen. The segment's largest leak. | `werk-stand.ts`, `workSignals` |
+| [OPDRACHTGEVER] | Who this year's money came from: per client the revenue, the share, the hours, the invoices; the count and the largest share. Facts only — no threshold, no verdict, because there is no rule to check against. | `opdrachtgevers.ts`, `/api/opdrachtgevers`, the Jaar screen |
+
+What was deliberately NOT built: a timer (the hours screen says why in its own header), a
+kostprijs per hour (the owner prices as they like), and any judgement about schijnzelfstandigheid.
+
+## 8. Recommendation
 
 1. **Put dienstverleners in the test, beside bouw, not after it.** Two cohorts of five in the same
    four to six weeks. They are more numerous, easier to reach online, cheaper to onboard (no

@@ -627,7 +627,18 @@ export type WorkSignal =
   | { kind: "costs_unlinked"; n: number; amount: number }
   | { kind: "over_budget"; n: number }
   | { kind: "contract_ending"; n: number }
-  | { kind: "bundle_over"; n: number; hours: number };
+  | { kind: "bundle_over"; n: number; hours: number }
+  | { kind: "hours_unbilled_old"; n: number; amount: number; days: number };
+
+/**
+ * [UREN-OUD] How old an unbilled hour has to be before it is a leak rather than a week's work.
+ *
+ * Thirty days is the month a dienstverlener bills in: everything of last month should be on an
+ * invoice by now, and an hour older than that was either forgotten or is waiting for a decision
+ * nobody made. Below this the signal would fire on Monday for Friday's work, and a warning that
+ * is always on is a warning nobody reads.
+ */
+export const UNBILLED_HOURS_DAYS = 30;
 
 const EXTRA_KINDS: ReadonlySet<string> = new Set(["meerwerk", "extra"]);
 
@@ -639,6 +650,12 @@ export function workSignals(input: {
   hoursByWork: ReadonlyMap<string, number>;
   /** Purchase invoices of suppliers the owner has attached to work before, now attached to none. */
   unlinkedCosts: { n: number; amount: number };
+  /**
+   * [UREN-OUD] Hours worked, priced, and still on no invoice after UNBILLED_HOURS_DAYS. The
+   * biggest leak a dienstverlener has, and the one nothing on any screen used to name in euros.
+   * Absent = the read did not run, and then there is no signal — never a zero.
+   */
+  oldUnbilledHours?: { n: number; amount: number };
   /** Today, for the contract end countdown; without it no contract signal is raised. */
   today?: string;
 }): WorkSignal[] {
@@ -669,6 +686,8 @@ export function workSignals(input: {
   if (overN > 0) out.push({ kind: "over_budget", n: overN });
   if (endingN > 0) out.push({ kind: "contract_ending", n: endingN });
   if (bundleN > 0) out.push({ kind: "bundle_over", n: bundleN, hours: bundleHoursOver });
+  const oud = input.oldUnbilledHours;
+  if (oud && oud.n > 0) out.push({ kind: "hours_unbilled_old", n: oud.n, amount: round2(oud.amount), days: UNBILLED_HOURS_DAYS });
   return out;
 }
 

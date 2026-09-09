@@ -12,6 +12,7 @@ import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import type { IbJaarOverzicht } from '@/lib/ib-jaar'
 import { failureText } from '@/lib/server-message'
+import OpdrachtgeversPanel from '@/components/dba/OpdrachtgeversPanel'
 
 const CARD: React.CSSProperties = { background: '#fff', border: '1px solid #E0E0E0', borderRadius: 12, padding: '16px 20px' }
 const eur = (n: number) => `€ ${n.toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -152,6 +153,10 @@ export default function JaarClient() {
       {busy && <p style={{ fontSize: 13.5, color: '#5F6368' }}>{t('jaar.laden')}</p>}
       {error && !busy && <p role="alert" style={{ fontSize: 13.5, color: '#C5221F' }}>{error}</p>}
       {overzicht && !busy && <JaarOverzichtPaneel overzicht={overzicht} t={t as never} />}
+      {/* [OPDRACHTGEVER] Who this year's money came from. Only on the owner's own year: an
+          accountant looking at a client's year gets the auditfile, not this. */}
+      {!clientId && <OpdrachtgeversPanel year={year} />}
+
       {overzicht && !busy && (
         <p style={{ fontSize: 13, margin: 0 }}>
           {/* [XAF] Het jaar als auditbestand — de boekhouder importeert dit in het eigen pakket. */}

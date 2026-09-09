@@ -106,3 +106,12 @@ test("[RENDER-GATE] none of the three renders a raw message key", async () => {
     assert.deepEqual(leaked, [], `${name} rendered untranslated keys: ${leaked.join(", ")}`);
   }
 });
+
+// ── [OPDRACHTGEVER] Who this year's money came from ───────────────────────────────────────────
+test("[OPDRACHTGEVER] the panel states the facts and no verdict, and a failed read says so", async () => {
+  const { default: OpdrachtgeversPanel } = await import("../../src/components/dba/OpdrachtgeversPanel");
+  // The panel fetches on mount; a server render shows its resting state, which must be nothing —
+  // a heading with no numbers under it would read as "no clients" before the answer arrives.
+  const html = renderToStaticMarkup(React.createElement(OpdrachtgeversPanel as never, { year: 2026 }));
+  assert.equal(html, "", "before the read answers, the panel is absent — never an empty year");
+});

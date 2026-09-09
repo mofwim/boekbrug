@@ -35,5 +35,7 @@ export function werkSignaalZin(s: WorkSignal, t: Tr): { text: string; href: stri
     case "over_budget": return { text: t("vandaag.werk.sig.begroting", { n: s.n }), href: "/dashboard/werk" };
     case "contract_ending": return { text: t("vandaag.werk.sig.contractEinde", { n: s.n }), href: "/dashboard/werk" };
     case "bundle_over": return { text: t("vandaag.werk.sig.strippenkaartOp", { n: s.n, uren: s.hours.toLocaleString("nl-NL") }), href: "/dashboard/werk" };
+    // [UREN-OUD] The one that leads to the hours screen: the money is in the registration, not in the work.
+    case "hours_unbilled_old": return { text: t("vandaag.werk.sig.urenOud", { n: s.n, bedrag: formatEuroNL(s.amount), dagen: s.days }), href: "/dashboard/uren" };
   }
 }
