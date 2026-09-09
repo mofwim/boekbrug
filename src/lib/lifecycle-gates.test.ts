@@ -11671,8 +11671,66 @@ test("[OFFERTE-OPVOLGING] Vandaag cannot say 'niets te doen' while quotes go col
   assert.match(page, /offertesErr/, "…and a failed read must reach loadFailed like the others");
 
   const client = code("src/app/dashboard/vandaag/VandaagClient.tsx");
-  assert.match(client, /zichtbareOffertes\.length === 0;/,
+  // [CREDIT-TERUG] The same line counts the refunds now; the quotes stay in it.
+  assert.match(client, /zichtbareOffertes\.length === 0\s*&& zichtbareRefunds\.length === 0 && !refundsUnknown;/,
     "the empty state must count the quotes too, or the screen reassures while work sits there");
+});
+
+// ─── [CREDIT-TERUG] The creditnota the owner still has to refund ──────────────
+//
+// A creditnota is money the owner OWES ([CREDIT-SIGN]), and Vandaag listed what to pay and what to
+// chase and never a credit note. A credit against a paid invoice that nobody refunds is a customer
+// waiting for their money with nothing in the app that says so. Whether money has to go back is
+// decided in credited-invoices.ts against the invoice the credit corrects, never in a query.
+test("[CREDIT-TERUG] the refund rule is pure, and reads the corrected invoice before it says a word", () => {
+  const rule = code("src/lib/credited-invoices.ts");
+  // 'paid' on a creditnota IS the refund, recorded — so only the unsettled ones are on the list.
+  assert.match(rule, /const OPEN_CREDIT_STATUSES: ReadonlySet<string> = new Set\(\["sent", "overdue"\]\);/,
+    "a settled creditnota (status 'paid') is off the list; a draft was never sent");
+  // The amount is what EXCEEDS the open remainder of the corrected invoice: a credit against an
+  // unpaid invoice cancels the claim and owes nothing; one against a paid invoice goes back whole.
+  assert.match(rule, /const rest = remainingOpen\.get\(originalId\) \?\? openAfterCredit\(original\.total_inc_btw, original\.amount_paid, 0\);/,
+    "the open remainder comes from the shared openAfterCredit rule — one arithmetic for both screens");
+  assert.match(rule, /const refund = amount - rest;/);
+  assert.match(rule, /remainingOpen\.set\(originalId, Math\.max\(0, rest - amount\)\);/,
+    "several credits on one invoice draw on the same remainder, oldest first — never each on the full one");
+  assert.match(rule, /if \(refund <= EPSILON\) continue;/);
+  // No invoice to compare with: the whole amount, FLAGGED — never silently dropped, never silently full.
+  assert.match(rule, /amount: round2\(amount\), standalone: true,/);
+  assert.match(rule, /amount: round2\(refund\), standalone: false,/);
+  assert.doesNotMatch(rule.slice(rule.indexOf("[CREDIT-TERUG]")), /\.from\(|update\(|insert\(|fetch\(/,
+    "the rule is pure — Vandaag decides nothing, it renders what the rule handed it");
+});
+
+test("[CREDIT-TERUG] Vandaag feeds the refund rule from its paged creditnota read, and cannot say 'niets te doen' over an unread one", () => {
+  const page = code("src/app/dashboard/vandaag/page.tsx");
+  // One paged creditnota read serves both questions — withdrawn invoices and refunds — and it
+  // carries no status filter ([CREDIT-BRON]): the rule keeps the unsettled ones, the query does not.
+  assert.match(page, /\.select\("id, original_invoice_id, total_inc_btw, invoice_number, invoice_date, client_name, status"\)[\s\S]{0,120}\.eq\("direction", "outgoing"\)[\s\S]{0,40}\.eq\("invoice_type", "creditnota"\)/,
+    "the owner's outgoing creditnotas, all of them, with what the refund rule needs");
+  assert.doesNotMatch(page, /\.eq\("invoice_type", "creditnota"\)[\s\S]{0,300}\.in\("status"/,
+    "a status filter on the creditnota read would hide settled credits from the reminder rule too");
+  assert.match(page, /fetchAllRowsForIds<[^>]*>\(\s*correctedIds,[\s\S]{0,400}\.select\("id, total_inc_btw, amount_paid"\)[\s\S]{0,120}\.in\("id", chunk\)/,
+    "…and the invoices they correct, chunked and paged ([IN-CHUNK]), for the total and what the customer paid");
+  assert.match(page, /refunds = refundableCreditnotas\(creditRows, originals\);/,
+    "the shared rule decides, on the same rows the reminder list was cleaned with");
+  assert.match(page, /\} catch \{\s*refunds = null;/,
+    "a failed read of the originals leaves refunds null, never a wrong list");
+  assert.match(page, /refunds=\{refunds\}/);
+
+  const client = code("src/app/dashboard/vandaag/VandaagClient.tsx");
+  assert.match(client, /const refundsUnknown = refunds === null;/, "a failed read is not an empty list");
+  assert.match(client, /&& zichtbareRefunds\.length === 0 && !refundsUnknown;/,
+    "the empty state must count the refunds too — and an unknown read blocks the all-clear");
+  assert.match(client, /\(zichtbareRefunds\.length > 0 \|\| refundsUnknown\) && \(/,
+    "the section shows for a refund AND for a failed read, which then says so");
+  assert.match(client, /t\('vandaag\.terugbetalenMislukt'\)/);
+  // The button goes to the row on the sales list, where "Voldaan!" records the refund — the one
+  // place a creditnota changes status. Vandaag itself never writes a creditnota.
+  assert.match(client, /router\.push\(`\/dashboard\/facturen\?focus=\$\{id\}`\)/);
+  assert.match(client, /\{formatEuroNL\(r\.amount\)\}/, "the amount is rendered, never recomputed here");
+  assert.match(client, /r\.standalone \? ` · \$\{t\('vandaag\.terugbetalenLos'\)\}` : ''/,
+    "a standalone creditnota is flagged on its row");
 });
 
 // ─── [OFFERTE-AKKOORD] De klant zegt ja of nee, in het document zelf ──────────
