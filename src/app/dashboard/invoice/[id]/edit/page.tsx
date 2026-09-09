@@ -78,9 +78,10 @@ export default function InvoiceEditPage() {
   // [HERSTEL] A sent invoice, fully editable while nothing is attached to it.
   const [canCorrectSent, setCanCorrectSent] = useState(false)
   // [OFFERTE-BEWERKBAAR] Dit scherm wist niet WAT het bewerkte. Het heette "Factuur bewerken" boven
-  // een offerte, en zijn bevestiging beloofde "de factuur" te versturen — terwijl versturen een
-  // offerte OMZET in een genummerde factuur (send-route, isConversion). Eén tik, onomkeerbaar
-  // (Art. 35), en het woord offerte kwam nergens voor.
+  // een offerte, en zijn bevestiging beloofde "de factuur" te versturen.
+  // [OFFERTE-GEEN-OMZETTING] Versturen van een offerte ZETTE hem om in een genummerde factuur
+  // (send-route). Dat pad is weg: een offerte gaat hier als offerte de deur uit (send-offerte, de
+  // deur die geen nummer kán slaan) en de factuur komt later via "Maak factuur aan" op de lijst.
   const [invoiceType, setInvoiceType] = useState<string>('factuur')
   const quote = isQuote(invoiceType)
   // [KORTING] Ook hier te wijzigen, niet alleen bij het aanmaken. Een korting die je alleen kunt
@@ -456,12 +457,16 @@ export default function InvoiceEditPage() {
       return
     }
 
-    // 2. Call send endpoint (generates number, updates status, emails)
-    const sendRes = await fetch('/api/invoice/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ invoiceId }),
-    })
+    // 2. Deliver. [OFFERTE-GEEN-OMZETTING] A quote goes out AS a quote, through the door that
+    // cannot mint a number; the factuur comes later, from the sales list, through the new-invoice
+    // path. Everything else goes to the send route, which mints the number, sets the status and mails.
+    const sendRes = quote
+      ? await fetch(`/api/invoice/${invoiceId}/send-offerte`, { method: 'POST' })
+      : await fetch('/api/invoice/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invoiceId }),
+        })
 
     if (!sendRes.ok) {
       const data = await sendRes.json().catch(() => ({}))
@@ -1038,7 +1043,7 @@ export default function InvoiceEditPage() {
                 disabled={saving || sending}
                 className="bg-blue-600 text-white px-6 py-3 rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50"
               >
-                {sending ? t('bewerk.verzendenBezig') : quote ? `✉ ${t('bewerk.omzettenVersturen')}` : `✉ ${t('bewerk.verstuurFactuur')}`}
+                {sending ? t('bewerk.verzendenBezig') : quote ? `✉ ${t('bewerk.offerteVersturen')}` : `✉ ${t('bewerk.verstuurFactuur')}`}
               </button>
             </>
           ) : canCorrectSent ? (
@@ -1087,22 +1092,25 @@ export default function InvoiceEditPage() {
             </h3>
             <p style={{ fontSize: 14, color: '#5F6368', marginBottom: 16, lineHeight: 1.5 }}>
               {quote
-                ? t('bewerk.omzetWaarschuwing')
+                ? t('bewerk.offerteBevestig')
                 : t('detail.bevestig')}
             </p>
             <dl style={{ fontSize: 13, marginBottom: 16, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px' }}>
               <dt style={{ color: '#5F6368', margin: 0 }}>{t('bewerk.modal.nummer')}</dt>
               <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>
-                {invoiceNumber || t('bewerk.modal.nummerBijVerzending')}
+                {quote ? '—' : (invoiceNumber || t('bewerk.modal.nummerBijVerzending'))}
               </dd>
               <dt style={{ color: '#5F6368', margin: 0 }}>{t('bewerk.modal.email')}</dt>
               <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>{clientEmail}</dd>
               <dt style={{ color: '#5F6368', margin: 0 }}>{t('bewerk.modal.bedrag')}</dt>
               <dd style={{ color: '#202124', fontWeight: 500, margin: 0 }}>€{totalInc.toFixed(2)}</dd>
             </dl>
-            <p style={{ fontSize: 12, color: '#B3261E', backgroundColor: '#FCE8E6', padding: 10, borderRadius: 8, marginBottom: 16, lineHeight: 1.5 }}>
-              ⚠ {t('bewerk.modal.waarschuwing')}
-            </p>
+            {/* [OFFERTE-GEEN-OMZETTING] A quote gets no number, so the number warning is not its. */}
+            {!quote && (
+              <p style={{ fontSize: 12, color: '#B3261E', backgroundColor: '#FCE8E6', padding: 10, borderRadius: 8, marginBottom: 16, lineHeight: 1.5 }}>
+                ⚠ {t('bewerk.modal.waarschuwing')}
+              </p>
+            )}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={() => setShowSendModal(false)}
                 style={{ padding: '10px 20px', borderRadius: 8, border: '1px solid #E0E0E0', background: 'white', color: '#5F6368', fontSize: 14, fontWeight: 500, cursor: 'pointer' }}>
