@@ -9,6 +9,8 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 // [SERVER-ZIN] Never a machine code in front of the owner — see server-message.ts.
 import { failureText } from '@/lib/server-message'
+// [MELDING-WEG] The X on the upload's report card.
+import { DismissX } from '@/components/ui/DismissX'
 // [UPLOAD-PLAFOND] Fit a document to the upload budget and survive a platform 413 — upload-fit.ts.
 import { sendWithFit } from '@/lib/upload-fit'
 import Link from 'next/link'
@@ -2097,8 +2099,17 @@ export default function BankClient() {
       {/* Upload summary */}
       {uploadInfo && (
         <div style={{ marginTop: 14, padding: '12px 14px', borderRadius: R.md, background: M3.surface, boxShadow: EL1, fontSize: 13, color: '#3c4043' }}>
-          <strong>{uploadInfo.format}</strong> · {t('bank.upload.gelezen', { parsed: uploadInfo.parsed, inserted: uploadInfo.inserted })}
-          {uploadInfo.skipped > 0 ? ` · ${t('bank.upload.dubbel', { count: uploadInfo.skipped })}` : ''}
+          {/* [MELDING-WEG] A report that has been read can be taken off the screen — the same X every
+              finished notice in the app carries. It had no exit at all: the card stayed until the
+              page was left. The warnings below go with it; this card is the upload's report, and the
+              owner decides when they are done reading it. */}
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <strong>{uploadInfo.format}</strong> · {t('bank.upload.gelezen', { parsed: uploadInfo.parsed, inserted: uploadInfo.inserted })}
+              {uploadInfo.skipped > 0 ? ` · ${t('bank.upload.dubbel', { count: uploadInfo.skipped })}` : ''}
+            </div>
+            <DismissX label={t('melding.weghalen')} onClick={() => setUploadInfo(null)} style={{ width: 32, height: 32, marginTop: -6 }} />
+          </div>
           {/* [R2] Never silently short a transaction: if lines couldn't be read, say so —
               they're in the stored file for the accountant, but not in this overview. */}
           {uploadInfo.unreadable > 0 && (

@@ -1373,6 +1373,14 @@ export const MESSAGES = {
   'up.tochToevoegen': { nl: 'Toch toevoegen — dit is een ander bestand', ar: 'أضِفه رغم ذلك — هذا ملف مختلف', en: 'Add it anyway — this is a different file' },
   'up.nietGelezen': { nl: 'Niet gelezen', ar: 'لم يُقرأ', en: 'Not read' },
   'up.opruimen': { nl: 'Lijst opruimen', ar: 'تنظيف القائمة', en: 'Clear the list' },
+  // [MELDING-WEG] The X on a finished notice — one label for every screen that carries it
+  // (the upload hub's rows, Inkomend's results, the bank upload's report).
+  'melding.weghalen': { nl: 'Melding weghalen', ar: 'إزالة هذا التنبيه', en: 'Dismiss this notice' },
+  // [MELDING-WEG] [TAAL] Where a byte-identical upload already is. The folder names inside {path}
+  // are the owner's own folders and stay as stored; the sentence around them is the app's. Came
+  // from the server as one Dutch sentence and stood as such on the Arabic screen.
+  'up.staatAlIn': { nl: 'Dit bestand staat al in: {path}', ar: 'هذا الملف موجود أصلاً في: {path}', en: 'This file is already in: {path}' },
+  'up.alToegevoegdZin': { nl: 'Dit bestand is al toegevoegd', ar: 'هذا الملف أُضيف مسبقاً', en: 'This file has already been added' },
   'up.meerderePaginas': { nl: 'Factuur met meerdere pagina’s?', ar: 'فاتورة من عدة صفحات؟', en: 'A multi-page invoice?' },
   'up.paginasSamen': { nl: 'Hoort een papieren factuur bij elkaar? Voeg de pagina’s hier samen tot', ar: 'أوراق فاتورة واحدة؟ اجمع الصفحات هنا في', en: 'Pages of one paper invoice? Merge them here into' },
   'up.eenFactuur': { nl: 'Eén factuur, meerdere pagina’s', ar: 'فاتورة واحدة، عدة صفحات', en: 'One invoice, several pages' },
