@@ -273,6 +273,88 @@ nooit heeft plaatsgevonden, van een factuur die niet bestaat, als bewijs van een
 kost. Dat is geen demo maar een bewering. Deze clip komt er pas als hij tegen een echte omgeving kan
 draaien.
 
+## De rekenhulpen — vijf pagina's die antwoorden terwijl je typt
+
+`/btw-berekenen`, `/btw-aangifte-berekenen`, `/uurtarief-berekenen`, `/netto-inkomen-zzp` en
+`/kilometervergoeding` zijn ander gereedschap dan de PDF-tools, en krijgen daarom een eigen vorm
+(`calcClip`). Een PDF-tool doet niets tot je op een knop drukt; een rekenhulp antwoordt terwijl je
+typt. Dat verschil is wat er te zien moet zijn: de camera gaat niet naar een resultaat toe, het
+resultaat staat al in beeld en verandert onder je handen.
+
+Van vier van deze vijf bestaat al een clip van twaalf seconden (01 tot en met 04). Dat is geen
+dubbelop maar een tweede lengte: de korte is voor iemand die scrollt en moet stoppen, de lange
+(26 tot en met 30) voor iemand die al gestopt is en wil weten wat de pagina voor hem doet.
+
+### De stempel noemt geen bedragen
+
+Wat er in de balk staat wijst aan waar je moet kijken; wat het KOST staat op het scherm. Twee
+redenen, en de eerste is al een keer misgegaan: een bijschrift dat een bedrag noemt kan zijn eigen
+scherm tegenspreken (zie de 181 kB hierboven). De tweede is de tijd. Een bedrag in een stempel is
+een tarief — 21%, de zelfstandigenaftrek, de onbelaste kilometervergoeding van € 0,25 — en die
+veranderen per jaar. De pagina rekent dan opnieuw; de video staat er nog precies zoals hij was.
+
+### Drie dingen die het opnemen leerde
+
+- **Deze pagina's staan niet leeg.** Elke rekenhulp begint met een ingevuld voorbeeld, want een lege
+  rekenmachine legt niets uit. Voor een clip betekent dat: eerst wissen, dán typen — anders komt er
+  `1.000100` te staan.
+- **Behalve op /btw-aangifte-berekenen.** Daar keert de kleur van het paneel om bij het saldo: oranje
+  betalen, groen terugkrijgen. Een omzetveld dat even leeg is zet hem op groen — de ontknoping van
+  de clip, drie tellen te vroeg en om de verkeerde reden. Daar wordt de waarde in één keer gezet
+  (`setIn`), en nergens gewist.
+- **Cijfer voor cijfer typen is daar om dezelfde reden fout**: "2", "24", "240" laat drie bedragen
+  zien die nergens op slaan. Op de andere vier is dat juist de charme — het antwoord klimt mee —
+  dus het staat per veld ingesteld en niet per script.
+
+En één die in de code zit: de schakelaar naast een opschrift is op /netto-inkomen-zzp het broertje
+van het BLOK om de tekst (kop plus uitleg), en op /kilometervergoeding het broertje van de REGEL
+zelf. Eén regel die op allebei klopt: klim omhoog tot de eerste ouder die een knop bevat.
+
+### Drie dingen die deze opname aan de gereedschapskist zelf heeft toegevoegd
+
+**Een opname kan slagen terwijl er niets beweegt.** De eerste vijf rekenclips waren onbruikbaar en
+zagen er goed uit: de muis liep, de velden vulden zich, de bestanden hadden een normale lengte. Pas
+op een contactvel van twaalf beelden naast elkaar viel op dat twaalf keer hetzelfde bedrag stond.
+Op poort 3100 stond nog een server van uren eerder terwijl `.next` intussen opnieuw was gebouwd; de
+HTML kwam binnen, de chunks erachter gaven 500, React hydrateerde nooit — en een niet-gehydrateerde
+pagina *is* een screenshot waarin je kunt typen. `next start` had het gemeld (EADDRINUSE), in een
+logbestand dat niemand leest zolang de opname zelf slaagt. De warmloopronde bezoekt tóch al elke
+pagina, dus daar wordt het nu gecontroleerd: één mislukt eigen script stopt de hele reeks met de
+reden erbij. **Kijk altijd naar de beelden, niet naar de bestandslijst.**
+
+**Een woord dat niet past werd afgesneden.** `ZONDER: GEEN ZELFSTANDIGENA` en, onderaan,
+`boekbrug.nl/kilometervergoed` — een adres zonder zijn laatste vier letters is een link die niet
+werkt. De stempel meet zichzelf nu en krimpt tot hij past (46 px tot 28 px), met de regel en het
+adres elk op hun eigen maat, want het adres is de langste tekst in de balk en de minst belangrijke.
+Let op de valkuil: meten kan alleen met `overflow-wrap` UIT, anders breekt het woord in plaats van
+uit te steken, is `scrollWidth` nooit groter dan `clientWidth`, en krimpt er nooit iets.
+
+**Een aankondiging en een uitkomst hebben een tegenovergestelde volgorde.** Standaard verschijnt de
+stempel en gebeurt daarna de handeling. Voor een aankondiging is dat te vroeg: "en in een kwartaal
+met een grote aankoop…" moet blijven staan terwijl de kijker het leest, en pas daarna slaat het
+paneel om — anders is de ontknoping al gebeurd voor de zin uit is (`pause`). Voor een uitkomst is
+het precies andersom: "zonder buffer" boven een scherm waar de buffer nog aanstaat is een bijschrift
+dat zijn eigen scherm tegenspreekt (`after`). Bij een uitkomst gaat de vorige zin eerst weg, zodat
+het scherm onder een lege balk verandert en het woord daarna de verandering benoemt.
+
+### Waar elke clip om draait
+
+Een rekenhulp filmen is niet "alle velden invullen". Elke pagina heeft één moment waarvoor iemand
+hem opzoekt, en dat moment krijgt de tijd:
+
+- **26 · btw** — niet het optellen, het ERAF halen. Een klant betaalde € 1.250; welk deel daarvan is
+  niet van jou? Delen door 1,21, niet 21% eraf, en dat is de fout die de knop "Bedrag is incl. BTW"
+  wegneemt.
+- **27 · aangifte** — het kwartaal waarin je iets groots koopt. De voorbelasting wordt hoger dan wat
+  je moet afdragen, het paneel draait van oranje naar groen, en de Belastingdienst betaalt aan jou.
+  De clip zegt nergens dat hij de aangifte indient; hij rekent hem voor, met de rubrieknummers erbij.
+- **28 · uurtarief** — dat een jaar geen 1.800 factureerbare uren heeft. En de buffer één keer uit en
+  weer aan: het naïeve tarief naast het tarief waar je van kunt leven.
+- **29 · netto** — de opbouw regel voor regel, inclusief de zin dat de arbeidskorting benaderd is.
+  Een rekenhulp die zijn eigen marge verzwijgt geloof je één keer.
+- **30 · kilometers** — de vermenigvuldiging. Eén rit vergeet je; dertien ritten naar dezelfde klant
+  staan niet op de factuur omdat niemand ze optelt.
+
 ## Waar te posten
 
 - **LinkedIn** is voor dit publiek waarschijnlijk het sterkst: Nederlandse zzp'ers én de boekhouders

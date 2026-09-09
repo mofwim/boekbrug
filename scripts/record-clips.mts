@@ -229,12 +229,16 @@ const CAPTION_CSS = `
   background:linear-gradient(to top, rgba(7,11,19,.94) 58%, rgba(7,11,19,0));
   font-family:ClipFont,system-ui,sans-serif; font-weight:700;
   font-size:46px; line-height:1.14; color:#fff;
+  /* Een woord dat niet past wordt gebroken, niet afgesneden. De maat wordt hieronder alsnog
+     bijgesteld zodat breken zelden nodig is — dit is het vangnet daaronder. */
+  overflow-wrap:anywhere;
   text-shadow:0 2px 10px rgba(6,10,18,.6);
   opacity:0; transform:scale(.9);
   transition:opacity .2s ease, transform .22s cubic-bezier(.2,1.5,.4,1);
 }
 #clip-stamp.on{opacity:1; transform:scale(1)}
-#clip-stamp em{font-style:normal; display:block; font-size:29px; margin-top:12px; color:#8ec5ff}
+/* Mee met de ouder: als de stempel krimpt om te passen, moet het adres dat ook doen. */
+#clip-stamp em{font-style:normal; display:block; font-size:.63em; margin-top:12px; color:#8ec5ff}
 /* De eindkaart: de knop klopt, hij knippert niet. */
 @keyframes clipPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
 .clip-pulse{animation:clipPulse 1.15s ease-in-out infinite}
@@ -315,6 +319,45 @@ function stamper(p: Page) {
       if (!t) { el.classList.remove("on"); return; }
       el.classList.remove("on");
       el.innerHTML = t;
+
+      // ── [PASSEND] Krimpen tot het past, in plaats van eruit te lopen ──
+      //
+      // Op 432 pixels breed is ZELFSTANDIGENAFTREK bij 46px te lang, en er zit geen spatie in om
+      // op af te breken. De eerste opname toonde daardoor "ZONDER: GEEN ZELFSTANDIGENA" — een
+      // woord dat halverwege ophoudt, in de balk die het hele punt van de clip draagt. Hetzelfde
+      // gebeurde met het adres onderaan: boekbrug.nl/kilometervergoed, zonder de laatste vier
+      // letters, en dat is een link die niet werkt.
+      //
+      // Een vaste kleinere maat is het verkeerde antwoord: dan is élke stempel kleiner om één
+      // lang woord. Dus meten en bijstellen, per stempel: zolang de inhoud breder is dan de bak,
+      // twee pixels eraf. De ondergrens is 28px — daaronder leest het niet meer op een telefoon,
+      // en dan mag overflow-wrap in de CSS het woord alsnog breken.
+      //
+      // Meten kan alleen met overflow-wrap UIT: staat hij aan, dan breekt het woord in plaats van
+      // uit te steken, is scrollWidth nooit groter dan clientWidth, en krimpt er dus nooit iets.
+      // De eerste versie hiervan deed precies dat en leverde "boekbrug.nl/kilometervergo / eding"
+      // op — niets afgesneden, maar een adres dat middenin een woord afbreekt.
+      //
+      // De regel en het adres krijgen elk hun eigen maat. Het adres is de langste tekst in de balk
+      // en de minst belangrijke; die mag kleiner worden zonder de zin erboven mee te nemen.
+      const adres = el.querySelector("em") as HTMLElement | null;
+      el.style.overflowWrap = "normal";
+      el.style.fontSize = "";
+      if (adres) { adres.style.overflowWrap = "normal"; adres.style.fontSize = ""; adres.style.display = "none"; }
+
+      for (let size = 46; size > 28 && el.scrollWidth > el.clientWidth + 1; size -= 2) {
+        el.style.fontSize = `${size - 2}px`;
+      }
+      if (adres) {
+        adres.style.display = "";
+        const start = parseFloat(getComputedStyle(adres).fontSize) || 29;
+        for (let size = start; size > 16 && adres.scrollWidth > adres.clientWidth + 1; size -= 1) {
+          adres.style.fontSize = `${size - 1}px`;
+        }
+        adres.style.overflowWrap = "";
+      }
+      el.style.overflowWrap = ""; // terug naar `anywhere` uit de CSS: het vangnet blijft staan
+
       // Twee frames wachten, anders slaat de browser de animatie over omdat hij de tussenstand
       // nooit heeft getekend.
       requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add("on")));
@@ -552,6 +595,40 @@ interface ToolBeat {
   ms: number;
   /** Wat de gebruiker doet. Weglaten = alleen kijken. */
   act?: (p: Page) => Promise<void>;
+  /**
+   * [VOLGORDE] Wanneer de stempel verschijnt ten opzichte van de handeling.
+   *
+   * Standaard eerst de stempel, dan de handeling — en dat is voor een AANKONDIGING precies
+   * verkeerd om als er geen adempauze tussen zit. "En in een kwartaal met een grote aankoop…"
+   * hoort te blijven staan terwijl de kijker de zin leest, en pas daarna moet het bedrag
+   * omslaan. Zonder pauze sloeg het al om terwijl de zin nog werd gelezen, en dan verrast de
+   * ontknoping niemand meer: hij is al gebeurd.
+   *
+   * Een UITKOMST is het omgekeerde geval. "Zonder buffer" bovenaan een scherm waar de buffer nog
+   * aan staat is een bijschrift dat zijn eigen scherm tegenspreekt — kort, maar meetbaar: de muis
+   * doet er twee tienden over om bij de schakelaar te komen. Daar hoort de stempel ná de
+   * handeling.
+   */
+  pause?: number;
+  /** De stempel NA de handeling, niet ervoor. Voor een uitkomst in plaats van een aankondiging. */
+  after?: boolean;
+}
+
+/** Eén stap afspelen, met de volgorde die bij deze stap hoort. Zie ToolBeat.pause / .after. */
+async function playBeat(p: Page, beat: ToolBeat, stamp: (html: string) => Promise<void>) {
+  if (beat.stamp !== undefined && beat.after) {
+    // De vorige zin eerst weg. Anders staat "ENKELE REIS" nog in beeld terwijl de schakelaar al
+    // op retour springt en het bedrag verdubbelt — dezelfde fout als een bijschrift dat zijn
+    // eigen scherm tegenspreekt, alleen kort. Het scherm verandert onder een lege balk, en pas
+    // daarna komt het woord dat de verandering benoemt.
+    await stamp("");
+    await p.waitForTimeout(240);
+  }
+  if (beat.stamp !== undefined && !beat.after) await stamp(beat.stamp);
+  if (beat.pause) await p.waitForTimeout(beat.pause);
+  if (beat.act) await beat.act(p);
+  if (beat.stamp !== undefined && beat.after) await stamp(beat.stamp);
+  await p.waitForTimeout(beat.ms);
 }
 
 interface ToolSpec {
@@ -587,11 +664,7 @@ function toolClip(spec: ToolSpec): Clip {
       await input.setInputFiles(spec.samples.map((f) => path.join(SAMPLES, f)));
       await p.waitForTimeout(spec.readMs ?? 2600);
 
-      for (const beat of spec.beats) {
-        if (beat.stamp !== undefined) await stamp(beat.stamp);
-        if (beat.act) await beat.act(p);
-        await p.waitForTimeout(beat.ms);
-      }
+      for (const beat of spec.beats) await playBeat(p, beat, stamp);
       await stamp("GRATIS, ZONDER ACCOUNT<br><em>boekbrug.nl" + spec.path + "</em>");
       await p.waitForTimeout(2700);
     },
@@ -629,6 +702,105 @@ const fotoIn = (p: Page) => p.locator("img").last();
 const btn = (p: Page, label: string | RegExp) =>
   p.locator("button").filter({ hasText: label }).first();
 
+
+// ── [REKENHULP] De vijf rekenpagina's, als stille clips ───────────────────────
+//
+// Ander gereedschap dan hierboven, en daarom een eigen vorm. Een pdf-tool doet niets tot je op een
+// knop drukt; een rekenhulp antwoordt terwijl je typt. Dat verschil is precies wat er te zien moet
+// zijn, dus hier gaat de camera niet naar een resultaat toe — het resultaat staat al in beeld en
+// verandert onder je handen.
+//
+// ── DE STEMPEL NOEMT GEEN BEDRAGEN ──
+//
+// Wat er in de balk staat wijst aan waar je moet kijken; wat het KOST staat op het scherm. Dat is
+// niet uit bescheidenheid: clip 21 zei ooit "van 181 kB naar 250 kB" terwijl het scherm iets anders
+// liet zien, en een bijschrift dat zijn eigen scherm tegenspreekt is erger dan geen bijschrift. Een
+// bedrag in een stempel is bovendien een tarief dat volgend jaar verandert terwijl de video blijft
+// staan: het btw-tarief, de zelfstandigenaftrek, de onbelaste kilometervergoeding. De pagina rekent
+// het opnieuw, de video niet.
+//
+// ── DRIE DINGEN DIE HET OPNEMEN LEERDE ──
+//
+// 1. Deze pagina's staan NIET leeg. Elke rekenhulp begint met een ingevuld voorbeeld, want een lege
+//    rekenmachine legt niets uit. Voor een clip betekent dat: eerst wissen, dán typen — anders komt
+//    er "1.000100" te staan.
+// 2. Behalve op /btw-aangifte-berekenen. Daar keert de kleur van het paneel om bij het saldo, en
+//    een veld dat even leeg is zet hem op groen "terug te vragen" — de ontknoping van de clip, drie
+//    tellen te vroeg en om de verkeerde reden. Daar wordt de waarde in één keer gezet.
+// 3. Cijfer voor cijfer typen is daar om dezelfde reden fout: "2", "24", "240"… laat drie bedragen
+//    zien die nergens op slaan. Op de andere pagina's is dat juist de charme — het antwoord klimt
+//    mee — dus het staat per veld ingesteld en niet per script.
+
+/** Het invoerveld op zijn aria-label. Deze formulieren hebben er één per veld, en die is stabiel. */
+const veld = (p: Page, label: string) => p.locator(`input[aria-label="${label}"]`).first();
+
+/**
+ * De schakelaar naast een opschrift.
+ *
+ * Niet "het volgende broertje van de tekst", en ook niet "van het blok eromheen" — die twee
+ * regels spreken elkaar tegen op deze vijf pagina's. Op /netto-inkomen-zzp zit de knop naast een
+ * blokje met een kop én een uitleg eronder; op /kilometervergoeding staat er alleen een regel
+ * tekst, en dan is de knop het broertje van die regel zelf. Eén regel die op allebei klopt: klim
+ * omhoog tot de eerste ouder die een knop bevat, en neem die knop.
+ */
+const schakelaar = (p: Page, titel: string) =>
+  p.locator(`xpath=//*[normalize-space(text())=${JSON.stringify(titel)}]/ancestor::div[.//button][1]//button[1]`).first();
+
+/** Cijfer voor cijfer, zodat het antwoord meeklimt. Wist eerst, want het veld is al gevuld. */
+async function typeIn(p: Page, label: string, value: string, perChar = 105) {
+  const el = veld(p, label);
+  await moveTo(p, el, 22, 200);
+  await el.click();
+  await el.fill("");
+  await el.type(value, { delay: perChar });
+  await p.waitForTimeout(320);
+}
+
+/** In één keer. Voor het veld waar een tussenstand een verkeerd antwoord op het scherm zet. */
+async function setIn(p: Page, label: string, value: string) {
+  const el = veld(p, label);
+  await moveTo(p, el, 22, 200);
+  // Wél klikken (de muis moet iets DOEN), maar niet wissen: fill() vervangt de inhoud in één
+  // stap, dus het scherm ziet nooit een leeg veld en rekent nooit met een half getal.
+  await el.click();
+  await el.fill(value);
+  await p.waitForTimeout(420);
+}
+
+interface CalcSpec {
+  name: string;
+  path: string;
+  hook: string;
+  /**
+   * Het element dat bovenaan in beeld moet staan voor de clip begint.
+   *
+   * Niet een vaste scrollhoogte: de kop boven de rekenhulp verschilt per pagina en groeit mee met
+   * de tekst die de vindbaarheid moet dragen. Wat vast ligt is welk BLOK er in beeld hoort.
+   */
+  top?: (p: Page) => ReturnType<Page["locator"]>;
+  beats: ToolBeat[];
+}
+
+function calcClip(spec: CalcSpec): Clip {
+  return {
+    name: spec.name,
+    path: spec.path,
+    view: PHONE,
+    bare: true,
+    maxLen: 60,
+    hook: "",
+    run: async (p, _say, _step, _at, stamp) => {
+      await stamp(spec.hook);
+      const top = spec.top ? spec.top(p) : p.locator("input").first();
+      await bringToEyeLine(p, top, 0.16);
+      await p.waitForTimeout(1800);
+
+      for (const beat of spec.beats) await playBeat(p, beat, stamp);
+      await stamp("GRATIS, ZONDER ACCOUNT<br><em>boekbrug.nl" + spec.path + "</em>");
+      await p.waitForTimeout(2700);
+    },
+  };
+}
 // ── De clips ──────────────────────────────────────────────────────────────────
 // Kort, en elk begint bij een PROBLEEM in plaats van bij een scherm. Wie dit voorbij ziet komen
 // heeft de app niet; een rondleiding langs knoppen is voor wie hem al heeft.
@@ -1403,6 +1575,250 @@ const CLIPS: Clip[] = [
     ],
   }),
 
+
+  calcClip({
+    name: "26-btw-berekenen-uitleg",
+    path: "/btw-berekenen",
+    hook: "HOEVEEL BTW ZIT<br>HIER EIGENLIJK IN?",
+    top: (p) => btn(p, /Bedrag is excl/),
+    beats: [
+      {
+        stamp: "TYP JE BEDRAG",
+        ms: 900,
+        act: async (p) => { await typeIn(p, "Bedrag", "1.250"); },
+      },
+      // Het antwoord stond er al tijdens het typen. Even niets doen is hier de handeling.
+      { stamp: "HET ANTWOORD KLIMT MEE", ms: 2100 },
+      {
+        stamp: "ANDER TARIEF? ÉÉN TIK",
+        ms: 2000,
+        after: true,
+        act: async (p) => { await tap(p, btn(p, /^9%$/), 900); },
+      },
+      { ms: 1400, act: async (p) => { await tap(p, btn(p, /^21%$/), 700); } },
+      // ── De omkering. Dit is waar de pagina voor bestaat.
+      //
+      // Iedereen kan 21% ergens bij optellen. Wat niemand uit zijn hoofd doet is het eraf halen:
+      // een klant betaalde € 1.250 en jij moet weten welk deel daarvan niet van jou is. Delen door
+      // 1,21 — niet 21% eraf, en dát is de fout die deze knop wegneemt.
+      {
+        stamp: "OF ANDERSOM",
+        ms: 1500,
+        pause: 1100,
+        act: async (p) => { await tap(p, btn(p, /Bedrag is incl/), 900); },
+      },
+      { stamp: "BEDRAG DAT AL BTW BEVAT", ms: 2400 },
+      {
+        stamp: "ERAF GEHAALD,<br>NIET AFGETROKKEN",
+        ms: 2800,
+        act: async (p) => {
+          await bringToEyeLine(p, p.locator('span:text-is("Bedrag exclusief BTW")').first(), 0.42);
+        },
+      },
+    ],
+  }),
+
+  calcClip({
+    name: "27-btw-aangifte-uitleg",
+    path: "/btw-aangifte-berekenen",
+    hook: "MOET JE BETALEN,<br>OF KRIJG JE TERUG?",
+    beats: [
+      {
+        stamp: "JE OMZET VAN DIT KWARTAAL",
+        ms: 1300,
+        // In één keer, niet cijfer voor cijfer: zie de noot boven setIn(). Een leeg omzetveld
+        // maakt het saldo negatief en kleurt het paneel groen — de ontknoping, te vroeg.
+        act: async (p) => { await setIn(p, "Omzet 21%", "24.000"); },
+      },
+      { stamp: "DE BTW DIE JE MOET AFDRAGEN", ms: 2300 },
+      {
+        stamp: "EN DE BTW DIE JIJ ZELF<br>AL BETAALD HEBT",
+        ms: 1500,
+        act: async (p) => { await setIn(p, "Voorbelasting", "1.900"); },
+      },
+      { stamp: "DAT SCHEELT DIRECT", ms: 2400 },
+      // ── Het kwartaal waarin je iets groots koopt.
+      //
+      // Een bestelbus, een nieuwe laptop, een jaar vooruitbetaalde software. Dan is de
+      // voorbelasting hoger dan wat je moet afdragen en draait het saldo om: het paneel wordt
+      // groen en de Belastingdienst betaalt aan jou. Dat is geen trucje, dat is de reden dat een
+      // zzp'er dit sommetje maakt.
+      {
+        stamp: "EN IN EEN KWARTAAL<br>MET EEN GROTE AANKOOP…",
+        ms: 900,
+        pause: 1900,
+        act: async (p) => { await setIn(p, "Voorbelasting", "6.400"); },
+      },
+      { stamp: "…KRIJG JE GELD TERUG", ms: 2900 },
+      {
+        stamp: "MET DE RUBRIEKEN ERBIJ,<br>ZOALS OP HET FORMULIER",
+        ms: 2900,
+        act: async (p) => {
+          await bringToEyeLine(p, p.locator('span:text-is("Saldo (rubriek 5c)")').first(), 0.45);
+        },
+      },
+    ],
+  }),
+
+  calcClip({
+    name: "28-uurtarief-uitleg",
+    path: "/uurtarief-berekenen",
+    hook: "WAT MOET JIJ<br>PER UUR VRAGEN?",
+    beats: [
+      {
+        stamp: "BEGIN BIJ WAT JE WILT VERDIENEN",
+        ms: 900,
+        act: async (p) => { await typeIn(p, "Gewenst jaarinkomen", "60.000"); },
+      },
+      {
+        stamp: "PLUS WAT HET BEDRIJF KOST",
+        ms: 1600,
+        act: async (p) => { await typeIn(p, "Zakelijke kosten", "7.500", 95); },
+      },
+      // ── Het getal waar iedereen zich op verrekent.
+      //
+      // Een jaar heeft geen 1.800 factureerbare uren. Offertes, administratie, acquisitie en
+      // ziekte gaan er eerst af, en wie zijn tarief op de gewerkte uren deelt komt structureel
+      // een derde tekort. De pagina zet het zelf al op 1.200; de clip wijst het alleen aan.
+      {
+        stamp: "MAAR NIET ELK UUR<br>IS EEN FACTUURBAAR UUR",
+        ms: 2600,
+        act: async (p) => {
+          await bringToEyeLine(p, veld(p, "Declarabele uren"), 0.32);
+        },
+      },
+      {
+        stamp: "EN BELASTING, PENSIOEN<br>EN LEGE UREN?",
+        ms: 1700,
+        act: async (p) => {
+          await bringToEyeLine(p, schakelaar(p, "Buffer voor belasting, pensioen en lege uren"), 0.30);
+        },
+      },
+      // Uitzetten en weer aanzetten: het naïeve tarief, en daarnaast het tarief waar je van kunt
+      // leven. Het verschil is het hele punt van de pagina en het is in beeld één beweging.
+      {
+        stamp: "ZONDER BUFFER",
+        ms: 2300,
+        after: true,
+        act: async (p) => { await tap(p, schakelaar(p, "Buffer voor belasting, pensioen en lege uren"), 900); },
+      },
+      {
+        stamp: "MET BUFFER",
+        ms: 2500,
+        after: true,
+        act: async (p) => { await tap(p, schakelaar(p, "Buffer voor belasting, pensioen en lege uren"), 900); },
+      },
+      {
+        stamp: "EN DE OMZET DIE<br>DAARBIJ HOORT",
+        ms: 2700,
+        act: async (p) => {
+          await bringToEyeLine(p, p.locator('span:text-is("Benodigde jaaromzet")').first(), 0.44);
+        },
+      },
+    ],
+  }),
+
+  calcClip({
+    name: "29-netto-inkomen-uitleg",
+    path: "/netto-inkomen-zzp",
+    hook: "VAN JE WINST<br>HOUD JE DIT OVER",
+    beats: [
+      {
+        stamp: "JE WINST OVER HET JAAR",
+        ms: 900,
+        act: async (p) => { await typeIn(p, "Jaarwinst", "75.000"); },
+      },
+      { stamp: "NETTO, EN PER MAAND", ms: 2500 },
+      {
+        stamp: "HAAL JE HET URENCRITERIUM?",
+        ms: 1700,
+        act: async (p) => { await bringToEyeLine(p, schakelaar(p, "Ik voldoe aan het urencriterium"), 0.26); },
+      },
+      {
+        stamp: "ZONDER:<br>GEEN ZELFSTANDIGENAFTREK",
+        ms: 2400,
+        after: true,
+        act: async (p) => { await tap(p, schakelaar(p, "Ik voldoe aan het urencriterium"), 900); },
+      },
+      {
+        stamp: "MET",
+        ms: 2100,
+        after: true,
+        act: async (p) => { await tap(p, schakelaar(p, "Ik voldoe aan het urencriterium"), 900); },
+      },
+      {
+        stamp: "EERSTE JAREN?<br>STARTERSAFTREK ERBIJ",
+        ms: 2500,
+        after: true,
+        act: async (p) => { await tap(p, schakelaar(p, "Ik ben starter"), 900); },
+      },
+      // ── De opbouw, en de zin eronder.
+      //
+      // De uitsplitsing is waarom deze pagina meer is dan een getal: aftrek, mkb-vrijstelling,
+      // heffingskortingen en Zvw staan er allemaal als losse regel. Daaronder staat de zin dat de
+      // arbeidskorting benaderd is en het bedrag een paar honderd euro kan afwijken — die zin
+      // hoort in beeld. Een rekenhulp die zijn eigen marge verzwijgt is een rekenhulp die je
+      // eenmaal gelooft.
+      {
+        stamp: "REGEL VOOR REGEL",
+        ms: 2900,
+        act: async (p) => {
+          await bringToEyeLine(p, p.locator('span:text-is("MKB-winstvrijstelling (12,7%)")').first(), 0.30);
+        },
+      },
+      {
+        stamp: "INCLUSIEF WAT<br>EEN SCHATTING IS",
+        ms: 3000,
+        act: async (p) => {
+          await bringToEyeLine(p, p.locator('span:text-is("Bijdrage Zvw (4,85%)")').first(), 0.26);
+        },
+      },
+    ],
+  }),
+
+  calcClip({
+    name: "30-kilometervergoeding-uitleg",
+    path: "/kilometervergoeding",
+    hook: "DE RIT NAAR JE KLANT<br>IS GELD WAARD",
+    beats: [
+      {
+        stamp: "HOEVER RIJD JE?",
+        ms: 1000,
+        act: async (p) => { await typeIn(p, "Kilometers", "38"); },
+      },
+      { stamp: "ENKELE REIS", ms: 1900 },
+      {
+        stamp: "MAAR JE RIJDT OOK TERUG",
+        ms: 2400,
+        after: true,
+        act: async (p) => { await tap(p, schakelaar(p, "Heen en terug (retour)"), 900); },
+      },
+      // ── Waar het bedrag ineens ergens over gaat.
+      //
+      // Eén rit is klein genoeg om te vergeten. Een vaste klant waar je een kwartaal lang elke
+      // week heen rijdt is dat niet, en dat is precies het bedrag dat niet op de factuur komt te
+      // staan omdat niemand het optelt.
+      {
+        stamp: "EN HOE VAAK DIT KWARTAAL?",
+        ms: 1000,
+        pause: 1100,
+        act: async (p) => { await typeIn(p, "Aantal ritten", "13", 150); },
+      },
+      { stamp: "DAT VERGEET JE<br>TE FACTUREREN", ms: 2900 },
+      {
+        stamp: "TARIEF STAAT ERIN,<br>MAAR JE MAG HET WIJZIGEN",
+        ms: 2500,
+        act: async (p) => { await bringToEyeLine(p, veld(p, "Tarief per kilometer"), 0.28); },
+      },
+      {
+        stamp: "TOTAAL AANTAL KILOMETERS",
+        ms: 2600,
+        act: async (p) => {
+          await bringToEyeLine(p, p.locator('span:text-is("Totaal kilometers")').first(), 0.44);
+        },
+      },
+    ],
+  }),
   // ── Achter een sessie. Overgeslagen zonder SHOT_EMAIL. ──
   {
     name: "05-klaar-voor-je-boekhouder",
@@ -1645,6 +2061,35 @@ if (ONLY && SELECTED.length === 0) {
 {
   const warm = await browser.newContext({ viewport: VIEW });
   const wp = await warm.newPage();
+
+  // ── [DODE-OPNAME] Draait de pagina eigenlijk wel? ──
+  //
+  // Vijf clips zijn hier ooit opgenomen waarop niets bewoog. Er werd getypt, het veld vulde zich,
+  // en het antwoord bleef op het voorbeeldbedrag staan. Geen enkele foutmelding: het scherm zag er
+  // goed uit, de muis deed zijn werk, de bestanden waren van normale lengte. Pas op de contactvel
+  // met twaalf beelden naast elkaar viel op dat twaalf keer hetzelfde bedrag stond.
+  //
+  // Wat er aan de hand was: op poort 3100 stond nog een server van uren eerder, met een .next die
+  // sindsdien opnieuw was gebouwd. De HTML kwam binnen, de chunks erachter gaven 500, React
+  // hydrateerde nooit, en een niet-gehydrateerde pagina IS een screenshot — je kunt in de velden
+  // typen en er gebeurt niets. `next start` had dat gemeld (EADDRINUSE), maar in een logbestand
+  // dat niemand leest zolang de opname zelf slaagt.
+  //
+  // Dus wordt het hier gecontroleerd, in de ronde die tóch elke pagina al bezoekt: één mislukt
+  // eigen script is genoeg om te stoppen. Een afgebroken opname met een reden is oneindig veel
+  // beter dan vijf bestanden die eruitzien als clips.
+  //
+  // Alleen EIGEN scripts. Google Fonts, Sentry en Vercel Analytics vallen in deze omgeving altijd
+  // om (geen uitgaand verkeer) en daar is geen enkele clip slechter van.
+  const dood: string[] = [];
+  const kijk = (url: string, waarom: string) => {
+    if (!url.startsWith(BASE)) return;
+    if (!/\.(js|css)(\?|$)/.test(url)) return;
+    dood.push(`${url.slice(BASE.length)} — ${waarom}`);
+  };
+  wp.on("requestfailed", (r) => kijk(r.url(), r.failure()?.errorText ?? "mislukt"));
+  wp.on("response", (r) => { if (r.status() >= 400) kijk(r.url(), `HTTP ${r.status()}`); });
+
   // ELKE clip, niet de eerste paar. Met alleen de eerste twee betaalden clip 03 en 04 hun eigen
   // koude start binnen hun eigen opname: seconden wit beeld vooraan, en een clip die daardoor niet
   // op dezelfde lengte uitkwam als de rest.
@@ -1653,6 +2098,17 @@ if (ONLY && SELECTED.length === 0) {
     await wp.waitForTimeout(600);
   }
   await warm.close();
+
+  if (dood.length) {
+    console.error(`\n[CLIPS] De server op ${BASE} levert zijn eigen scripts niet uit:`);
+    for (const d of [...new Set(dood)].slice(0, 6)) console.error(`[CLIPS]   ${d}`);
+    console.error(`[CLIPS] De pagina's zouden dan wél verschijnen maar niet REAGEREN, en de clips`);
+    console.error(`[CLIPS] worden stille screenshots. Meestal staat er nog een oude server op die`);
+    console.error(`[CLIPS] poort, met een .next die intussen opnieuw is gebouwd:`);
+    console.error(`[CLIPS]   pkill -f next-server && npx next start -p 3100`);
+    await browser.close();
+    process.exit(1);
+  }
   console.log(`[CLIPS] warm.`);
 }
 
