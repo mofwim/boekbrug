@@ -37,7 +37,7 @@ interface Client {
   btw_number: string | null; iban: string | null; address: string | null
   postal_code: string | null; city: string | null; notes: string | null
   // [BESTE] Optional: absent on an installation behind on clients_term_phone.sql.
-  phone?: string | null; payment_term_days?: number | null
+  phone?: string | null; payment_term_days?: number | null; default_hourly_rate?: number | null
   // [KLANT-LAND] ISO code (client_country.sql); absent on an installation behind on it.
   country?: string | null
 }
@@ -129,6 +129,7 @@ export default function KlantDetailClient({ client, invoices, totals, behaviour 
           {/* [BESTE] Phone and the agreed payment term — the two facts every package keeps. */}
           {client.phone && <Row k={t('kld.telefoon')} v={client.phone} />}
           {client.payment_term_days != null && <Row k={t('kld.termijn')} v={t('kl.termijnDagen', { days: client.payment_term_days })} />}
+          {client.default_hourly_rate != null && <Row k={t('kl.veld.uurtarief')} v={eur.format(client.default_hourly_rate)} />}
         </Card>
 
         {/* [BETAALGEDRAG] What this customer's own invoices say about how they pay. Deliberately

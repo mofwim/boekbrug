@@ -44,7 +44,10 @@ import { URENCRITERIUM_HOURS, type UrencriteriumLevel, type UrencriteriumStatus 
 // segmenten, dus een ondernemer op een Engelstalig systeem tikt mm-dd-jjjj in een Nederlands
 // veld. Dit veld typt in dd-mm-jjjj en zegt terug welke datum het begrepen heeft.
 import DateFieldNL from '@/components/ui/DateFieldNL'
-import { groupBillable, entryValue, isUninvoiced, isDeclarable, MAX_HOURS_PER_ENTRY, type TimeEntry } from '@/lib/uren'
+import {
+  groupBillable, entryValue, isUninvoiced, isDeclarable, MAX_HOURS_PER_ENTRY,
+  prefillHourlyRate, billableSharePercent, type TimeEntry,
+} from '@/lib/uren'
 // [CENT] The app's one rounding — a total of hours is added first and rounded once.
 import { round2 } from '@/lib/invoice-totals'
 
@@ -53,7 +56,12 @@ const FONT_NUM = "'Roboto Mono', monospace"
 const EL1 = '0 1px 2px rgba(0,0,0,0.08)'
 
 /** A customer card, in the shape the picker needs. */
-export interface UrenClientCard { id: string; name: string }
+export interface UrenClientCard {
+  id: string
+  name: string
+  /** [TARIEF-KLANT] The agreed rate, when this customer has one. Absent on older rows. */
+  default_hourly_rate?: number | null
+}
 
 type Tab = 'open' | 'billed'
 type Form = { id: string | null; client_id: string; worked_on: string; description: string; hours: string; hourly_rate: string; billable: boolean }
@@ -114,6 +122,10 @@ export default function UrenClient({
   const [tab, setTab] = useState<Tab>('open')
   const [form, setForm] = useState<Form | null>(null)
   const [busy, setBusy] = useState(false)
+  // [TARIEF-KLANT] Did WE put the number in the rate field? A typed rate is never touched again,
+  // and a rate we filled in follows the owner to the next customer instead of standing under a
+  // name it was never agreed with.
+  const [ratePrefilled, setRatePrefilled] = useState(false)
 
   // The owner's own currency and number formats. Amounts are Dutch money whatever the language is.
   const eur = useMemo(() => new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }), [])
@@ -287,9 +299,15 @@ export default function UrenClient({
                 {/* [DECLARABEL] The number beside the number: the criterion counts every hour, and
                     the owner's instinct counts only the invoiced ones. Saying both ends the
                     confusion that costs the zelfstandigenaftrek. */}
-                {declarabelThisYear !== null && (
-                  <> · {t('uren.split', { declarabel: declarabelThisYear.toLocaleString('nl-NL') })}</>
-                )}
+                {declarabelThisYear !== null && (() => {
+                  // [DECLARABEL] The share, not a second amount: "waarvan 780 declarabel" says
+                  // little without the 64% beside it, and that percentage is the number a
+                  // dienstverlener steers on. Null when there is nothing to divide by — 0 of 0
+                  // hours is no answer, and printing "0%" would be one.
+                  const pct = billableSharePercent(urencriterium.hours, declarabelThisYear)
+                  const declarabel = declarabelThisYear.toLocaleString('nl-NL')
+                  return <> · {pct === null ? t('uren.split', { declarabel }) : t('uren.splitPct', { declarabel, pct })}</>
+                })()}
               </div>
               {/* Een balk zegt in één blik wat een zin in drie regels zegt. aria-hidden: de zin
                   eronder draagt dezelfde informatie voor wie hem niet ziet. */}
@@ -319,7 +337,7 @@ export default function UrenClient({
       )}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-        <button type="button" onClick={() => setForm(emptyForm())} disabled={busy} style={{
+        <button type="button" onClick={() => { setRatePrefilled(false); setForm(emptyForm()) }} disabled={busy} style={{
           padding: '10px 16px', borderRadius: R.sm, border: 'none', background: M3.primary,
           color: '#fff', fontFamily: FONT, fontSize: 14, fontWeight: 600, cursor: 'pointer',
         }}>{t('uren.nieuw')}</button>
@@ -343,7 +361,16 @@ export default function UrenClient({
             <div>
               <label style={label} htmlFor="uren-klant">{t('uren.veld.klant')}</label>
               <select id="uren-klant" value={form.client_id} style={input}
-                onChange={(e) => setForm({ ...form, client_id: e.target.value })}>
+                onChange={(e) => {
+                  const id = e.target.value
+                  const filled = prefillHourlyRate({
+                    current: form.hourly_rate,
+                    wasPrefilled: ratePrefilled,
+                    clientRate: clients.find((c) => c.id === id)?.default_hourly_rate,
+                  })
+                  setRatePrefilled(filled.fromClient)
+                  setForm({ ...form, client_id: id, hourly_rate: filled.rate })
+                }}>
                 <option value="">{t('uren.veld.geenKlant')}</option>
                 {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
@@ -360,9 +387,12 @@ export default function UrenClient({
               <div>
                 <label style={label} htmlFor="uren-tarief">{t('uren.veld.tarief')}</label>
                 <input id="uren-tarief" inputMode="decimal" value={form.hourly_rate} style={input}
-                  onChange={(e) => setForm({ ...form, hourly_rate: e.target.value })} />
+                  onChange={(e) => { setRatePrefilled(false); setForm({ ...form, hourly_rate: e.target.value }) }} />
+                {/* [TARIEF-KLANT] One line, and only one: when the rate came from the customer the
+                    owner needs to know WHY a number appeared, and the general hint has nothing left
+                    to add. [RUSTIG] — a screen says one thing at a time. */}
                 <span style={{ fontSize: 11, color: M3.neutral, display: 'block', marginTop: 4, textAlign: 'start' }}>
-                  {t('uren.veld.tariefHint')}
+                  {ratePrefilled ? t('uren.tariefVanKlant') : t('uren.veld.tariefHint')}
                 </span>
               </div>
             )}
@@ -447,12 +477,12 @@ export default function UrenClient({
                     {value === null ? t('uren.geenTarief') : eur.format(value)}
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <button type="button" disabled={busy} onClick={() => setForm({
+                    <button type="button" disabled={busy} onClick={() => { setRatePrefilled(false); setForm({
                       id: e.id, client_id: e.client_id ?? '', worked_on: e.worked_on,
                       description: e.description, hours: String(e.hours),
                       hourly_rate: e.hourly_rate === null ? '' : String(e.hourly_rate),
                       billable: isDeclarable(e),
-                    })} style={{
+                    }) }} style={{
                       padding: '6px 10px', borderRadius: R.sm, border: `1px solid ${M3.outline}`,
                       background: '#fff', color: M3.neutral, fontFamily: FONT, fontSize: 12, cursor: 'pointer',
                     }}>{t('uren.bewerken')}</button>
@@ -511,12 +541,12 @@ export default function UrenClient({
                 </div>
                 <div style={{ fontSize: 12, color: M3.neutral, textAlign: 'end' }}>{t('uren.nietDeclarabel.chip')}</div>
                 <div style={{ display: 'flex', gap: 6 }}>
-                  <button type="button" disabled={busy} onClick={() => setForm({
+                  <button type="button" disabled={busy} onClick={() => { setRatePrefilled(false); setForm({
                     id: e.id, client_id: e.client_id ?? '', worked_on: e.worked_on,
                     description: e.description, hours: String(e.hours),
                     hourly_rate: e.hourly_rate === null ? '' : String(e.hourly_rate),
                     billable: false,
-                  })} style={{
+                  }) }} style={{
                     padding: '6px 10px', borderRadius: R.sm, border: `1px solid ${M3.outline}`,
                     background: '#fff', color: M3.neutral, fontFamily: FONT, fontSize: 12, cursor: 'pointer',
                   }}>{t('uren.bewerken')}</button>

@@ -46,7 +46,15 @@ export default async function UrenPage() {
       .order('worked_on', { ascending: false })
       .order('created_at', { ascending: false })
       .limit(1000),
-    supabase.from('clients').select('id, name').order('name', { ascending: true }).limit(1000),
+    // [TARIEF-KLANT] Het uurtarief reist mee met de klantenlijst. De grootste lekpost die dit
+    // scherm zelf meet is "uren zonder tarief", en die ontstaat bij een leeg tariefveld — niet bij
+    // een verkeerd getal. Wie het tarief één keer bij de klant zette, hoeft het hier nooit meer.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase as any)
+      .from('clients')
+      .select('id, name, default_hourly_rate')
+      .order('name', { ascending: true })
+      .limit(1000),
   ])
 
   if (entriesRes.error) {
@@ -111,7 +119,7 @@ export default async function UrenPage() {
   const urencriterium: UrencriteriumStatus = assessUrencriterium({ hoursSoFar: hoursThisYear, today, year, everRegistered })
   // Een klantenlijst die niet laadt is hinderlijk maar niet gevaarlijk: de keuzelijst is dan leeg
   // en "geen klant" blijft werken. De UREN zijn het enige waarvan een leesfout gemeld moet worden.
-  const clients = (clientsRes.data ?? []) as UrenClientCard[]
+  const clients = (clientsRes.data ?? []) as unknown as UrenClientCard[]
 
   return (
     <UrenClient
