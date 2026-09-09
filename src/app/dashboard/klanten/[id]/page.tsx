@@ -38,12 +38,12 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   type ClientCard = {
     id: string; name: string; email: string | null; kvk_number: string | null; btw_number: string | null
     iban: string | null; address: string | null; postal_code: string | null; city: string | null; notes: string | null
-    phone?: string | null; payment_term_days?: number | null
+    phone?: string | null; payment_term_days?: number | null; default_hourly_rate?: number | null
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: client } = await (supabase as any)
     .from('clients')
-    .select('id, name, email, kvk_number, btw_number, iban, address, postal_code, city, notes, phone, payment_term_days')
+    .select('id, name, email, kvk_number, btw_number, iban, address, postal_code, city, notes, phone, payment_term_days, default_hourly_rate')
     .eq('id', id)
     .eq('user_id', user.id)
     .maybeSingle() as { data: ClientCard | null }

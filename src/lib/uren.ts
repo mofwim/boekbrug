@@ -446,3 +446,57 @@ export function normalizeTimeEntryInput(
 
   return { ok: true, entry: { client_id: clientId, worked_on: worked, description, hours, hourly_rate: rate, billable, ...(workItemId ? { work_item_id: workItemId } : {}) } };
 }
+
+// [TARIEF-KLANT] The rate the customer was agreed at, offered when the hour is written.
+//
+// "Uren zonder tarief" is the leak this app measures most often, and it is born at an empty rate
+// field: a consultant with four customers types the same four numbers hundreds of times a year and
+// eventually leaves one blank. The rate on the customer answers it once.
+//
+// Two rules that make this safe to trust with money:
+//
+//   1. A number the owner TYPED is never overwritten. The customer's rate is a default, not a
+//      correction — an hour agreed at a different price stays at that price.
+//   2. A rate that was filled in from customer A DOES follow the switch to customer B. Leaving A's
+//      rate standing under B's name is the one silent way this feature could invoice a wrong
+//      amount, and it would look exactly like a right one.
+export type RatePrefill = { rate: string; fromClient: boolean };
+
+export function prefillHourlyRate(args: {
+  /** What stands in the field right now. */
+  current: string;
+  /** Was that value put there by this function (and not typed by the owner)? */
+  wasPrefilled: boolean;
+  /** The chosen customer's agreed rate, or null/undefined when they have none. */
+  clientRate: number | null | undefined;
+}): RatePrefill {
+  const typed = args.current.trim() !== "" && !args.wasPrefilled;
+  if (typed) return { rate: args.current, fromClient: false };
+
+  // Number(null) is 0, and a 0 rate is a real answer with a real invoice behind it — so the
+  // absence of a rate is tested before any arithmetic touches it.
+  const raw = args.clientRate;
+  const known = raw !== null && raw !== undefined && Number.isFinite(Number(raw)) && Number(raw) > 0;
+  if (!known) {
+    // No rate on this customer: clear what WE filled in, keep an empty field empty.
+    return { rate: args.wasPrefilled ? "" : args.current, fromClient: false };
+  }
+
+  return { rate: formatRateForField(round2(Number(raw))), fromClient: true };
+}
+
+/** 95 → "95", 87.5 → "87,5". The field reads Dutch and the API accepts both separators. */
+function formatRateForField(rate: number): string {
+  return String(rate).replace(".", ",");
+}
+
+// [DECLARABEL] The billable share as a whole percentage, for the line beside the year total.
+//
+// A share, not an amount — so it is rounded to a whole percent and never to cents. Null when there
+// is nothing to divide by: 0 of 0 hours is not "0% declarabel", it is no answer at all.
+export function billableSharePercent(totalHours: number | null, billableHours: number | null): number | null {
+  if (totalHours === null || billableHours === null) return null;
+  if (!Number.isFinite(totalHours) || !Number.isFinite(billableHours)) return null;
+  if (totalHours <= 0) return null;
+  return Math.round((billableHours / totalHours) * 100);
+}
