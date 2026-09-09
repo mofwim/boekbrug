@@ -151,6 +151,7 @@ interface Clip {
     say: (b: Beat) => Promise<void>,
     step: (t: string) => Promise<void>,
     at: (second: number) => Promise<void>,
+    stamp: (html: string) => Promise<void>,
   ) => Promise<void>;
 }
 
@@ -212,6 +213,31 @@ const CAPTION_CSS = `
   from{transform:scale(.4); opacity:.95}
   to{transform:scale(3.4); opacity:0}
 }
+/* [STEMPEL] Een kort woord dat op de nadruk van de stem valt.
+ *
+ * Dit is niet de ondertitel van clip 10-12 in het groot. Een ondertitel VERTELT — en naast een
+ * sprekende stem is dat een tweede verhaal, waarvan de kijker er één volgt en de andere mist.
+ * Een stempel HERHAALT: twee of drie woorden die samenvallen met wat er op dat moment wordt
+ * gezegd. Dat concurreert niet, dat zet vast — en het werkt ook als het geluid uit staat, wat op
+ * de meeste tijdlijnen de standaard is. */
+#clip-stamp{
+  position:fixed; left:0; right:0; bottom:0; z-index:2147483643; pointer-events:none;
+  padding:54px 26px 44px; box-sizing:border-box; text-align:center;
+  /* Een eigen donkere voet. Witte letters met alleen een schaduw zijn onleesbaar op een lichte
+     pagina, en juist de hook en de eindkaart spelen zich af zónder schijnwerper — dus daar viel
+     de tekst weg. De band draagt hem overal. */
+  background:linear-gradient(to top, rgba(7,11,19,.94) 58%, rgba(7,11,19,0));
+  font-family:ClipFont,system-ui,sans-serif; font-weight:700;
+  font-size:46px; line-height:1.14; color:#fff;
+  text-shadow:0 2px 10px rgba(6,10,18,.6);
+  opacity:0; transform:scale(.9);
+  transition:opacity .2s ease, transform .22s cubic-bezier(.2,1.5,.4,1);
+}
+#clip-stamp.on{opacity:1; transform:scale(1)}
+#clip-stamp em{font-style:normal; display:block; font-size:29px; margin-top:12px; color:#8ec5ff}
+/* De eindkaart: de knop klopt, hij knippert niet. */
+@keyframes clipPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+.clip-pulse{animation:clipPulse 1.15s ease-in-out infinite}
 #clip-badge{
   position:fixed; top:0; left:0; right:0; z-index:2147483646; pointer-events:none;
   padding:14px 18px; box-sizing:border-box; text-align:center;
@@ -241,6 +267,8 @@ async function installCaption(p: Page, badge: string, bare = false) {
     }, true);
     document.body.appendChild(cur);
     document.body.appendChild(dim);
+    const stamp = document.createElement("div"); stamp.id = "clip-stamp";
+    document.body.appendChild(stamp); // ook (juist) in een kale clip
     if (bare) return; // alleen scherm en muis — de stem doet de rest
     const cap = document.createElement("div"); cap.id = "clip-cap";
     const bar = document.createElement("div"); bar.id = "clip-badge"; bar.textContent = b;
@@ -272,6 +300,33 @@ function stepper(p: Page) {
  * is het enige dat de stem op de ondertitel laat vallen in plaats van ernaast.
  */
 interface VoiceCue { at: number; say: string }
+
+/**
+ * [STEMPEL] Een kort woord neerzetten, of weghalen met een lege string.
+ *
+ * Bewust géén duur: de stempel blijft staan tot de volgende. Een `ms` erbij zou een tweede klok
+ * introduceren naast de stem, en twee klokken lopen uit elkaar.
+ */
+function stamper(p: Page) {
+  return async (html: string) => {
+    await p.evaluate((t) => {
+      const el = document.getElementById("clip-stamp");
+      if (!el) return;
+      if (!t) { el.classList.remove("on"); return; }
+      el.classList.remove("on");
+      el.innerHTML = t;
+      // Twee frames wachten, anders slaat de browser de animatie over omdat hij de tussenstand
+      // nooit heeft getekend.
+      requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add("on")));
+    }, html);
+    await p.waitForTimeout(60);
+  };
+}
+
+/** Een element laten kloppen — voor de knop op de eindkaart. */
+async function pulse(p: Page, target: ReturnType<Page["locator"]>, on = true) {
+  await target.evaluate((el, v) => el.classList.toggle("clip-pulse", v), on).catch(() => {});
+}
 
 /** Ondertitel weergeven, en het tijdstip onthouden voor de stem. */
 function sayer(p: Page, cues?: VoiceCue[], t0?: number) {
@@ -921,6 +976,133 @@ const CLIPS: Clip[] = [
       await at(59.9);
     },
   },
+  // ── [STEMPELS] Dezelfde stem, met korte woorden die op de nadruk vallen. ──
+  //
+  // Clip 13 draagt alles op de stem en zet geen letter in beeld. Dit is de andere kant van dezelfde
+  // keuze: twee of drie woorden per zin, in hoofdletters, die HERHALEN wat er net gezegd wordt.
+  //
+  // Het verschil met de ondertitels van 10-12 is niet de grootte maar de functie. Een ondertitel
+  // vertelt, en naast een sprekende stem is dat een tweede verhaal — de kijker volgt er één en
+  // mist de andere. Een stempel vertelt niets nieuws; hij zet vast wat het oor net hoorde, en hij
+  // werkt óók als het geluid uit staat, wat op de meeste tijdlijnen de standaard is.
+  //
+  // ── DE TIJDEN, EN WAAROM ZE NIET RONDE GETALLEN ZIJN ──
+  //
+  // Uit het geluid gemeten, niet gekozen. Een voorstel voor deze clip had ronde tijden (0-3, 3-7,
+  // 7-10 …) en die liepen tot 6,5 seconden uit de pas met wat er werkelijk wordt gezegd: het
+  // btw-moment zou een halve zin te laat vallen. De grenzen hieronder komen uit silencedetect,
+  // met de staart gesplitst op de kleinere pauzes — "Geen gedoe", "Geen ingewikkelde
+  // berekeningen" en "En je hebt geen account nodig" zijn drie zinnen en krijgen drie stempels.
+  //
+  // ── HET MOMENT ZELF ──
+  //
+  // "De rest gaat vanzelf" is de beste zin van de tekst, en het bedrag hoort er precies op te
+  // landen. Dat is geen truc: het totaal rekent in de app mee terwijl je typt, dus de prijs wordt
+  // zó laat ingetypt dat de laatste toets valt op 32,5 — een fractie vóór de zin, want het oog
+  // heeft een tel nodig voordat het woord komt.
+  {
+    name: "14-factuur-stempels",
+    path: "/factuur-maken",
+    view: PHONE,
+    bare: true,
+    maxLen: 75,
+    hook: "",
+    voiceOver: {
+      file: path.join("scripts", "voice", "factuur-nl.mp3"),
+      beats: [0, 4.29, 7.63, 9.42, 14.50, 22.78, 27.48, 32.67, 34.53, 43.04, 48.07, 50.79, 53.84, 56.20],
+      end: 59.90,
+    },
+    run: async (p, _say, _step, at, stamp) => {
+      const mij = section(p, "Jouw gegevens (afzender)");
+      const klant = section(p, "Klant (ontvanger)");
+      const regels = section(p, "Regels");
+      await expectFields(mij, 9, "Jouw gegevens (afzender)");
+      await expectFields(klant, 6, "Klant (ontvanger)");
+      await expectFields(regels, 5, "Regels");
+      const totaal = p.getByText("Totaal incl. BTW").first();
+
+      // 1 · "Nog steeds een half uur bezig met één factuur?"
+      await stamp("EEN HALF UUR<br>VOOR EEN FACTUUR?");
+      await at(0.5);
+      await p.mouse.move(230, 300, { steps: 20 });
+
+      // 2 · "En dan moet je de btw ook nog zelf uitrekenen." — de lege btw-regel: € 0,00.
+      await at(4.29);
+      await stamp("EN DE BTW<br>ZELF UITREKENEN?");
+      await bringToEyeLine(p, totaal, 0.44);
+
+      // 3 · "Dat kan makkelijker."
+      await at(7.63);
+      await stamp("DAT KAN<br>MAKKELIJKER");
+
+      // 4 · "Met BoekBrug maak je in ongeveer één minuut een professionele factuur."
+      await at(9.42);
+      await stamp("EEN MINUUT");
+      await focusBlock(p, mij);
+
+      // 5 · "Eerst vul je één keer je eigen gegevens in: je bedrijfsnaam, KVK-nummer en btw-nummer."
+      await at(14.50);
+      await stamp("JOUW GEGEVENS");
+      await fill(p, fieldIn(mij, 0), "Van Dijk Ontwerp", 52);
+      await fill(p, fieldIn(mij, 5), "83102947", 60);
+      await fill(p, fieldIn(mij, 6), "NL003829471B72", 46);
+
+      // 6 · "Daarna de gegevens van je klant: naam, adres en plaats."
+      await at(22.78);
+      await stamp("JE KLANT");
+      await focusBlock(p, klant);
+      await fill(p, fieldIn(klant, 0), "Bakkerij De Korenbloem", 26, 150, 14);
+      await fill(p, fieldIn(klant, 2), "Kerkstraat 7", 30, 150, 14);
+      await fill(p, fieldIn(klant, 4), "Breda", 46, 200, 14);
+
+      // 7 · "En als laatste vul je in wat je hebt gedaan, hoeveel en waarvoor."
+      await at(27.48);
+      await stamp("WAT &middot; HOEVEEL<br>&middot; WAARVOOR");
+      await focusBlock(p, regels);
+      await fill(p, fieldIn(regels, 1), "Ontwerp huisstijl", 36, 170, 14);
+      await fill(p, fieldIn(regels, 2), "3", 160, 200, 14);
+      // De prijs bewust LAAT: de laatste toets moet vlak vóór "De rest gaat vanzelf" vallen.
+      await at(31.40);
+      await fill(p, fieldIn(regels, 3), "450", 175, 110, 12);
+
+      // 8 · "De rest gaat vanzelf." — het bedrag staat er nu. Niets doen, laten staan.
+      await at(32.67);
+      await stamp("AUTOMATISCH");
+
+      // 9 · "Kies je btw-tarief van 21% of 9%, en de bedragen worden automatisch berekend."
+      await at(34.53);
+      await stamp("21% &rarr; 9%");
+      await moveTo(p, fieldIn(regels, 4));
+      await at(38.71); // de hoorbare pauze na "21% of 9%,"
+      await fieldIn(regels, 4).selectOption("9");
+      await at(41.0);
+      await moveTo(p, totaal);
+
+      // 10 · "Zo hoef je nooit meer zelf de btw uit te rekenen."
+      await at(43.04);
+      await stamp("NOOIT MEER<br>ZELF REKENEN");
+
+      // 11 · Drie korte zinnen, drie stempels. De waas gaat weg: de hele factuur terug in beeld.
+      await at(48.07);
+      await stamp("GEEN GEDOE");
+      await unfocus(p);
+      await bringToEyeLine(p, totaal, 0.40);
+      await at(50.79);
+      await stamp("GEEN REKENWERK");
+      await at(53.84);
+      await stamp("GEEN ACCOUNT");
+
+      // 12 · "Maak je factuur gratis op boekbrug.nl/factuur-maken."
+      await at(56.20);
+      await stamp("GRATIS FACTUUR MAKEN<br><em>boekbrug.nl/factuur-maken</em>");
+      const pdf = p.locator("a, button").filter({ hasText: /Download PDF/i }).first();
+      if (await pdf.count() > 0) {
+        await moveTo(p, pdf, 20, 120);
+        await pulse(p, pdf, true);
+      }
+      await at(59.9);
+    },
+  },
   // ── Achter een sessie. Overgeslagen zonder SHOT_EMAIL. ──
   {
     name: "05-klaar-voor-je-boekhouder",
@@ -1238,7 +1420,7 @@ for (const clip of SELECTED) {
     }
     if (wait > 0) await page.waitForTimeout(wait);
   };
-  await clip.run(page, say, stepper(page), at);
+  await clip.run(page, say, stepper(page), at, stamper(page));
   if (overruns.length > 0) {
     console.error(`[CLIPS] ! ${clip.name}: beeld loopt achter op de stem — ${overruns.join(" · ")}`);
   }
