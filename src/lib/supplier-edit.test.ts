@@ -52,3 +52,9 @@ test('[LEVERANCIER-BEWERKEN] the trail holds old beside new, for the fields that
   assert.deepEqual(trail.new, { iban: 'NL91ABNA0417164300', btw_number: null })
   assert.equal('name' in trail.old, false, 'an untouched field is not re-confirmed in the trail')
 })
+
+test('[LEVERANCIER-STANDAARD] the trail carries a changed default, old beside new', () => {
+  const trail = supplierEditTrail({ ...OZER, default_btw_rate: null, default_category: null }, { default_btw_rate: 9 })
+  assert.deepEqual(trail.old, { default_btw_rate: null })
+  assert.deepEqual(trail.new, { default_btw_rate: 9 })
+})

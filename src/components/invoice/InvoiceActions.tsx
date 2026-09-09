@@ -16,6 +16,8 @@ import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 // [BOEK-020] UBL export button
 import UblExportButton from '@/components/export/UblExportButton'
+// [BESTE] The pay link the way a customer receives it — see betaalverzoek-share.ts.
+import { whatsappShareUrl } from '@/lib/betaalverzoek-share'
 type Props = {
   invoiceId: string
   invoiceNumber: string
@@ -218,6 +220,16 @@ const canRequestPayment =
                   : bvCopied.ok ? t('act.bv.gekopieerd') : t('kopieer.nietGelukt')}
               </button>
             </div>
+
+            {/* [BESTE] Opens WhatsApp with the Dutch message for the customer prefilled; the owner
+                picks the contact there. A plain link, so it works on a phone and on a desktop. */}
+            <a
+              href={whatsappShareUrl({ invoiceNumber, amount: bv.amount, url: bv.url })}
+              target="_blank" rel="noopener noreferrer"
+              className="block w-full text-center bg-[#25D366] hover:bg-[#1ebe5d] text-white text-sm font-semibold py-2.5 rounded-xl transition-colors"
+            >
+              {t('act.bv.whatsapp')}
+            </a>
 
             <p className="text-xs text-gray-400 leading-relaxed">
               {t('act.bv.disclaimer', { iban: bv.iban.replace(/(.{4})/g, '$1 ').trim() })}

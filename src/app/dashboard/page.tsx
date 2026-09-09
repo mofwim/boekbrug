@@ -6,6 +6,7 @@ import { getSessionUser } from '@/lib/session-user'
 import { redirect } from 'next/navigation'
 import DashboardClient from './DashboardClient'
 import { worksOnVehicles } from '@/lib/vak-profile'
+import { workSkin } from '@/lib/werk'
 
 export const dynamic = 'force-dynamic'
 
@@ -45,14 +46,17 @@ export default async function DashboardPage() {
   // null profile here does not degrade a tile, it redirects the owner to /onboarding. A home-screen
   // nicety must never be able to send someone back through the wizard.
   let vehicleTrade = false
+  // [WERK] The trade's own plural for the home tile ('Werkorders', 'Ritten', …); null = no tile.
+  let workPluralKey: string | null = null
   try {
     const { data: vakRow } = await supabase
       .from('profiles').select('vak').eq('id', user.id).maybeSingle()
     vehicleTrade = worksOnVehicles((vakRow as { vak?: string | null } | null)?.vak)
+    workPluralKey = workSkin((vakRow as { vak?: string | null } | null)?.vak)?.pluralKey ?? null
   } catch {
     /* no column yet → no vehicle tile, exactly as before */
   }
 
   // ZZP → existing DashboardClient (unchanged)
-  return <DashboardClient profile={profile} vehicleTrade={vehicleTrade} />
+  return <DashboardClient profile={profile} vehicleTrade={vehicleTrade} workPluralKey={workPluralKey} />
 }

@@ -33,6 +33,8 @@ import { classifyVatNumber } from '@/lib/icp'
 import { matchArticles, foldText, type Article } from '@/lib/articles'
 import { COMMON_PAYMENT_TERMS, DEFAULT_PAYMENT_TERM, MAX_PAYMENT_TERM_DAYS, parsePaymentTerm, dueDateFromTerm, longPaymentTermNotice } from '@/lib/payment-term'
 import { applyDiscount, parseDiscount, discountLabel, lineNetEx } from '@/lib/invoice-discount'
+// [AANBETALING] A deposit on an offerte and its settlement on the final invoice — see aanbetaling.ts.
+import { depositLines, settlementLines, parseDepositPercent } from '@/lib/aanbetaling'
 // [REGEL-AFRONDING] round2: de uitsplitsing hieronder rekent over dezelfde afgeronde
 // regelbedragen als het totaal, en als invoice_lines.line_total.
 import { round2 } from '@/lib/invoice-totals'
@@ -134,6 +136,8 @@ type Client = {
   city: string
   btw_number: string
   kvk_number: string
+  // [BESTE] The payment term agreed with this customer (clients_term_phone.sql); absent = default.
+  payment_term_days?: number | null
 }
 
 // [VRIJGESTELD] Sentinel for the BTW-tarief dropdown. "Vrijgesteld" is not a rate, but a
@@ -141,6 +145,27 @@ type Client = {
 // in for it, and is translated back into (0%, vat_treatment='exempt') the moment it is chosen.
 // Negative on purpose: no rate can ever collide with it.
 const EXEMPT_OPTION = -1
+
+// [AANBETALING] Every ISSUED deposit on an offerte, as the credit lines that settle it on the
+// final invoice, plus their numbers for the banner. A deposit still in concept is not money the
+// customer paid, so it is not settled — and the offerte is archived on send, which is where a
+// forgotten concept deposit stays visible: in the list, under its own name. A failed read throws
+// into the caller's load, like every other read there.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function issuedDepositsOn(db: any, offerteId: string): Promise<{ lines: InvoiceLine[]; numbers: string[] }> {
+  type DepositRow = { id: string; invoice_number: string | null; invoice_lines: { quantity: number | null; unit_price: number | null; line_total: number | null; btw_rate: number | null; vat_treatment: string | null }[] | null }
+  const { data, error } = await db
+    .from('invoices')
+    .select('id, invoice_number, invoice_lines(quantity, unit_price, line_total, btw_rate, vat_treatment)')
+    .eq('deposit_on_offerte_id', offerteId)
+    .in('status', ['sent', 'paid', 'overdue', 'processing']) as { data: DepositRow[] | null; error: { message: string } | null }
+  if (error) throw new Error(error.message)
+  const rows = data ?? []
+  return {
+    lines: settlementLines(rows.map(d => ({ invoiceNumber: d.invoice_number, lines: d.invoice_lines ?? [] }))).map(l => ({ ...l, unit: null })),
+    numbers: rows.map(d => d.invoice_number ?? '').filter(Boolean),
+  }
+}
 
 type InvoiceLine = {
   description: string
@@ -397,6 +422,8 @@ function NewInvoicePageContent() {
   const typeParam           = searchParams.get('type') as InvoiceType | null
   const originalParam       = searchParams.get('original') ?? ''
   const offerteParam        = searchParams.get('from_offerte') ?? ''
+  // [AANBETALING] ?aanbetaling=30 with from_offerte: a deposit of 30% on that offerte, not the whole.
+  const aanbetalingParam    = searchParams.get('aanbetaling') ?? ''
   const replacesParam       = searchParams.get('replaces') ?? ''
   const replacesNumberParam = searchParams.get('replacesNumber') ?? ''
   // AI-generated params from ZzpDashboard
@@ -575,6 +602,11 @@ function NewInvoicePageContent() {
   const [convertingOfferte, setConvertingOfferte] = useState(false)
   // offerte_id if we're converting an existing offerte — read-only from URL
   const offerteId = offerteParam
+  // [AANBETALING] Null when this is not a deposit. Decides three things below: which lines are
+  // loaded, whether the offerte is archived on send, and what the draft door is told.
+  const depositPct = offerteParam ? parseDepositPercent(aanbetalingParam) : null
+  // [AANBETALING] The numbers of the deposits the final invoice settles — for the banner only.
+  const [settledDeposits, setSettledDeposits] = useState<string[]>([])
 
   // [SUBNAV] Dynamic title (factuur / offerte / creditnota) + the offerte
   // "Omzetten naar factuur" action, pushed into the shared sub-page header.
@@ -648,6 +680,16 @@ function NewInvoicePageContent() {
       const { data: cl } = await supabase
         .from('clients').select('*').eq('user_id', user.id).order('name')
       if (cl) setClients(cl)
+      // [BESTE] Arrived from the customer card (?client_id=): that customer's agreed term applies
+      // here too, not only when picked from the dropdown.
+      // Written out rather than calling applyClientTerm: that function is declared below this
+      // effect, and the compiler refuses an effect that reaches forward ([TAAL] note in KlantenClient).
+      const preLinked = aiClientId && cl ? (cl as Client[]).find((c) => c.id === aiClientId) : null
+      const preTerm = preLinked?.payment_term_days
+      if (preTerm != null && invoiceType !== 'offerte') {
+        setBetalingstermijn(preTerm)
+        if (invoiceDate) setDueDate(dueDateFromTerm(invoiceDate, preTerm))
+      }
 
       // [BOEK-029] from_offerte: load original invoice_lines for accurate amounts
       //
@@ -675,8 +717,24 @@ function NewInvoicePageContent() {
           .from('invoice_lines')
           .select('description, quantity, unit_price, btw_rate, unit, vat_treatment, discount_type, discount_value')
           .eq('invoice_id', offerteParam)
-        if (offLines && offLines.length > 0) {
-          setLines(offLines.map(l => ({
+        // De korting van de offerte, van de KOP. Zonder deze read gaat precies het bedrag verloren
+        // waarover de klant "ja" heeft gezegd.
+        const { data: offHead } = await supabase
+          .from('invoices')
+          .select('discount_type, discount_value, invoice_number')
+          .eq('id', offerteParam)
+          .maybeSingle()
+        if (depositPct) {
+          // [AANBETALING] Not the offerte's lines: a share of them, per btw rate, after the
+          // offerte's own discounts. No document discount on the deposit — it is already inside
+          // the share.
+          setLines(depositLines({
+            lines: offLines ?? [],
+            discount: parseDiscount(offHead?.discount_type, offHead?.discount_value),
+            invoiceNumber: offHead?.invoice_number ?? null,
+          }, depositPct).map(l => ({ ...l, unit: null })))
+        } else if (offLines && offLines.length > 0) {
+          const fromOfferte = offLines.map((l): InvoiceLine => ({
             description: l.description ?? '',
             quantity:    l.quantity    ?? 1,
             unit_price:  l.unit_price  ?? 0,
@@ -687,16 +745,13 @@ function NewInvoicePageContent() {
             // Het regelmodel houdt de korting als RUWE invoerstring (zoals het invoerveld);
             // de databasekolom is numeriek — dus hier terug naar de invoervorm.
             discount_value: l.discount_value == null ? undefined : String(l.discount_value),
-          })))
+          }))
+          // [AANBETALING] Every ISSUED deposit on this offerte comes off as a credit line per rate.
+          const deposits = await issuedDepositsOn(supabase, offerteParam)
+          setSettledDeposits(deposits.numbers)
+          setLines([...fromOfferte, ...deposits.lines])
         }
-        // De korting van de offerte, van de KOP. Zonder deze read gaat precies het bedrag verloren
-        // waarover de klant "ja" heeft gezegd.
-        const { data: offHead } = await supabase
-          .from('invoices')
-          .select('discount_type, discount_value')
-          .eq('id', offerteParam)
-          .maybeSingle()
-        if (offHead?.discount_type === 'percent' || offHead?.discount_type === 'amount') {
+        if (!depositPct && (offHead?.discount_type === 'percent' || offHead?.discount_type === 'amount')) {
           setDiscountType(offHead.discount_type)
           setDiscountValue(offHead.discount_value == null ? '' : String(offHead.discount_value))
         }
@@ -751,6 +806,17 @@ function NewInvoicePageContent() {
     setClientBtw(c.btw_number ?? '')
     setClientSearch(c.name)
     setShowDropdown(false)
+    applyClientTerm(c)
+  }
+
+  // [BESTE] "Jij krijgt 45 dagen" is agreed per customer, and every package pre-fills the due
+  // date from it the moment the customer is picked. Only on a factuur — an offerte has no
+  // payment term — and only when the customer HAS one; otherwise the term already chosen stays.
+  function applyClientTerm(c: Client) {
+    const days = c.payment_term_days
+    if (days == null || invoiceType === 'offerte') return
+    setBetalingstermijn(days)
+    if (invoiceDate) { setDueDate(dueDateFromTerm(invoiceDate, days)); clearFieldError('dueDate') }
   }
 
   // [ACTING-FOR] saveNewClient() stond hier. Hij schreef de inline ingetikte klant weg met
@@ -1023,6 +1089,8 @@ function NewInvoicePageContent() {
         // defaulting to the invoice date.
         delivery_date: invoiceDate,
         client_id: selectedClientId,
+        // [AANBETALING] Tells the draft door which offerte this is a deposit on; null otherwise.
+        deposit_on_offerte_id: depositPct ? offerteId : null,
         client_name: clientName,
         client_email: clientEmail,
         client_address: clientAddress,
@@ -1066,8 +1134,9 @@ function NewInvoicePageContent() {
     }
     const factuur = { id: draftJson.invoiceId as string }
 
-    // Mark offerte as converted
-    if (offerteId) {
+    // Mark offerte as converted. [AANBETALING] Not for a deposit: the offerte stays open for the
+    // final invoice.
+    if (offerteId && !depositPct) {
       await supabase.from('invoices')
         .update({ status: 'archived' })
         .eq('id', offerteId)
@@ -1243,6 +1312,8 @@ function NewInvoicePageContent() {
         // Leeg ⇒ de route maakt de inline ingetikte klant zelf aan, onder de eigenaar. Dat
         // vervangt saveNewClient(): die schreef de klant op naam van de ingelogde mens.
         client_id: selectedClientId,
+        // [AANBETALING] Tells the draft door which offerte this is a deposit on; null otherwise.
+        deposit_on_offerte_id: depositPct ? offerteId : null,
         client_name: clientName,
         client_email: clientEmail,
         client_address: clientAddress,
@@ -1309,7 +1380,8 @@ function NewInvoicePageContent() {
     // 'incoming' is (regel [ISSUED-STAYS]), dus ook een offerte, en die route zou deze werkende
     // flow dus breken. Een offerte draagt geen factuurnummer en geen geld — de twee dingen die
     // die grendel beschermt — dus hier valt niets te omzeilen.
-    if (offerteId) {
+    // [AANBETALING] Not for a deposit: the offerte stays open for the final invoice.
+    if (offerteId && !depositPct) {
       await supabase.from('invoices')
         .update({ status: 'archived' })
         .eq('id', offerteId)
@@ -1571,7 +1643,12 @@ function NewInvoicePageContent() {
               <div style={{ backgroundColor: '#E6F4EA', borderInlineStart: '4px solid #34A853', borderRadius: '0 12px 12px 0', padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'center' }}>
                 <span style={{ color: '#137333', flexShrink: 0 }}>📄</span>
                 <p style={{ fontSize: 13, color: '#137333', margin: 0 }}>
-                  <strong>{t('nieuw.banner.vanOfferte')}</strong> — {t('nieuw.banner.vanOfferteUitleg')}
+                  {depositPct ? (
+                    <><strong>{t('nieuw.banner.aanbetaling', { pct: depositPct })}</strong> — {t('nieuw.banner.aanbetalingUitleg')}</>
+                  ) : (
+                    <><strong>{t('nieuw.banner.vanOfferte')}</strong> — {t('nieuw.banner.vanOfferteUitleg')}
+                    {settledDeposits.length > 0 && <> · {t('nieuw.banner.aanbetalingVerrekend', { numbers: settledDeposits.join(', ') })}</>}</>
+                  )}
                 </p>
               </div>
             )}

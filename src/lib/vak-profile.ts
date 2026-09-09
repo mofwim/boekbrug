@@ -159,7 +159,9 @@ export function sellsOverCounter(slug: string | null | undefined): boolean {
  * plate, expiry, the reminder that justifies it — is empty for him. A screen that is structurally
  * blank is worse than an absent one: it reads as a broken feature rather than an inapplicable one.
  */
-const VEHICLE_TRADES: ReadonlySet<string> = new Set(["automonteur"]);
+// [SEGMENT-TRANSPORT] transport is IN: a courier lives by the kenteken and the APK date of the
+// bus that earns the money, and a bus that fails its keuring is a day without income.
+const VEHICLE_TRADES: ReadonlySet<string> = new Set(["automonteur", "transport", "rijschool"]);
 
 /** Does this owner work on vehicles? Unknown trade → false. */
 export function worksOnVehicles(slug: string | null | undefined): boolean {

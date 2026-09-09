@@ -89,6 +89,8 @@ console.log("\n— who takes his money at a counter —");
 console.log("\n— who works on vehicles —");
 {
   check("a garage does", worksOnVehicles("automonteur"));
+  check("a courier does — the bus is the business", worksOnVehicles("transport"));
+  check("…but a courier does not sell over a counter", !sellsOverCounter("transport"));
   // A bicycle has no kenteken and no APK: the whole surface would be structurally blank for him,
   // which reads as a broken feature rather than an inapplicable one.
   check("a bike repairer does NOT, despite also being a counter trade",

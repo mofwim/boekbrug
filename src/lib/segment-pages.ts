@@ -75,7 +75,8 @@ export interface SegmentPage {
 }
 
 /**
- * The three doors. Order is deliberate — see the header.
+ * The doors. Order is deliberate — see the header; the fourth (garage) follows the owner's
+ * go-to-market ranking.
  *
  * Every `route` here must exist under src/app/dashboard/<route>/page.tsx.
  */
@@ -198,8 +199,9 @@ export const SEGMENT_PAGES: readonly SegmentPage[] = [
         route: 'klaar',
         title: 'Wat er nog mist, vóór het kwartaal dicht is',
         body:
-          'Eén scherm dat zegt welke bonnen er nog ontbreken en welke bankregels nog geen factuur ' +
-          'hebben — zodat je boekhouder niet achter je aan hoeft te bellen.',
+          'Eén scherm dat per kwartaal telt hoeveel betalingen nog geen bon of factuur hebben, met ' +
+          'één tik door naar precies die bankregels — zodat je boekhouder niet achter je aan hoeft ' +
+          'te bellen.',
       },
     ],
     nietDit: [
@@ -271,9 +273,161 @@ export const SEGMENT_PAGES: readonly SegmentPage[] = [
       'Contracten en werkbonnen worden niet beheerd.',
     ],
   },
+  {
+    // [SEGMENT-GARAGE] The fourth door, on the owner's go-to-market ranking (bouw, garage,
+    // schoonmaak). The trade exists in VAKKEN as 'automonteur' — a price list of arbeidsloon,
+    // beurten, APK and onderdelen at 21% — and it is in both sellsOverCounter (the bar leads with
+    // the Kassa) and VEHICLE_TRADES (the vehicles tile shows). Only what exists is promised: there
+    // is no werkorder and no RDW lookup, and the nietDit list says so.
+    slug: 'garage',
+    vak: 'automonteur',
+    naam: 'garages en autobedrijven',
+    title: 'BoekBrug voor de garage — onderdelen, arbeidsloon en de pin, zonder avondwerk',
+    description:
+      'Onderdelen van vijf leveranciers, arbeidsloon per uur, de pin aan de balie. BoekBrug leest je ' +
+      'inkoopfacturen zelf in, zet je prijslijst klaar en houdt kenteken en APK-datum per klant bij.',
+    keywords: [
+      'administratie garage', 'boekhouding autobedrijf', 'factuur automonteur',
+      'onderdelen factuur inlezen', 'apk bijhouden klanten', 'kasboek garage pin',
+    ],
+    probleem:
+      'De onderdelen komen van vijf leveranciers, elk met een eigen factuur. De klant rekent aan de ' +
+      'balie af met de pin, soms contant. En aan het eind van de dag moet arbeidsloon plus onderdelen ' +
+      'één factuur worden — terwijl de volgende auto al op de brug staat.',
+    belofte:
+      'Je fotografeert of mailt de inkoopfactuur één keer. Je factuur kiest uit je eigen prijslijst — ' +
+      'arbeidsloon, kleine beurt, APK, onderdelen — en de pinbetaling wordt in je bankafschrift ' +
+      'teruggevonden.',
+    stappen: [
+      {
+        route: 'incoming',
+        title: 'Onderdelenfacturen die zichzelf inlezen',
+        body:
+          'Laat de leverancier mailen, of maak een foto van de bon. Leverancier, factuurnummer, bedrag ' +
+          'en btw worden gelezen; een betalingsherinnering wordt herkend en nooit als tweede kost ' +
+          'geboekt.',
+      },
+      {
+        route: 'facturen',
+        title: 'Arbeidsloon en onderdelen op één factuur',
+        body:
+          'Je prijslijst ligt klaar om in te vullen: arbeidsloon per uur, kleine en grote beurt, ' +
+          'APK-keuring, onderdelen en banden staan er met het juiste btw-tarief bij — jij zet er één ' +
+          'keer je eigen prijzen naast. Daarna kies je die regels op elke factuur, zonder overtypen.',
+      },
+      {
+        route: 'voertuigen',
+        title: 'Kenteken, klant en APK-datum bij elkaar',
+        body:
+          'Per auto het kenteken, de eigenaar en de APK-vervaldatum. Het scherm zet vooraan welke ' +
+          'keuring het eerst verloopt, zodat je weet wie je kunt bellen.',
+      },
+      {
+        route: 'kas',
+        title: 'Contant in het kasboek, pin op je afschrift',
+        body:
+          'Staat er Kontant, Wisselgeld, Bankpas of PIN op de bon, dan wordt hij meteen als betaald ' +
+          'geboekt — contant beweegt je kasboek, pin vind je terug op je bankafschrift. Zegt de bon ' +
+          'het niet, dan staat hij klaar met één tik. Het kasboek houdt een lopend kassaldo bij dat ' +
+          'je tegen de la kunt leggen.',
+      },
+      {
+        route: 'klaar',
+        title: 'Wat er nog mist, vóór het kwartaal dicht is',
+        body:
+          'Eén scherm dat per kwartaal telt hoeveel betalingen nog geen inkoopfactuur hebben, met ' +
+          'één tik door naar precies die bankregels — zodat je boekhouder niet achter je aan hoeft ' +
+          'te bellen.',
+      },
+    ],
+    nietDit: [
+      'Er is geen werkorder of werkplaatsplanning.',
+      'Onderdelenvoorraad wordt niet bijgehouden.',
+      'Het kenteken wordt niet bij de RDW opgezocht; je typt het zelf.',
+      'BoekBrug mailt je klanten niet over een verlopende APK.',
+      'Garantie- en schadeafhandeling met verzekeraars staan er niet in.',
+    ],
+  },
+  {
+    // [SEGMENT-TRANSPORT] The fifth door, fourth on the owner's go-to-market ranking. The trade
+    // exists in VAKKEN as 'transport' — transportkosten per km, rit, wachttijd, laden en lossen,
+    // spoedtoeslag, opslag, all at 21% — with a let_op that names the one trap of this trade:
+    // goederen 21%, personen 9%. It is in VEHICLE_TRADES (the vehicles tile shows; a courier thinks
+    // in kentekens and APK dates) and NOT in COUNTER_TRADES (nobody pays a courier at a desk).
+    // Only what exists is promised: no rittenregistratie, no planning, no tachograaf.
+    slug: 'transport',
+    vak: 'transport',
+    naam: 'transport en koeriers',
+    title: 'BoekBrug voor transport en koeriers — brandstofbonnen, ritten en de wagen, zonder avondwerk',
+    description:
+      'Brandstofbonnen, tol, lease en onderhoud van drie leveranciers, en elke rit een factuur. ' +
+      'BoekBrug leest je bonnen zelf in, zet je ritprijzen klaar en houdt kenteken en APK per wagen bij.',
+    keywords: [
+      'administratie koerier', 'boekhouding transportbedrijf zzp', 'factuur per rit maken',
+      'brandstofbonnen scannen', 'apk bijhouden bestelbus', 'btw goederenvervoer 21 procent',
+    ],
+    probleem:
+      'Je tankt drie keer per week en de bon ligt in het dashboardkastje. De lease, de tol en het ' +
+      'onderhoud komen per mail. Elke rit moet een factuur worden — en die maak je ’s avonds, ' +
+      'als de wagen al stilstaat en jij eigenlijk ook.',
+    belofte:
+      'Je fotografeert de tankbon bij de pomp en hij is afgehandeld. Je factuur kiest uit je eigen ' +
+      'ritprijzen — per kilometer, per rit, wachttijd, laden en lossen — en de betaling wordt in je ' +
+      'bankafschrift teruggevonden.',
+    stappen: [
+      {
+        route: 'incoming',
+        title: 'Tankbonnen en leasefacturen die zichzelf inlezen',
+        body:
+          'Foto van de bon bij de pomp, of koppel je mailbox en laat de leasemaatschappij mailen. ' +
+          'Bedrag en btw worden ' +
+          'gelezen, en een bon waarop PIN of Bankpas staat afgedrukt wordt als betaald afgehandeld in ' +
+          'plaats van als openstaande schuld. Een tankpasbon is geen betaling en wacht op de factuur.',
+      },
+      {
+        route: 'facturen',
+        title: 'Een factuur per rit, uit je eigen prijslijst',
+        body:
+          'Transportkosten per kilometer, rit of opdracht, wachttijd, laden en lossen, spoedtoeslag, ' +
+          'opslag per dag — die regels staan als voorstel klaar op 21%; de prijs vul je zelf in, en ' +
+          'alleen wat je een prijs geeft komt in je prijslijst. Zolang die leeg is, staat erbij dat ' +
+          'personenvervoer op 9% hoort.',
+      },
+      {
+        route: 'voertuigen',
+        title: 'Kenteken en APK-datum per wagen',
+        body:
+          'Per wagen het kenteken en de APK-vervaldatum. Het scherm zet vooraan welke keuring het ' +
+          'eerst verloopt, zodat een bus niet stilstaat op de dag dat hij moet rijden.',
+      },
+      {
+        route: 'bank',
+        title: 'Je bankafschrift koppelt zichzelf aan je facturen',
+        body:
+          'Bankregels worden gematcht op factuurnummer, bedrag en rekeningnummer. Staan de ' +
+          'factuurnummers in de betaling, dan wordt een opdrachtgever die vijf ritten in één keer ' +
+          'betaalt aan alle vijf gekoppeld; staan ze er niet in, dan zoekt BoekBrug tot vier ' +
+          'openstaande facturen waarvan de som precies klopt en kies jij.',
+      },
+      {
+        route: 'klaar',
+        title: 'Wat er nog mist, vóór het kwartaal dicht is',
+        body:
+          'Eén scherm dat per kwartaal telt hoeveel betalingen nog geen tankbon of factuur hebben, ' +
+          'met één tik door naar precies die bankregels — zodat je boekhouder niet achter je aan ' +
+          'hoeft te bellen.',
+      },
+    ],
+    nietDit: [
+      'Er is geen ritten- of kilometerregistratie; kilometers typ je op de factuurregel.',
+      'Er is geen ritplanning en geen tachograaf- of rijtijdenregistratie.',
+      'Een brandstofkaart of tolkastje wordt niet gekoppeld; de factuur daarvan lees je in.',
+      'Personenvervoer staat niet automatisch op 9%; dat tarief zet je zelf op de regels.',
+    ],
+  },
 ] as const;
 
-/** Every dashboard route the three pages promise. Read by the gate — never hand-maintained. */
+/** Every dashboard route the pages promise. Read by the gate — never hand-maintained. */
 export function claimedRoutes(): string[] {
   return [...new Set(SEGMENT_PAGES.flatMap((p) => p.stappen.map((s) => s.route)))].sort();
 }

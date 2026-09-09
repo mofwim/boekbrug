@@ -11,7 +11,7 @@
 
 import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
-import { SKIPPED_DOC_TYPES } from '@/lib/skipped-import'
+import { SKIPPED_DOC_TYPES, DOC_TYPE_REMINDER } from '@/lib/skipped-import'
 
 export const dynamic = 'force-dynamic'
 
@@ -113,6 +113,29 @@ export async function GET() {
     )
   }
 
+  // [HERINNERING-NOOIT] Reminders whose invoice is NOT in the books: the file was kept and read,
+  // nothing was booked, and this is where the owner can book it on purpose. A reminder that was
+  // linked to its invoice has nothing left to do and is not listed.
+  const { data: reminderRows, error: reminderError } = await supabase
+    .from('documents')
+    .select('id, file_name, created_at')
+    .eq('user_id', user.id)
+    .eq('trashed', false)
+    .eq('ai_doc_type', DOC_TYPE_REMINDER)
+    .is('invoice_id', null)
+    .order('created_at', { ascending: false })
+    .limit(50)
+  if (reminderError) {
+    return NextResponse.json(
+      {
+        error: 'We konden de herinneringen nu niet ophalen. Probeer het zo meteen opnieuw — dit zegt ' +
+          'niets over of er iets is overgeslagen.',
+        code: 'skipped_unavailable',
+      },
+      { status: 503 },
+    )
+  }
+
   const skipped = (skippedRows ?? []).map((r) => ({
     filename: r.filename ?? '(zonder naam)',
     reason: r.reason ?? 'onbekend',
@@ -129,6 +152,9 @@ export async function GET() {
     // filter as the count above — one query, so the two cannot disagree.
     couldNotReadCount: couldNotReadCount ?? 0,
     unread: (unreadRows ?? []).map((r) => ({
+      id: r.id, fileName: r.file_name ?? '(zonder naam)', createdAt: r.created_at,
+    })),
+    reminders: (reminderRows ?? []).map((r) => ({
       id: r.id, fileName: r.file_name ?? '(zonder naam)', createdAt: r.created_at,
     })),
   })

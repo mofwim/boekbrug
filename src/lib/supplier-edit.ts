@@ -35,6 +35,9 @@ export interface SupplierCurrent {
   iban: string | null
   kvk_number: string | null
   btw_number: string | null
+  /** [LEVERANCIER-STANDAARD] Absent on a row read before the columns existed; read as null. */
+  default_btw_rate?: number | null
+  default_category?: string | null
 }
 
 export type SupplierChanges = ReturnType<typeof supplierPinChanges>
@@ -68,21 +71,23 @@ export function duplicateField(error: { code?: string | null; message?: string |
 
 /** The trail an accountant reads a year later: only the fields that moved, old beside new. */
 export function supplierEditTrail(current: SupplierCurrent, changes: SupplierChanges): {
-  old: Record<string, string | null>
-  new: Record<string, string | null>
+  old: Record<string, string | number | null>
+  new: Record<string, string | number | null>
 } {
-  const old: Record<string, string | null> = {}
-  const next: Record<string, string | null> = {}
+  const old: Record<string, string | number | null> = {}
+  const next: Record<string, string | number | null> = {}
   if ('name' in changes) { old.name = current.name; next.name = changes.name ?? null }
   if ('iban' in changes) { old.iban = current.iban; next.iban = changes.iban ?? null }
   if ('kvk_number' in changes) { old.kvk_number = current.kvk_number; next.kvk_number = changes.kvk_number ?? null }
   if ('btw_number' in changes) { old.btw_number = current.btw_number; next.btw_number = changes.btw_number ?? null }
+  if ('default_btw_rate' in changes) { old.default_btw_rate = current.default_btw_rate ?? null; next.default_btw_rate = changes.default_btw_rate ?? null }
+  if ('default_category' in changes) { old.default_category = current.default_category ?? null; next.default_category = changes.default_category ?? null }
   return { old, new: next }
 }
 
 export type SupplierEditPlan =
   | { ok: true; values: SupplierPinValues; changes: SupplierChanges; iban: IbanMove | null }
-  | { ok: false; field: 'name' | 'iban' | 'kvk' | 'btw'; code: import('./supplier-pin').SupplierPinRefusal }
+  | { ok: false; field: 'name' | 'iban' | 'kvk' | 'btw' | 'rate' | 'category'; code: import('./supplier-pin').SupplierPinRefusal }
 
 /**
  * Read the edit form against the row as it stands: the same validation the pin route runs, then

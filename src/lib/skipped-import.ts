@@ -32,6 +32,14 @@ export const DOC_TYPE_COULD_NOT_READ = "could_not_read" as const;
 export const DOC_TYPE_UNSUPPORTED = "unsupported_type" as const;
 
 /**
+ * [HERINNERING-NOOIT] Een betalingsherinnering die is BEWAARD en GELEZEN, maar bewust nooit een
+ * factuur is geworden. Staat NIET in SKIPPED_DOC_TYPES: het is geen leesfout. Het paneel toont hem
+ * apart, en alleen zolang hij aan geen factuur hangt (invoice_id is null) — dan is het origineel
+ * niet in de boeken en kan de eigenaar hem bewust vanaf het bestand boeken.
+ */
+export const DOC_TYPE_REMINDER = "reminder" as const;
+
+/**
  * De volledige lijst die het overgeslagen-paneel moet tellen.
  *
  * DIT IS DE ENIGE PLEK waar die lijst staat. Voegt een nieuwe opnameweg ooit een derde reden

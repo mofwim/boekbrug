@@ -50,6 +50,8 @@ interface SupplierRow {
   iban: string | null
   kvk_number: string | null
   btw_number: string | null
+  default_btw_rate?: number | null
+  default_category?: string | null
   created_at: string
 }
 
@@ -75,7 +77,7 @@ export async function POST(req: NextRequest) {
   // ── What the two rows ACTUALLY are, right now ──
   const { data: rows, error: rowsErr } = await supabase
     .from('suppliers')
-    .select('id, name, iban, kvk_number, btw_number, created_at')
+    .select('id, name, iban, kvk_number, btw_number, default_btw_rate, default_category, created_at')
     .eq('user_id', ownerId)
     .in('id', [askedSurvivor, askedMergedAway])
   if (rowsErr) {
@@ -200,10 +202,15 @@ export async function POST(req: NextRequest) {
   // ── 4. The identity the survivor lacks ──
   // Typed as the table's own Update shape: a Record<string, string> would let a typo become a
   // column this table does not have, and PostgREST answers that with a 400 at runtime.
-  const carry: { iban?: string; kvk_number?: string; btw_number?: string } = {}
+  const carry: { iban?: string; kvk_number?: string; btw_number?: string; default_btw_rate?: number; default_category?: string } = {}
   if (!identityIban(survivor.iban) && identityIban(mergedAway.iban)) carry.iban = identityIban(mergedAway.iban)!
   if (!(survivor.kvk_number ?? '').trim() && (mergedAway.kvk_number ?? '').trim()) carry.kvk_number = mergedAway.kvk_number!.trim()
   if (!(survivor.btw_number ?? '').trim() && (mergedAway.btw_number ?? '').trim()) carry.btw_number = mergedAway.btw_number!.trim()
+  // [LEVERANCIER-STANDAARD] A default the owner set on the dying row is a decision about the
+  // company, and the company survives. Only where the survivor has none: two answers, the
+  // survivor's wins, because that is the row the owner chose to keep.
+  if (survivor.default_btw_rate == null && mergedAway.default_btw_rate != null) carry.default_btw_rate = mergedAway.default_btw_rate
+  if (!(survivor.default_category ?? '').trim() && (mergedAway.default_category ?? '').trim()) carry.default_category = mergedAway.default_category!.trim()
   if (Object.keys(carry).length > 0) {
     // The dying row lets go of its account first: UNIQUE (user_id, iban) would refuse the two
     // rows holding it at the same instant, and that refusal would cost the survivor the number

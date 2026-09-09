@@ -1,5 +1,5 @@
 // tests/render/segment-voordeur.test.tsx
-// [SEGMENT-VOORDEUR] De drie deuren openen, en zeggen wat ze niet kunnen.
+// [SEGMENT-VOORDEUR] De deuren openen, en zeggen wat ze niet kunnen.
 //
 // tsc en next build roepen een component nooit aan — zie AGENTS.md. Deze rendert ze echt, met de
 // data die ze in productie krijgen, en controleert de twee dingen die een landingspagina waardeloos
@@ -13,7 +13,9 @@ import { SEGMENT_PAGES } from "../../src/lib/segment-pages";
 
 test("[SEGMENT-VOORDEUR] elke deur rendert zijn eigen belofte, stappen en grenzen", async () => {
   const { default: SegmentVoordeur } = await import("../../src/components/SegmentVoordeur");
-  assert.equal(SEGMENT_PAGES.length, 3, "drie deuren, zoals besloten");
+  // [SEGMENT-GARAGE] [SEGMENT-TRANSPORT] Five, on the go-to-market ranking: bouw, garage,
+  // schoonmaak, transport — plus the measured winkel/horeca door.
+  assert.equal(SEGMENT_PAGES.length, 5, "vijf deuren, zoals besloten");
 
   for (const pagina of SEGMENT_PAGES) {
     const html = renderToStaticMarkup(React.createElement(SegmentVoordeur, { pagina }));
@@ -55,11 +57,11 @@ test("[SEGMENT-VOORDEUR] elke deur rendert zijn eigen belofte, stappen en grenze
   }
 });
 
-test("[SEGMENT-VOORDEUR] de drie deuren zeggen niet hetzelfde", () => {
-  // Eén product, drie boodschappen — als de koppen inwisselbaar zijn, is het geen segmentering
-  // maar drie keer dezelfde pagina met een andere URL.
+test("[SEGMENT-VOORDEUR] de deuren zeggen niet hetzelfde", () => {
+  // Eén product, één boodschap per deur — als de koppen inwisselbaar zijn, is het geen segmentering
+  // maar dezelfde pagina met een andere URL. Tegen het AANTAL deuren, niet tegen een vast getal.
   const beloftes = SEGMENT_PAGES.map((p) => p.belofte);
-  assert.equal(new Set(beloftes).size, 3, "twee segmenten delen hun belofte");
+  assert.equal(new Set(beloftes).size, SEGMENT_PAGES.length, "twee segmenten delen hun belofte");
   const problemen = SEGMENT_PAGES.map((p) => p.probleem);
-  assert.equal(new Set(problemen).size, 3, "twee segmenten delen hun probleem");
+  assert.equal(new Set(problemen).size, SEGMENT_PAGES.length, "twee segmenten delen hun probleem");
 });

@@ -3051,9 +3051,11 @@ test("[TWEEDE-KANS] a file we kept because we could not read it has a way back",
     src, /if \(doc\.invoice_id\) \{[\s\S]{0,200}?status: 409/,
     "a document already behind an invoice may not be read again",
   );
+  // [HERINNERING-NOOIT] …and the one deliberate exception: a filed reminder with no invoice behind
+  // it, which the owner books on purpose. That gate names the rest of the reminder wiring.
   assert.match(
-    src, /if \(!isSkippedDocType\(doc\.ai_doc_type\)\) \{/,
-    "only a file the app filed as unreadable qualifies",
+    src, /if \(!isSkippedDocType\(doc\.ai_doc_type\) && !isReminderDoc\) \{/,
+    "only a file the app filed as unreadable — or a filed reminder — qualifies",
   );
 
   // The type comes from the CONTENT. A file that arrived with a wrong or empty media type is
@@ -4623,7 +4625,8 @@ test("[OFFERTE-OMZETTEN-VOLLEDIG] converting a quote carries everything the quot
   // The discount is on the header, so it needs its own read. A line-only load cannot see it.
   assert.match(
     page,
-    /\.select\('discount_type, discount_value'\)[\s\S]{0,120}?\.eq\('id', offerteParam\)/,
+    // [AANBETALING] The same read also carries the offerte's number, for the deposit line's text.
+    /\.select\('discount_type, discount_value(?:, invoice_number)?'\)[\s\S]{0,120}?\.eq\('id', offerteParam\)/,
     "the quote's discount must be read from the header — that is the amount the customer said " +
       "yes to",
   );
@@ -25534,7 +25537,9 @@ test("[LEVERANCIER-SAMENVOEGEN] a name is never evidence, and the vetoes are ask
   //    minutes an import can give one row the KVK that makes it a different company.
   const deur = code("src/app/api/supplier/merge/route.ts");
   assert.match(deur, /const plan = planSupplierMerge\(a, b\)/, "the plan is computed server-side");
-  assert.match(deur, /\.select\('id, name, iban, kvk_number, btw_number, created_at'\)/,
+  // [LEVERANCIER-STANDAARD] The two defaults ride along in the same read, so the survivor can
+  // inherit one it lacks; the point of the assertion — the SERVER's own rows — is unchanged.
+  assert.match(deur, /\.select\('id, name, iban, kvk_number, btw_number, default_btw_rate, default_category, created_at'\)/,
     "…on rows it read itself, not on anything the browser sent");
   assert.match(deur, /if \(!plan\.ok\) \{/, "…and a refusal is a refusal");
   // The PAIR is the server's judgement; the DIRECTION is the owner's. Both halves are pinned:
@@ -28292,4 +28297,210 @@ test("[BEDRIJFSMIDDEL] the auditfile books the same split: 0100 for the purchase
   assert.match(fetch, /asset: assetInvoiceIds\.has\(r\.id\),/, "the fetch layer marks registered purchases");
   assert.match(fetch, /if \(last > end\) break;/, "no memoriaal is dated after the file's own end date");
   assert.match(fetch, /regimeNotes\.push\("Het register van bedrijfsmiddelen kon niet gelezen worden/, "a failed register read is a LET OP in the file");
+});
+
+test("[HERINNERING-NOOIT] a payment reminder is never an invoice, on any door", () => {
+  // MEASURED, on the live administration: thirteen "HERINNERING" letters from one wholesaler,
+  // each read correctly as a reminder, each IMPORTED into the verify queue as an invoice because
+  // the old rule ("skip only when the original is found by number") never found the original —
+  // the reader dropped the last digit of the number on the reminder's narrower column, every
+  // time. Twelve were archived by hand, one at a time. The owner's words: the app must know not to
+  // add such a document, because it is a reminder and not an invoice.
+  //
+  // The rule now: a reminder is FILED (bestanden), matched to its invoice with everything it
+  // repeats, linked when found, and the owner is told the one thing that matters. It never becomes
+  // an invoices row. The only way it books is the owner's own tap on the filed document.
+  const router = code("src/lib/intake-router.ts");
+  const decide = router.slice(router.indexOf("export function decideFromAi"));
+  const reminderExit = decide.indexOf('ai.is_reminder === true');
+  const firstInvoice = decide.indexOf('destination: "invoice"');
+  assert.ok(reminderExit > 0 && reminderExit < firstInvoice,
+    "decideFromAi sends a reminder to bestanden BEFORE any invoice/receipt road");
+  assert.match(decide, /reason: "ai_reminder"/, "…and says why");
+
+  // The route hands the field over (the [BON-BETAALWIJZE] class of bug: typed, tested, not passed).
+  const intake = code("src/app/api/intake/route.ts");
+  assert.match(intake, /is_reminder: v\.is_reminder \?\? null/, "the intake route passes is_reminder to the router");
+  assert.match(intake, /if \(doc\?\.id && v\.is_reminder === true\)/, "…and files the reminder once the document is stored");
+  assert.match(intake, /await fileReminder\(\{/, "…through the one filing helper");
+  assert.match(intake, /destination: "reminder"/, "…answering the screen with its own destination");
+
+  // The e-mail door: the reminder branch files and CONTINUES before the invoice insert.
+  const email = code("src/lib/email-integration.ts");
+  const branch = email.indexOf("if (classification.isReminder === true) {");
+  assert.ok(branch > 0, "the sync has a reminder branch");
+  const branchEnd = email.indexOf("continue", branch);
+  const branchBody = email.slice(branch, branchEnd);
+  assert.match(branchBody, /saveKeptAttachment\(attachment, 'reminder', DOC_TYPE_REMINDER, \{ aiProcessed: true \}\)/,
+    "the file is kept as a READ reminder document");
+  assert.match(branchBody, /await fileReminder\(\{/, "…and filed through the same helper as the upload door");
+  assert.ok(branchEnd < email.indexOf(".from('invoices')", branch), "…and the loop moves on before any invoices insert");
+  assert.doesNotMatch(email, /decideReminder|import-flagged|knownInvoiceNumbers/, "the old skip-or-import rule is gone");
+
+  // The pure rule: a reminder is filed whatever the books hold; the link is exact or absent.
+  const pure = code("src/lib/reminder-original.ts");
+  assert.match(pure, /if \(facts\.isReminder !== true\) return \{ action: 'import' \}/, "not a reminder → the normal road");
+  assert.doesNotMatch(pure, /'import-flagged'|action: 'skip'/, "a reminder has one outcome: file");
+  assert.match(pure, /if \(fits\.length === 1\) return \{ match: fits\[0\], ambiguous: 0 \}/, "exactly one fit links; two link nothing");
+  assert.match(pure, /if \(!sameCents\(facts\.totalIncBtw, c\.totalIncBtw\)\) continue/, "without the number, the amount is required…");
+  assert.match(pure, /if \(!sameParty\(facts\.vendor, c\.clientName\)\) continue/, "…and the party…");
+  assert.match(pure, /sameDate \|\| numberPrefixRelated\(/, "…and the date or the dropped-digit number");
+
+  // The filing helper links the document to the invoice — or leaves it open on purpose — and
+  // never writes an invoice.
+  const filer = code("src/lib/reminder-file.ts");
+  assert.match(filer, /invoice_id: placed\.original\?\.id \?\? null/, "the link IS the state");
+  assert.doesNotMatch(filer, /from\("invoices"\)\s*\.insert/, "the filer never inserts an invoice");
+  assert.match(filer, /action: "document\.reminder_filed"/, "the trail names what happened");
+  assert.match(filer, /createNotification\(\{ userId, title: notice\.title/, "and the owner hears it once");
+
+  // The one door that books from a reminder: the owner's tap on a filed, UNLINKED reminder.
+  const door = code("src/app/api/documents/[id]/read-as-invoice/route.ts");
+  assert.match(door, /const isReminderDoc = doc\.ai_doc_type === DOC_TYPE_REMINDER/, "the door knows a filed reminder");
+  assert.match(door, /if \(doc\.invoice_id\) \{/, "…refuses one that is linked to its invoice (the check above the type check)");
+  assert.match(door, /is_reminder: isReminderDoc \? false : \(v\.is_reminder \?\? null\)/, "…and only there switches the router's reminder exit off");
+  assert.match(door, /booked_from_reminder: true/, "…leaving the row flagged as booked from a dunning letter");
+
+  // The panel lists the unlinked reminders with that door as their button.
+  const api = code("src/app/api/email/skipped/route.ts");
+  assert.match(api, /\.eq\('ai_doc_type', DOC_TYPE_REMINDER\)\s*\.is\('invoice_id', null\)/, "the API lists only reminders without an invoice");
+  const panel = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+  assert.match(panel, /t\('ink\.herinnering\.knop'\)/, "the panel offers the tap");
+  assert.match(panel, /setReminderDocs\(Array\.isArray\(data\.reminders\)/, "…on the rows the API returned");
+
+  // 'reminder' is not a read failure and must not be counted as one.
+  const skippedLib = code("src/lib/skipped-import.ts");
+  assert.match(skippedLib, /export const DOC_TYPE_REMINDER = "reminder" as const/);
+  const listStart = skippedLib.indexOf("export const SKIPPED_DOC_TYPES");
+  const listEnd = skippedLib.indexOf("];", listStart);
+  assert.ok(!skippedLib.slice(listStart, listEnd).includes("DOC_TYPE_REMINDER"), "a reminder is not 'could not read'");
+
+  // The filename backstop over the model's read is still wired.
+  assert.match(code("src/lib/ai.ts"), /parsed\.is_reminder = parsed\.is_reminder === true \|\| isReminderFilename\(filename\)/);
+});
+
+test("[WERK] the trade's own work is one primitive, built on the app, and never a second money engine", () => {
+  // The owner's decision, 8 September 2026: the accounting is not the product; the trade's own
+  // work is. A mechanic opens the app for his werkplaats, a courier for his ritten — and the
+  // invoice, the btw and the accountant's quarter are what that work produces. Built ON the app
+  // and demolishing nothing: one table, one screen, one API, the trade's noun on it.
+  const pure = code("src/lib/werk.ts");
+  // One closed status set, and the trade only LABELS it — never a second enum per trade.
+  assert.match(pure, /export const WORK_STATUSES: readonly WorkStatus\[\] = \[\s*"open", "bezig", "wacht_klant", "wacht_onderdeel", "klaar", "gefactureerd", "geannuleerd",?\s*\]/);
+  assert.match(pure, /export const HAND_STATUSES[^\n]*\["open", "bezig", "wacht_klant", "wacht_onderdeel", "klaar", "geannuleerd"\]/, "invoicing is a door, not a tap");
+  // The four skins, on the measured standard: a werkorder opens on a kenteken and charges arbeid
+  // and onderdelen; a rit has a laadadres and losadres; a klus a werkadres; an opdracht a locatie.
+  assert.match(pure, /skin: "werkorder"[\s\S]*?vehicle: true/);
+  // [RIJSCHOOL] The consultant's test of the primitive: a new trade is data here, never a second engine.
+  assert.match(pure, /const LES: WorkSkin = \{\s*skin: "les"[\s\S]*?recurring: true,\s*visitKeys: \{ list: "werk\.les\.lessen"/);
+  assert.match(pure, /rijschool: LES,/);
+  assert.match(code("src/lib/vak-sjablonen.ts"), /slug: "rijschool"/);
+  assert.match(code("src/lib/vak-profile.ts"), /VEHICLE_TRADES[^\n]*"rijschool"/, "the lesauto has an APK like a garage's cars");
+  assert.match(pure, /\{ key: "van", type: "text", labelKey: "werk\.veld\.laadadres", onCard: true, required: true \}/);
+  assert.match(pure, /\{ key: "adres", type: "text", labelKey: "werk\.veld\.werkadres", onCard: true, required: true \}/);
+  assert.match(pure, /\{ key: "locatie", type: "text", labelKey: "werk\.veld\.locatie", onCard: true, required: true \}/);
+  // Money on the work is what it CHARGES; costs live on the purchase invoices, hours on time_entries.
+  assert.doesNotMatch(pure, /total_inc_btw|btw_amount|amount_paid/, "the work row carries no ledger amounts");
+  assert.match(pure, /if \(!isValidRate\(btw\)|ALLOWED_BTW_RATES\.includes\(btw\)/, "a line's btw rate must exist in the Netherlands");
+  // The table: owner RLS, the union CHECK, and the three nullable links back — nothing old reads them.
+  const sql = code("supabase/migrations/work_items.sql");
+  assert.match(sql, /CHECK \(status IN \('open', 'bezig', 'wacht_klant', 'wacht_onderdeel', 'klaar', 'gefactureerd', 'geannuleerd'\)\)/);
+  for (const t of ["invoices", "time_entries", "documents"]) {
+    assert.match(sql, new RegExp(`ALTER TABLE public\\.${t}\\s+ADD COLUMN IF NOT EXISTS work_item_id uuid REFERENCES public\\.work_items\\(id\\) ON DELETE SET NULL`), `${t} links back, nullable`);
+  }
+  assert.match(sql, /CREATE POLICY work_items_select_own[\s\S]*?USING \(user_id = auth\.uid\(\)\)/);
+  // The API: owner-only writes, the status guarded by the skin, the invoice through the draft door.
+  const api = code("src/app/api/werk/route.ts");
+  for (const fn of ["POST", "PATCH", "DELETE"]) assert.match(api, new RegExp(`export async function ${fn}[\\s\\S]*?requireOwner\\(`), `${fn} is owner-only`);
+  assert.match(api, /!isWorkStatus\(next\) \|\| !HAND_STATUSES\.includes\(next\) \|\| !skin\.statuses\.includes\(next\)/, "a status the trade does not use is refused");
+  assert.doesNotMatch(api, /from\("invoices"\)\s*\.insert/, "the work API never writes an invoice");
+  // [WERK-2] Two invoice doors (one piece of work, several for one client) share ONE helper, so
+  // the same work puts the same lines on an invoice whichever door it takes.
+  const shared = code("src/lib/werk-factuur.ts");
+  assert.match(shared, /import \{ POST as createDraft \} from "@\/app\/api\/invoice\/draft\/route"/, "the invoice is made by the one draft door");
+  assert.doesNotMatch(shared, /from\("invoices"\)\s*\.insert/, "…and never inserted here");
+  assert.match(shared, /linesFromEntries\(/, "hours go on at their own rate, by the same builder the hours invoice uses");
+  assert.match(shared, /workInvoiceLines\(\{/, "the line order is the pure module's, tested there");
+  assert.match(shared, /for \(const chunk of chunkIds\(w\.billedHourIds, 100\)\)[\s\S]*?\.update\(\{ invoice_id: invoiceId \}\)[\s\S]*?\.is\("invoice_id", null\)\.in\("id", chunk\)\.select\("id"\)/, "billed hours are stamped, in chunks, and the stamp is READ BACK");
+  // [WERK-3] The stamp proves itself (verifyStamped, the draft door's own invariant) or the draft
+  // is rolled back; the row closes under `.is("invoice_id", null)` and the COUNT decides; beurten
+  // are stamped under an optimistic lock on updated_at. On each door every miss rolls the draft back.
+  assert.match(shared, /const verdict = verifyStamped\(wanted, stamped\)/);
+  assert.match(shared, /export async function rollbackDraft[\s\S]*?\.from\("time_entries"\)\.update\(\{ invoice_id: null \}\)[\s\S]*?\.from\("invoice_lines"\)\.delete\(\)[\s\S]*?\.from\("invoices"\)\.delete\(\)\.eq\("id", invoiceId\)\.eq\("sender_id", userId\)\.eq\("status", "draft"\)/);
+  assert.match(shared, /\.update\(\{ invoice_id: invoiceId, status: "gefactureerd" \}\)[\s\S]*?\.is\("invoice_id", null\)\.select\("id"\)/, "closing a row is counted");
+  assert.match(shared, /\.eq\("updated_at", fresh\.updated_at\)\.select\("id"\)/, "beurten are stamped under an optimistic lock");
+  assert.match(shared, /hourBtwFor\(skin, DEFAULT_HOUR_BTW_RATE\)/, "a fietsenmaker's repair hour bills at the skin's labour rate");
+  for (const f of ["src/app/api/werk/[id]/factuur/route.ts", "src/app/api/werk/factuur/route.ts"]) {
+    const d = code(f);
+    assert.match(d, /if \(!stamped\.ok\) \{\s*await rollbackDraft\(db, user\.id, invoiceId\);/, `${f}: an unproven stamp rolls the draft back`);
+    assert.match(d, /closed\.closed !== (1|works\.length)\)[\s\S]*?rollbackDraft\(db, user\.id, invoiceId\)/, `${f}: a row that did not close rolls the draft back`);
+  }
+  const door = code("src/app/api/werk/[id]/factuur/route.ts");
+  assert.match(door, /if \(!canInvoice\(\{ status: row\.status, invoice_id: row\.invoice_id \?\? null, repeat_every: row\.repeat_every, visits: row\.visits, fields: row\.fields \}\)\)/, "only finished work once — or repeating work with a done beurt, never a fee contract");
+  assert.doesNotMatch(door, /from\("invoices"\)\s*\.insert/);
+  // [WERK-BEURT] Repeating work: the beurten this invoice covers are fixed BEFORE the draft, re-read
+  // at stamping, and the row stays open (no invoice_id, no 'gefactureerd' on the recurring branch).
+  assert.match(door, /const billedVisits = row\.repeat_every \? unbilledVisits\(row\.visits\) : \[\];[\s\S]*?openDraftFor\(/, "the covered beurten are decided before the draft exists");
+  assert.match(door, /if \(row\.repeat_every\) \{\s*const v = await stampVisits\(db, user\.id, id, billedVisits, invoiceId\);[\s\S]*?\} else \{\s*const closed = await closeWork\(db, user\.id, \[id\], invoiceId, today\);/, "recurring stamps beurten under the lock; one-off closes the row, counted");
+  const together = code("src/app/api/werk/factuur/route.ts");
+  assert.match(together, /requireOwner\(/);
+  assert.match(together, /const verdict = canInvoiceTogether\(loaded\.works\.map\(\(w\) => w\.row\)\);\s*if \(!verdict\.ok\)/, "one client, all finished, none repeating — decided by the pure module");
+  assert.doesNotMatch(together, /from\("invoices"\)\s*\.insert/);
+  assert.match(together, /const closed = await closeWork\(db, user\.id, works\.map\(\(w\) => w\.row\.id\), invoiceId, today\)/, "every row closes on the one invoice, once, counted");
+  // [WERK-BEURT] The table: the rhythm is a CHECKed column, the beurten a jsonb list.
+  const repeatSql = code("supabase/migrations/work_items_repeat.sql");
+  assert.match(repeatSql, /visits jsonb NOT NULL DEFAULT '\[\]'::jsonb/);
+  assert.match(code("supabase/migrations/work_items_repeat_kwartaal.sql"), /CHECK \(repeat_every IN \('week', 'twee_weken', 'vier_weken', 'maand', 'kwartaal'\)\)/);
+  assert.match(pure, /export const REPEATS: readonly Repeat\[\] = \["week", "twee_weken", "vier_weken", "maand", "kwartaal"\]/, "the module's list is the CHECK's list");
+  // [WERK-3] Money and scope after the adversarial review: a beurt is a calendar day and never
+  // twice on one day; hours of another client are never offered or attached; closed work takes
+  // nothing; the list is the skin's; the draft's deletion reopens the work it came from.
+  assert.match(pure, /if \(!isCalendarDay\(on\)\) return \{ ok: false, reason: "not_a_date" \};\s*if \(existing\.some\(\(v\) => v\.on === on && !v\.invoice_id\)\) return \{ ok: false, reason: "duplicate_day" \}/);
+  assert.match(pure, /quantity > QUANTITY_MAX|price > PRICE_MAX/);
+  assert.match(code("src/app/api/werk/[id]/route.ts"), /hq = row\.client_id \? hq\.or\(`client_id\.is\.null,client_id\.eq\.\$\{row\.client_id\}`\) : hq\.is\("client_id", null\)/, "candidate hours are this client's or nobody's");
+  assert.match(code("src/app/api/werk/[id]/route.ts"), /if \(attach && \(row\.status === "gefactureerd" \|\| row\.status === "geannuleerd"\)\)/, "closed work takes nothing new");
+  assert.match(api, /\.in\("vak", vaksForSkin\(skin\.skin\)\)/, "the list is the skin's rows");
+  assert.match(api, /if \(!clientName\) return NextResponse\.json\(\{ error: "Zet een klant op dit werk\."/, "work without a client is refused at the door too");
+  assert.doesNotMatch(api, /\.from\("vehicles"\)\s*\.upsert\(/, "the vehicle register is never overwritten from here");
+  assert.match(code("src/app/api/invoice/[id]/route.ts"), /\.from\('work_items'\)\.update\(\{ status: 'klaar' \}\)\.eq\('user_id', ownerId\)\.eq\('status', 'gefactureerd'\)\.is\('invoice_id', null\)/, "deleting a draft reopens its work");
+  assert.match(code("src/lib/article-learning.ts"), /line\.unit_price <= 0\) \{/, "a € 0 heading line is not learned as an article");
+  const screen = code("src/app/dashboard/werk/WerkClient.tsx");
+  assert.equal((screen.match(/<WorkSheet[\s\S]{0,400}?error=\{error\}/g) ?? []).length, 2, "the refusal is shown inside BOTH sheets");
+  assert.doesNotMatch(screen, /capture="environment"/, "the bon picker must also open the gallery and Files");
+  assert.match(screen, /fetch\('\/api\/uren', \{[\s\S]*?work_item_id: detail\.row\.id/, "hours are written on the work through the ordinary hours door");
+  // [WERK-BEURT] A beurt is only ever written on work that repeats, by the owner, and a billed one is never removed.
+  const detail = code("src/app/api/werk/[id]/route.ts");
+  assert.match(detail, /if \(!row\.repeat_every\) return NextResponse\.json\(\{ error: "Dit werk herhaalt niet; het heeft geen beurten\."/);
+  assert.match(detail, /visits\.findIndex\(\(v\) => v\.on === on && !v\.invoice_id\)/, "only an unbilled beurt can be taken back");
+  // [WERK-BON] A bon from inside the work goes through the ONE intake door and is only LINKED here.
+  const client = code("src/app/dashboard/werk/WerkClient.tsx");
+  assert.match(client, /sendWithFit\(file, \(f\) => \{[\s\S]*?fetch\('\/api\/intake', \{ method: 'POST', body: fd \}\)/, "the bon is read, deduplicated and filed by intake, never by this screen — and fitted first");
+  assert.match(client, /action: 'attach_cost', ids: \[invoiceId\]/);
+  assert.match(client, /action: 'attach_document', ids: \[documentId\]/);
+  // [VAK-KIEZEN] The trade can be chosen after registration, and it is written through parseVak only.
+  const vakCard = code("src/components/settings/VakCard.tsx");
+  assert.match(vakCard, /const slug = parseVak\(next\)[\s\S]*?\.update\(\{ vak: slug \}\)/, "never a guess: an unknown value stores 'no trade'");
+  assert.match(code("src/app/dashboard/settings/page.tsx"), /<VakCard \/>/);
+  // The screen: it exists, it is the second tap for the work trade, Vandaag speaks the trade's word.
+  assert.ok(existsSync("src/app/dashboard/werk/page.tsx"));
+  assert.match(code("src/lib/nav-destinations.ts"), /export const OWNER_WERK[\s\S]*?href: "\/dashboard\/werk"/);
+  assert.match(code("src/app/dashboard/layout.tsx"), /workTrade = hasWorkLayer\(/);
+  assert.match(code("src/app/dashboard/vandaag/VandaagClient.tsx"), /export function werkZin\(/);
+  assert.match(code("src/app/dashboard/vandaag/page.tsx"), /from\("work_items"\)\.select\("id, status, repeat_every, visits, lines, fields, billed_periods"\)/, "Vandaag counts a done beurt as ready to invoice, and says what it is worth");
+  // [WERK-4] Financieel gereed is a Core state: the same list for every trade, shown before the
+  // button, and the button follows it. The margin carries its trust; Vandaag names the leaks.
+  assert.match(pure, /export function financialReadiness\(/);
+  assert.match(pure, /confidence: "werkelijk" \| "geschat" \| "incompleet";/);
+  assert.match(code("src/app/dashboard/werk/WerkClient.tsx"), /disabled=\{busy \|\| linesDirty \|\| !financialReadiness\(\{ row: detail\.row, hours: detail\.hours, today: amsterdamToday\(\) \}\)\.ok\}/, "the invoice button follows the readiness list");
+  assert.match(code("src/app/dashboard/vandaag/page.tsx"), /signals: workSignals\(\{/, "Vandaag computes the signals from the pure module");
+  // [CONTRACT] Contract + Locatie is the recurring row itself, billed per period once under a lock;
+  // a fee contract is never billed by its beurten; the column and the module agree on the shape.
+  assert.match(code("supabase/migrations/work_items_periods.sql"), /ADD COLUMN IF NOT EXISTS billed_periods jsonb NOT NULL DEFAULT '\[\]'::jsonb/);
+  assert.match(pure, /if \(contractFee\(row\) !== null\) return false;/, "a fee contract is not billed by its beurten");
+  assert.match(pure, /if \(!isPeriod\(period\) \|\| period > periodOf\(today\)\) return false;/, "never a future month");
+  assert.match(shared, /export async function stampPeriod[\s\S]*?if \(periods\.some\(\(p\) => p\.period === period\)\) return \{ ok: false, reason: "already_billed" \};[\s\S]*?\.eq\("updated_at", fresh\.updated_at\)/, "the period is stamped once, under the optimistic lock");
+  assert.match(door, /if \(contractFee\(row\) !== null\) \{[\s\S]*?if \(!canInvoicePeriod\(row, period, today\)\)[\s\S]*?stampPeriod\(db, user\.id, id, period, opened\.invoiceId\)[\s\S]*?rollbackDraft\(/, "the period door proves itself or rolls back");
+  assert.match(api, /searchParams\.get\("contracten"\) === "1"[\s\S]*?contractStat\(\{ row: r, hoursMonth/, "the portfolio is the pure module's arithmetic on this month's reads");
+  assert.match(code("src/app/dashboard/vandaag/page.tsx"), /\.not\("work_item_id", "is", null\)[\s\S]*?\.is\("work_item_id", null\)\.in\("client_name", suppliers/, "a loose bon is only a signal for a supplier the owner attached to work before");
+  assert.ok(existsSync("tests/render/werk.test.tsx"), "the screen is on the render line");
 });

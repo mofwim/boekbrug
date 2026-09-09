@@ -11,6 +11,11 @@ import { useSubPageHeader } from '@/components/nav/SubPageHeaderContext'
 import { createClient } from '@/lib/supabase'
 import { M3, FONT, FONT_NUM, COLUMN } from '@/lib/design/tokens'
 import { statusChip } from '@/lib/invoice-status'
+// [BESTE] The chip on the history said 'sent' for an invoice three weeks past its due date,
+// because `status` is only moved to overdue by a cron. The list screens decide on the due date;
+// this card now decides the same way.
+import { overdueDays } from '@/lib/overdue'
+import { amsterdamToday } from '@/lib/format-nl'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import { paymentBehaviourPanel } from '@/lib/client-payment-behaviour-copy'
@@ -30,6 +35,8 @@ interface Client {
   id: string; name: string; email: string | null; kvk_number: string | null
   btw_number: string | null; iban: string | null; address: string | null
   postal_code: string | null; city: string | null; notes: string | null
+  // [BESTE] Optional: absent on an installation behind on clients_term_phone.sql.
+  phone?: string | null; payment_term_days?: number | null
 }
 
 // [STATUS] Kopie elf. Deze week af op DRIE van de vier woorden — "Verstuurd" waar de rest
@@ -92,6 +99,7 @@ export default function KlantDetailClient({ client, invoices, totals, behaviour 
 
   const dateNL = (iso: string | null) => (iso ? new Date(iso + 'T00:00:00').toLocaleDateString('nl-NL', { day: '2-digit', month: 'short', year: 'numeric' }) : '—')
   const notesDirty = notes.trim() !== savedNote.trim()
+  const today = amsterdamToday()
 
   return (
     <div style={{ minHeight: '100vh', background: '#F8F9FA', fontFamily: FONT }}>
@@ -110,11 +118,14 @@ export default function KlantDetailClient({ client, invoices, totals, behaviour 
         </div>
 
         {/* Contact */}
-        <Card title={t('kld.gegevens')}>
+        <Card title={t('kld.gegevens')} action={<Link href={`/dashboard/klanten?bewerk=${client.id}`} style={{ fontSize: 13, fontWeight: 600, color: M3.primary, textDecoration: 'none' }}>{t('kld.bewerken')}</Link>}>
           <Row k={t('kld.adres')} v={[client.address, [client.postal_code, client.city].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '—'} />
           <Row k="KVK" v={client.kvk_number || '—'} />
           <Row k="BTW" v={client.btw_number || '—'} />
           <Row k="IBAN" v={client.iban || '—'} />
+          {/* [BESTE] Phone and the agreed payment term — the two facts every package keeps. */}
+          {client.phone && <Row k={t('kld.telefoon')} v={client.phone} />}
+          {client.payment_term_days != null && <Row k={t('kld.termijn')} v={t('kl.termijnDagen', { days: client.payment_term_days })} />}
         </Card>
 
         {/* [BETAALGEDRAG] What this customer's own invoices say about how they pay. Deliberately
@@ -156,9 +167,9 @@ export default function KlantDetailClient({ client, invoices, totals, behaviour 
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {invoices.map((iv) => {
-              const st = statusChip(iv.status, taal)
+              const st = statusChip(displayStatus(iv, today), taal)
               return (
-                <Link key={iv.id} href={`/dashboard/facturen`} style={{ textDecoration: 'none' }}>
+                <Link key={iv.id} href={`/dashboard/invoice/${iv.id}`} style={{ textDecoration: 'none' }}>
                   <div style={{ background: M3.surface, borderRadius: 12, border: `1px solid ${M3.outlineVariant}`, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 14.5, fontWeight: 600, color: M3.onSurface }}>{iv.invoice_number || t('kld.concept')}</div>
@@ -185,13 +196,27 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
     </div>
   )
 }
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
+function Card({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div style={{ background: M3.surface, borderRadius: 16, border: `1px solid ${M3.outlineVariant}`, padding: 16, marginBottom: 12 }}>
-      <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: 0.4, color: M3.neutral, marginBottom: 10 }}>{title.toUpperCase()}</div>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: 0.4, color: M3.neutral }}>{title.toUpperCase()}</div>
+        {action}
+      </div>
       {children}
     </div>
   )
+}
+
+// A sent invoice past its due date is late, whatever the cron has written in `status` — the same
+// rule InvoiceRow.getDisplayStatus applies on the lists. An offerte has no debt to be late on, and
+// a creditnota is not chased.
+const NOT_LATE_TYPES = new Set(['pro_forma', 'offerte', 'creditnota'])
+function displayStatus(iv: { status: string | null; due_date: string | null; invoice_type: string | null }, today: string): string | null {
+  const s = iv.status ?? null
+  if (s === 'paid' || s === 'draft' || s === 'archived' || s === null) return s
+  if (NOT_LATE_TYPES.has(iv.invoice_type ?? 'factuur')) return s
+  return overdueDays(iv.due_date, today) !== null ? 'overdue' : s
 }
 function Row({ k, v }: { k: string; v: string }) {
   return (

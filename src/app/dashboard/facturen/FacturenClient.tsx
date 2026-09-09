@@ -51,6 +51,8 @@ import { useCloseOnBack } from '@/lib/use-close-on-back'
 // [DATE-NL] A date the owner types, in the order they read it — see date-field-nl.ts.
 import DateFieldNL from '@/components/ui/DateFieldNL'
 import { statusChip, isInvoiceStatus } from '@/lib/invoice-status'
+// [AANBETALING] The percentage the owner types, judged once.
+import { parseDepositPercent } from '@/lib/aanbetaling'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 // [PAY-REDEN] One rule for what a refused pay-toggle says, shared with /vandaag and /manage.
@@ -195,9 +197,13 @@ export default function FacturenClient({
   // iemand anders dan de eigenaar aanmaakte, en alleen met namen van (oud-)teamleden — zie de
   // serverwrapper. Leeg bij geen team of een niet-toegepaste migratie: dan is er niets te tonen.
   makers = {},
+  // [BESTE] What is still to come in, counted by the server over EVERY sales invoice — this list is
+  // paged, so a sum over its rows would be the sum of the first page. Null when the read failed.
+  totals = null,
 }: {
   profile: { id: string }
   makers?: Record<string, string>
+  totals?: { open: number; outstanding: number; overdue: number; overdueAmount: number } | null
 }) {
   // [MOTION] The app-wide snackbar (components/ui/Toast), bound to the name the
   // call sites already used. The local one it replaces could not stack, was
@@ -967,6 +973,20 @@ export default function FacturenClient({
   // The owner taps once; decideRemoval says what that means for THIS invoice, the dialog shows
   // it in full, and only then does anything happen. Nothing here decides policy — that lives in
   // invoice-removal.ts and is re-checked by the server, which never trusts this decision.
+  // [BESTE] "Nog een keer": the duplicate door already existed (BOEK-003) and nothing called it.
+  // A new concept with this customer and these lines, opened for editing — the number falls at
+  // sending, through the owner's own series, so nothing is issued here.
+  async function handleDuplicate(id: string) {
+    try {
+      const res = await fetch(`/api/invoice/${id}/duplicate`, { method: 'POST' })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || !json?.invoiceId) { showToast(failureText(res.status, json, t('lijst.nogEenKeer.mislukt'))); return }
+      router.push(`/dashboard/invoice/${json.invoiceId}/edit`)
+    } catch {
+      showToast(t('lijst.nogEenKeer.mislukt'))
+    }
+  }
+
   function handleRemoveRequest(inv: RemovalInvoice & { id: string }) {
     setRemoveCtx({ id: inv.id, decision: decideRemoval(inv) })
   }
@@ -1306,6 +1326,24 @@ export default function FacturenClient({
             screen for the purchase side; the sales-side sentence it carried (payments in the
             bank that belong to no invoice) is now said nowhere, which is a known gap and the
             Bank page is where it belongs if it comes back. */}
+
+        {/* [BESTE] The two numbers every package puts above its sales list: what is still to come
+            in, and how much of it is late. Tapping the late one opens that filter. Hidden when
+            nothing is open — a row of zeros is noise — and when the server could not count. */}
+        {totals && totals.open + totals.overdue > 0 && (
+          <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+            <div style={{ flex: 1, background: M3.surface, borderRadius: R.md, border: `1px solid ${M3.outlineVariant}`, padding: '10px 14px' }}>
+              <div style={{ fontSize: 11.5, color: M3.neutral }}>{t('lijst.kop.openstaand')} · {totals.open + totals.overdue === 1 ? t('lijst.kop.een') : t('lijst.kop.aantal', { n: totals.open + totals.overdue })}</div>
+              <div style={{ fontFamily: FONT_NUM, fontSize: 17, fontWeight: 700, color: M3.onSurface }}>{fmtEur(totals.outstanding)}</div>
+            </div>
+            {totals.overdue > 0 && (
+              <button onClick={() => setFilter('overdue')} style={{ flex: 1, textAlign: 'start', cursor: 'pointer', fontFamily: FONT, background: M3.errorContainer, borderRadius: R.md, border: 'none', padding: '10px 14px' }}>
+                <div style={{ fontSize: 11.5, color: '#8C1D18' }}>{t('lijst.kop.teLaat')} · {totals.overdue === 1 ? t('lijst.kop.een') : t('lijst.kop.aantal', { n: totals.overdue })}</div>
+                <div style={{ fontFamily: FONT_NUM, fontSize: 17, fontWeight: 700, color: M3.error }}>{fmtEur(totals.overdueAmount)}</div>
+              </button>
+            )}
+          </div>
+        )}
 
         {/* [NO-SILENT-EMPTY] The credit read did not answer, and this list cannot say what it
             normally says. Every amount below may be too high and the withdrawn-invoice chips are
@@ -1808,6 +1846,36 @@ export default function FacturenClient({
                           {t('lijst.maak')}
                         </button>
                       )}
+                      {/* [AANBETALING] Part of the offerte now, the rest on the final invoice. The
+                          editor builds the deposit lines per btw rate; the offerte stays open. */}
+                      {isOfferte && inv.status === 'sent' && (
+                        <button
+                          onClick={async e => {
+                            e.stopPropagation()
+                            const raw = await dialog.prompt({ message: t('lijst.aanbetaling.vraag'), defaultValue: '30', placeholder: '30' })
+                            if (raw === null) return
+                            const pct = parseDepositPercent(raw)
+                            if (!pct) { showToast(t('lijst.aanbetaling.ongeldig')); return }
+                            const { data: full } = await supabase
+                              .from('invoices')
+                              .select('client_name, client_email, client_address, client_postal_code, client_city, client_btw_number')
+                              .eq('id', inv.id)
+                              .single()
+                            const src = (full ?? inv) as { client_name?: string | null; client_email?: string | null; client_address?: string | null; client_postal_code?: string | null; client_city?: string | null; client_btw_number?: string | null }
+                            router.push(
+                              `/dashboard/invoice/new?from_offerte=${inv.id}&aanbetaling=${pct}` +
+                              `&client_name=${encodeURIComponent(src.client_name ?? '')}` +
+                              `&client_email=${encodeURIComponent(src.client_email ?? '')}` +
+                              `&client_address=${encodeURIComponent(src.client_address ?? '')}` +
+                              `&client_postal_code=${encodeURIComponent(src.client_postal_code ?? '')}` +
+                              `&client_city=${encodeURIComponent(src.client_city ?? '')}` +
+                              `&client_btw_number=${encodeURIComponent(src.client_btw_number ?? '')}`
+                            )
+                          }}
+                          style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: `1px solid ${M3.outline}`, cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: '#fff', color: M3.onSurface }}>
+                          {t('lijst.aanbetaling')}
+                        </button>
+                      )}
                     </div>
 
                     {/* [INVOICE-REMOVE] Verwijderen — on the rows where it is a real option: a
@@ -1891,6 +1959,14 @@ export default function FacturenClient({
                             </button>
                           )
                         })()}
+                        {!isCredit && !isOfferte && inv.status !== 'draft' && (
+                          <button
+                            onClick={e => { e.stopPropagation(); void handleDuplicate(inv.id) }}
+                            style={{ fontSize: 13, color: M3.onPrimaryContainer, background: M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>content_copy</span>
+                            {t('lijst.nogEenKeer')}
+                          </button>
+                        )}
                         <button
                           onClick={e => { e.stopPropagation(); router.push(`/dashboard/invoice/${inv.id}`) }}
                           style={{ fontSize: 13, color: M3.onPrimary, background: M3.primary, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>

@@ -124,6 +124,11 @@ const KIND_BY_DOMAIN: Readonly<Record<string, LogboekKind | undefined>> = {
   kasboek: "money",
   supplier: "money",
   snelstart: "money",
+  // [WERK] The trade's own work: a werkorder, rit, klus or opdracht opened, moved, invoiced,
+  // removed. Filed under money: the row carries no amount, but what it records is the piece of
+  // work an invoice will be made of — the owner looking for "what happened to that job" looks
+  // where the invoice is.
+  work: "money",
   // Paper: what is filed, not what is owed. 'article' is the invoice-line catalogue — templates,
   // so no invoice or total moves when one is deleted; see [ARTIKELEN-WIPE] in audit.ts.
   document: "document",
@@ -213,7 +218,9 @@ const SENTENCE_KEYS: readonly MessageKey[] = [
   "log.supplier.updated",
   // Level 3 — Files
   "log.document.uploaded", "log.document.duplicate_blocked", "log.document.deleted",
-  "log.document.bulk_deleted", "log.document.restored", "log.article.bulk_deleted",
+  "log.document.bulk_deleted", "log.document.restored", "log.document.reminder_filed",
+  "log.work.created", "log.work.status_changed", "log.work.invoiced", "log.work.deleted", "log.work.visit_recorded",
+  "log.article.bulk_deleted",
   "log.folder.created", "log.folder.deleted", "log.folder.renamed",
   // Level 4 — Security / account
   "log.user.password_changed", "log.user.email_changed", "log.user.account_deletion_requested",

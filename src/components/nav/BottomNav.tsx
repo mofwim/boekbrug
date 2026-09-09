@@ -43,14 +43,14 @@ import { destinationsFor, activeHref } from '@/lib/nav-destinations'
 // the side of a desktop screen. Two bars reading two lists is how they drift apart, and then the
 // app quietly means different things depending on the width of the screen.
 
-export function BottomNav({ role, counter = false }: { role: Role | null; counter?: boolean }) {
+export function BottomNav({ role, counter = false, work = false }: { role: Role | null; counter?: boolean; work?: boolean }) {
   const pathname = usePathname()
   // Before the early return: a hook may not sit behind a condition.
   const taal = useLocale()
   if (!pathname) return null
 
   const t = translator(taal)
-  const items = destinationsFor(role, counter)
+  const items = destinationsFor(role, counter, work)
   const active = activeHref(pathname, items)
 
   return (

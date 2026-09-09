@@ -94,12 +94,13 @@ export async function applyLearnedBankCategories(args: {
   // to one of them is a cost the administration can prove — and this pass books only what is
   // proven. Best-effort, like every other read here: no set means no proof means nothing coded,
   // which is the behaviour before it existed.
-  const supplierKeys = new Set<string>();
+  // [LEVERANCIER-STANDAARD] Key → the category the owner set on that supplier, null when none.
+  const supplierKeys = new Map<string, string | null>();
   try {
-    const supRows = await fetchAllRows<{ name: string | null }>((from, to) =>
-      pipeline.from("suppliers").select("name").eq("user_id", userId)
+    const supRows = await fetchAllRows<{ name: string | null; default_category: string | null }>((from, to) =>
+      pipeline.from("suppliers").select("name, default_category").eq("user_id", userId)
         .order("id", { ascending: true }).range(from, to));
-    for (const r of supRows) { const k = counterpartKey(r.name); if (k) supplierKeys.add(k); }
+    for (const r of supRows) { const k = counterpartKey(r.name); if (k) supplierKeys.set(k, r.default_category ?? supplierKeys.get(k) ?? null); }
   } catch (e) {
     console.error("[LEVERANCIER-BEWIJS] supplier read failed — this pass codes no proven costs", e);
   }
@@ -108,7 +109,7 @@ export async function applyLearnedBankCategories(args: {
   for (const t of rows as { id: string; amount: number | null; counterpart_name: string | null; description: string | null; date: string | null }[]) {
     const key = counterpartKey(t.counterpart_name);
     const memoryCategory = key ? memMap.get(key) ?? null : null;
-    const s = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory, null, key ? supplierKeys.has(key) : false);
+    const s = suggestIdentity(t.counterpart_name, t.description, t.amount ?? 0, memoryCategory, null, key ? supplierKeys.has(key) : false, key ? supplierKeys.get(key) ?? null : null);
     if (!s.confident) continue; // ambiguous → leave for the human (never a guessed cost/omzet)
     // A category over money that is already booked is a double booking, not a coding. The human
     // links it instead.

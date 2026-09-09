@@ -31,6 +31,11 @@ import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import { localeDir } from '@/lib/i18n/locale'
 import { failureText } from '@/lib/server-message'
+// [LEVERANCIER-STANDAARD] The two defaults: the rate the app proposes on this supplier's invoices,
+// and the category a bank line to them is proposed under. Vocabulary from the bank's own list.
+import { SELECTABLE_CATEGORIES } from '@/lib/bank-categories'
+import { BANK_CATEGORY_KEY } from '@/lib/bank-category-text'
+import { LEGAL_DEFAULT_RATES } from '@/lib/supplier-pin'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 
@@ -42,6 +47,9 @@ export interface SupplierEditCard {
   kvk: string | null
   btw: string | null
   autoIncasso: boolean
+  /** [LEVERANCIER-STANDAARD] null = no fixed choice. */
+  defaultBtwRate: number | null
+  defaultCategory: string | null
 }
 
 export interface SupplierEditResult {
@@ -73,6 +81,9 @@ export default function SupplierEditSheet({
   const [kvk, setKvk] = useState(supplier.kvk ?? '')
   const [btw, setBtw] = useState(supplier.btw ?? '')
   const [incasso, setIncasso] = useState(supplier.autoIncasso)
+  // Held as strings: '' is "no fixed choice", which the server reads as clear.
+  const [rate, setRate] = useState(supplier.defaultBtwRate === null ? '' : String(supplier.defaultBtwRate))
+  const [category, setCategory] = useState(supplier.defaultCategory ?? '')
   const [saving, setSaving] = useState(false)
   // [NO-SILENT-EMPTY] The server says WHICH field was wrong; that field is coloured and the
   // sentence sits under the form. "Ongeldig" alone leaves the owner hunting.
@@ -90,7 +101,7 @@ export default function SupplierEditSheet({
       const res = await fetch(`/api/supplier/${encodeURIComponent(supplier.id)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, iban, kvk, btw }),
+        body: JSON.stringify({ name, iban, kvk, btw, defaultBtwRate: rate, defaultCategory: category }),
       })
       const json = (await res.json().catch(() => ({}))) as {
         field?: unknown; name?: unknown; ibanReplaced?: unknown; invoicesRenamed?: unknown
@@ -185,6 +196,40 @@ export default function SupplierEditSheet({
         )}
         {field('kvk', t('lev.kvk'), kvk, setKvk, t('lev.kvk.hint'), '12345678')}
         {field('btw', t('lev.btw'), btw, setBtw, t('lev.btw.hint'), 'NL000000000B00')}
+
+        {/* [LEVERANCIER-STANDAARD] Decided once, proposed every time — never booked by itself. */}
+        <label style={{ display: 'block', marginBottom: 12, textAlign: 'start' }}>
+          <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#3c4043', marginBottom: 5 }}>{t('lev.bewerk.tarief')}</span>
+          <select
+            value={rate}
+            onChange={(e) => setRate(e.target.value)}
+            style={{
+              width: '100%', boxSizing: 'border-box', padding: '11px 12px', fontSize: 15, borderRadius: 10,
+              border: `1px solid ${error?.field === 'rate' ? M3.error : '#d1d1d6'}`, background: '#fff',
+              color: '#202124', fontFamily: FONT,
+            }}
+          >
+            <option value="">{t('lev.bewerk.tarief.geen')}</option>
+            {LEGAL_DEFAULT_RATES.map((r) => <option key={r} value={String(r)}>{r}%</option>)}
+          </select>
+          <span style={{ display: 'block', fontSize: 11.5, color: '#5F6368', marginTop: 4, lineHeight: 1.45 }}>{t('lev.bewerk.tarief.hint')}</span>
+        </label>
+        <label style={{ display: 'block', marginBottom: 12, textAlign: 'start' }}>
+          <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#3c4043', marginBottom: 5 }}>{t('lev.bewerk.categorie')}</span>
+          <select
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            style={{
+              width: '100%', boxSizing: 'border-box', padding: '11px 12px', fontSize: 15, borderRadius: 10,
+              border: `1px solid ${error?.field === 'category' ? M3.error : '#d1d1d6'}`, background: '#fff',
+              color: '#202124', fontFamily: FONT,
+            }}
+          >
+            <option value="">{t('lev.bewerk.categorie.geen')}</option>
+            {SELECTABLE_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{t(BANK_CATEGORY_KEY[c.key])}</option>)}
+          </select>
+          <span style={{ display: 'block', fontSize: 11.5, color: '#5F6368', marginTop: 4, lineHeight: 1.45 }}>{t('lev.bewerk.categorie.hint')}</span>
+        </label>
 
         <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 14, textAlign: 'start', cursor: 'pointer' }}>
           <input type="checkbox" checked={incasso} onChange={(e) => setIncasso(e.target.checked)} style={{ marginTop: 3 }} />

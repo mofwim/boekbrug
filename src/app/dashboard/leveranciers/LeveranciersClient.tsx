@@ -32,6 +32,8 @@ import { failureText } from '@/lib/server-message'
 // decides (supplier-edit.ts) and keeps the old account number.
 import SupplierEditSheet, { type SupplierEditCard } from '@/components/supplier/SupplierEditSheet'
 import { dateShort } from '@/lib/i18n/format-date'
+import { BANK_CATEGORY_KEY } from '@/lib/bank-category-text'
+import type { BankCategory } from '@/lib/bank-categories'
 
 /** One supplier as the registry has it, plus what the screen needs to place and describe it. */
 export interface SupplierListCard extends SupplierEditCard {
@@ -264,9 +266,11 @@ export default function LeveranciersClient({
           display: 'flex', justifyContent: 'space-between', gap: 14, alignItems: 'baseline',
         }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 15.5, fontWeight: 600, color: M3.onSurface, wordBreak: 'break-word' }}>
+            {/* [BESTE] The name opens this supplier's invoices — the list used to end at the amount,
+                and the owner went to Crediteuren to type the name into the search box. */}
+            <Link href={`/dashboard/incoming/manage?zoek=${encodeURIComponent(l.name)}`} style={{ fontSize: 15.5, fontWeight: 600, color: M3.onSurface, wordBreak: 'break-word', textDecoration: 'none' }}>
               {l.name}
-            </div>
+            </Link>
             <div style={{ fontSize: 12.5, color: M3.neutral, marginTop: 2, lineHeight: 1.5 }}>
               {[l.aantal, l.vervallen, l.oudste].filter(Boolean).join(' · ')}
             </div>
@@ -360,6 +364,8 @@ export default function LeveranciersClient({
                 {[
                   s.invoiceCount === 1 ? t('leveranciers.eenFactuur') : t('leveranciers.aantalFacturen', { aantal: s.invoiceCount }),
                   s.autoIncasso ? t('leveranciers.lijst.incasso') : null,
+                  s.defaultBtwRate !== null ? t('leveranciers.lijst.tarief', { tarief: s.defaultBtwRate }) : null,
+                  s.defaultCategory && s.defaultCategory in BANK_CATEGORY_KEY ? t(BANK_CATEGORY_KEY[s.defaultCategory as BankCategory]) : null,
                   s.updatedOn ? t('lev.bewerk.laatstGewijzigd', { datum: dateShort(s.updatedOn, locale) }) : null,
                 ].filter(Boolean).join(' · ')}
               </div>

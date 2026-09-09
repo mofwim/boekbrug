@@ -36,6 +36,8 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { url: `${SITE_URL}/voor-winkel`, lastModified, changeFrequency: 'monthly', priority: 0.8 },
     { url: `${SITE_URL}/voor-bouw`, lastModified, changeFrequency: 'monthly', priority: 0.8 },
     { url: `${SITE_URL}/voor-schoonmaak`, lastModified, changeFrequency: 'monthly', priority: 0.8 },
+    { url: `${SITE_URL}/voor-garage`, lastModified, changeFrequency: 'monthly', priority: 0.8 },
+    { url: `${SITE_URL}/voor-transport`, lastModified, changeFrequency: 'monthly', priority: 0.8 },
     { url: `${SITE_URL}/en/prijzen`, lastModified, changeFrequency: 'monthly', priority: 0.5 },
     { url: `${SITE_URL}/ar/prijzen`, lastModified, changeFrequency: 'monthly', priority: 0.4 },
     { url: `${SITE_URL}/tr/prijzen`, lastModified, changeFrequency: 'monthly', priority: 0.4 },

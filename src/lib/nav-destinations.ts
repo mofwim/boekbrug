@@ -84,6 +84,20 @@ export const OWNER_COUNTER: Destination[] = [
   { href: "/dashboard/bestanden", label: "nav.files", icon: "folder_open" },
 ];
 
+// [WERK] The work trade's list. Same shape as the counter trade's: only the second destination
+// changes. A mechanic, a courier, a builder or a cleaner opens the app for the work of today — the
+// werkorders, ritten, klussen, opdrachten — and that is what the second tap is. Facturen stays one
+// tap away on the home tiles; the invoice is what the work BECOMES, not where the day starts.
+// A trade that is both (a garage takes money at the desk too) gets Werk here and the Kassa on the
+// home and the rail: the desk is where a job ends, the werkplaats is where it lives all day.
+export const OWNER_WERK: Destination[] = [
+  { href: "/dashboard", label: "nav.start", icon: "home", exact: true },
+  { href: "/dashboard/werk", label: "nav.werk", icon: "work" },
+  VANDAAG,
+  { href: "/dashboard/incoming", label: "nav.incoming", icon: "inbox", also: ["/dashboard/upload"] },
+  { href: "/dashboard/bestanden", label: "nav.files", icon: "folder_open" },
+];
+
 export const OWNER: Destination[] = [
   { href: "/dashboard", label: "nav.start", icon: "home", exact: true },
   { href: "/dashboard/facturen", label: "nav.invoices", icon: "receipt_long", also: ["/dashboard/invoice"] },
@@ -105,8 +119,9 @@ export const ACCOUNTANT: Destination[] = [
  * An accountant's list never varies by trade — the trade describes the OWNER, and the accountant
  * works across many of them. Same reasoning as the accountant module's own language rule.
  */
-export function destinationsFor(role: Role | null, counter = false): Destination[] {
+export function destinationsFor(role: Role | null, counter = false, work = false): Destination[] {
   if (role === "accountant") return ACCOUNTANT;
+  if (work) return OWNER_WERK;
   return counter ? OWNER_COUNTER : OWNER;
 }
 
@@ -167,7 +182,7 @@ export interface RailSection {
  * yet made rather than an oversight: their home carries a different set of tools, and which of
  * them deserve a permanent rail is their question, not this module's.
  */
-export function railSectionsFor(role: Role | null, counter = false): RailSection[] {
+export function railSectionsFor(role: Role | null, counter = false, work = false): RailSection[] {
   if (role === "accountant") return [{ heading: null, items: ACCOUNTANT }];
 
   const administratie: Destination[] = [
@@ -184,6 +199,8 @@ export function railSectionsFor(role: Role | null, counter = false): RailSection
   // [VAK-BRUG] The counter owner reaches the Kassa thirty times a day; it leads their phone bar for
   // that reason and belongs at the top of their rail for the same one.
   if (counter) administratie.unshift({ href: "/dashboard/kassa", label: "nav.kassa", icon: "storefront" });
+  // [WERK] And the work trade's day leads the rail as it leads the phone bar.
+  if (work) administratie.unshift({ href: "/dashboard/werk", label: "nav.werk", icon: "work" });
 
   return [
     // [KORTE-WEG] Start and Vandaag, above the first heading: where am I, and what do I have to do.
@@ -213,6 +230,6 @@ export function railSectionsFor(role: Role | null, counter = false): RailSection
 }
 
 /** Every destination the rail shows, flattened — for activeHref and for the tests. */
-export function railDestinations(role: Role | null, counter = false): Destination[] {
-  return railSectionsFor(role, counter).flatMap((s) => s.items);
+export function railDestinations(role: Role | null, counter = false, work = false): Destination[] {
+  return railSectionsFor(role, counter, work).flatMap((s) => s.items);
 }

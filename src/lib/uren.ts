@@ -346,6 +346,8 @@ export interface TimeEntryInput {
   description: string;
   hours: number;
   hourly_rate: number | null;
+  /** [WERK-3] The piece of work this hour was written on, when it was written from the work screen. */
+  work_item_id?: string | null;
 }
 
 /**
@@ -393,6 +395,9 @@ export function normalizeTimeEntryInput(
   }
 
   const clientId = typeof row.client_id === "string" && row.client_id.trim() ? row.client_id.trim() : null;
+  // An hour written on a piece of work carries its id; anything that is not a uuid is dropped
+  // rather than refused — the hour is still an hour, it just belongs to no work.
+  const workItemId = typeof row.work_item_id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.work_item_id) ? row.work_item_id : null;
 
-  return { ok: true, entry: { client_id: clientId, worked_on: worked, description, hours, hourly_rate: rate } };
+  return { ok: true, entry: { client_id: clientId, worked_on: worked, description, hours, hourly_rate: rate, ...(workItemId ? { work_item_id: workItemId } : {}) } };
 }

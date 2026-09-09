@@ -139,7 +139,7 @@ export default function JaarClient() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <h1 style={{ fontSize: 20, fontWeight: 700, color: '#202124', margin: 0 }}>{t('jaar.titel')}</h1>
         <div style={{ display: 'flex', gap: 6 }}>
-          {[now.getFullYear() - 1, now.getFullYear()].map((y) => (
+          {[now.getFullYear() - 2, now.getFullYear() - 1, now.getFullYear()].map((y) => (
             <button key={y} onClick={() => setYear(y)}
               style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #E0E0E0', background: y === year ? '#1A73E8' : '#fff', color: y === year ? '#fff' : '#202124', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
               {y}

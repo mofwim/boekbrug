@@ -2615,6 +2615,8 @@ export type Database = {
           auto_incasso: boolean
           auto_incasso_since: string | null
           incasso_suggested_at: string | null
+          default_btw_rate: number | null
+          default_category: string | null
         }
         Insert: {
           btw_number?: string | null
@@ -2629,6 +2631,8 @@ export type Database = {
           auto_incasso?: boolean
           auto_incasso_since?: string | null
           incasso_suggested_at?: string | null
+          default_btw_rate?: number | null
+          default_category?: string | null
         }
         Update: {
           btw_number?: string | null
@@ -2643,6 +2647,8 @@ export type Database = {
           auto_incasso?: boolean
           auto_incasso_since?: string | null
           incasso_suggested_at?: string | null
+          default_btw_rate?: number | null
+          default_category?: string | null
         }
         Relationships: [
           {

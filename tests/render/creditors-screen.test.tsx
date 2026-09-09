@@ -261,10 +261,10 @@ test("[TAAL] the merge panel carries its own direction and none of the Dutch", a
 // read that says "storing" rather than drawing an empty list, and the sheet itself.
 const CARDS = [
   { id: "s1", name: "CAN Vleesgroothandel B.V.", iban: "NL20ABNA0458266515", kvk: "63458357", btw: "NL852244872B01",
-    autoIncasso: false, invoiceCount: 3, balanceKey: "can vleesgroothandel", updatedOn: "2026-08-03" },
+    autoIncasso: false, defaultBtwRate: 9, defaultCategory: "kosten", invoiceCount: 3, balanceKey: "can vleesgroothandel", updatedOn: "2026-08-03" },
   // No IBAN, on incasso, never edited — the other branches of the description line.
   { id: "s2", name: "Verhuurder Jansen", iban: null, kvk: null, btw: null,
-    autoIncasso: true, invoiceCount: 1, balanceKey: "verhuurder jansen", updatedOn: null },
+    autoIncasso: true, defaultBtwRate: null, defaultCategory: null, invoiceCount: 1, balanceKey: "verhuurder jansen", updatedOn: null },
 ];
 
 test("[LEVERANCIER-BEWERKEN] the registry list draws every row with its identifiers and an edit button", async () => {
@@ -289,6 +289,9 @@ test("[LEVERANCIER-BEWERKEN] the registry list draws every row with its identifi
   assert.match(html, /geen rekeningnummer bekend/, "a row without an IBAN says so");
   assert.match(html, /automatische incasso/, "the mandate is visible");
   assert.match(html, /Laatst aangepast op 3 aug 2026/, "an edited row shows when, in the owner's date form");
+  // [LEVERANCIER-STANDAARD] The defaults the owner set are on the line, in words the picker uses.
+  assert.match(html, /9% btw/, "the fixed rate is on the line");
+  assert.match(html, /Zakelijke kost/, "the category is named as the categorise screen names it");
   // One button per registry row, plus one on the balance line that maps to a registry row.
   const buttons = html.match(/Gegevens aanpassen/g) ?? [];
   assert.equal(buttons.length, 3, `${buttons.length} edit buttons — expected 2 rows + 1 balance line`);
@@ -323,6 +326,12 @@ test("[LEVERANCIER-BEWERKEN] the sheet is pre-filled from the ROW and warns befo
   assert.match(html, /value="63458357"/);
   assert.match(html, /value="NL852244872B01"/);
   assert.match(html, /geldt voor de volgende facturen/, "it says the edit is forward-only");
+  // [LEVERANCIER-STANDAARD] The two defaults are pre-selected from the row, with a "none" option.
+  assert.match(html, /Vast btw-tarief/);
+  assert.match(html, /<option value="9" selected="">9%<\/option>|<option selected="" value="9">9%<\/option>/, "the stored rate is selected");
+  assert.match(html, /Geen vast tarief/, "…and clearing it is an option");
+  assert.match(html, /<option value="kosten" selected="">Zakelijke kost<\/option>|<option selected="" value="kosten">Zakelijke kost<\/option>/, "the stored category is selected");
+  assert.match(html, /Geen vaste categorie/);
   // With the stored number still in the field there is no fraud warning to show.
   assert.doesNotMatch(html, /Je vervangt het rekeningnummer/, "no warning while the number is unchanged");
 });

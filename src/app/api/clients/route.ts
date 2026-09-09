@@ -17,6 +17,11 @@ import { invoiceOwnerId, invoiceCreatedBy } from '@/lib/acting-for'
 // [ACTING-FOR] created_by bestaat pas ná de migratie — zonder deze terugval kan er op een
 // installatie met een openstaande migratie geen klant meer worden toegevoegd.
 import { writeWithTrail, isUnknownColumn } from '@/lib/created-by'
+// [BESTE] work_items may not exist on an installation behind on migrations — that is no reason to
+// refuse a delete, and every other error is.
+import { isMissingRelation } from '@/lib/pg-missing'
+// [BESTE] The agreed term is a whole number of days within the typo guard, or nothing.
+import { parsePaymentTerm } from '@/lib/payment-term'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,8 +40,21 @@ function velden(body: Record<string, unknown>) {
     address: tekst(body.address),
     postal_code: tekst(body.postal_code),
     city: tekst(body.city),
+    // [BESTE] Phone and the payment term agreed with this customer (clients_term_phone.sql).
+    phone: tekst(body.phone),
+    payment_term_days: parsePaymentTerm(body.payment_term_days),
   }
 }
+
+/** The two [BESTE] columns, dropped when an installation is behind on clients_term_phone.sql. */
+function withoutTermPhone<T extends { phone?: unknown; payment_term_days?: unknown }>(v: T) {
+  const rest = { ...v }
+  delete rest.phone
+  delete rest.payment_term_days
+  return rest
+}
+const TERM_PHONE_COLUMNS = ['phone', 'payment_term_days']
+const missesTermPhone = (error: unknown) => TERM_PHONE_COLUMNS.some((c) => isUnknownColumn(error, c))
 
 export async function POST(request: NextRequest) {
   try {
@@ -52,14 +70,27 @@ export async function POST(request: NextRequest) {
 
     // service_role: user_id en created_by worden door de SERVER gezet, niet door de browser.
     const pipeline = createPipelineClient()
-    const { data, error } = await writeWithTrail<{ id: string }>(
+    const insertRow = { ...v, name: v.name as string, user_id: invoiceOwnerId(acting) }
+    let { data, error } = await writeWithTrail<{ id: string }>(
       (spoor) => pipeline
         .from('clients')
-        .insert({ ...v, name: v.name as string, user_id: invoiceOwnerId(acting), ...spoor })
+        .insert({ ...insertRow, ...spoor } as never)
         .select('id')
         .single(),
       { created_by: invoiceCreatedBy(acting) },
     )
+    // [BESTE] Behind on clients_term_phone.sql: save the customer without the two new fields
+    // rather than refuse the customer.
+    if (error && missesTermPhone(error)) {
+      ;({ data, error } = await writeWithTrail<{ id: string }>(
+        (spoor) => pipeline
+          .from('clients')
+          .insert({ ...withoutTermPhone(insertRow), ...spoor } as never)
+          .select('id')
+          .single(),
+        { created_by: invoiceCreatedBy(acting) },
+      ))
+    }
 
     if (error || !data) {
       console.error('[ACTING-FOR] klant aanmaken mislukt', { error })
@@ -91,11 +122,17 @@ export async function PATCH(request: NextRequest) {
     // De rij MOET van dit bedrijf zijn — en, is de schrijver een medewerker, ook door hem
     // ingevoerd. Zonder deze twee filters zou een geraden id de klantgegevens van een ander
     // bedrijf laten herschrijven; service_role kent geen RLS die dat nog tegenhoudt.
-    let q = pipeline.from('clients').update(patch).eq('id', id).eq('user_id', invoiceOwnerId(acting))
-    if (acting.role !== 'eigenaar') {
-      q = q.eq('created_by', invoiceCreatedBy(acting))
+    const run = (row: object) => {
+      let q = pipeline.from('clients').update(row as never).eq('id', id).eq('user_id', invoiceOwnerId(acting))
+      if (acting.role !== 'eigenaar') {
+        q = q.eq('created_by', invoiceCreatedBy(acting))
+      }
+      return q
     }
-    const { error } = await q
+    let { error } = await run(patch)
+    // [BESTE] Same fallback as POST: an installation behind on clients_term_phone.sql keeps the
+    // rest of the card editable.
+    if (error && missesTermPhone(error)) ({ error } = await run(withoutTermPhone(patch)))
 
     // Filtert een medewerker op een kolom die nog niet bestaat, dan is dat GEEN reden om het
     // filter te laten vallen: zonder created_by is er geen leesgrens, en dan zou hij de klant van
@@ -113,6 +150,61 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[ACTING-FOR] /api/clients PATCH', e)
+    return NextResponse.json({ error: 'Server fout' }, { status: 500 })
+  }
+}
+
+// [BESTE] Verwijderen — alleen een klant waar niets op staat.
+//
+// De browser verwijderde de rij rechtstreeks. invoices.client_id heeft geen foreign key, dus de
+// facturen van die klant bleven staan met een verwijzing naar een rij die niet meer bestond: de
+// klantkaart vanuit zo'n factuur gaf een 404, en de betaalgedrag-meting had geen klant meer om
+// op te tellen. work_items.client_id heeft wél een sleutel (ON DELETE SET NULL) — dan verliest
+// een werkorder stil zijn klant. Elk pakket weigert dit; nu wij ook, met de reden erbij.
+export async function DELETE(request: NextRequest) {
+  try {
+    const acting = await getActingFor()
+    if (!acting) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    // Alleen de eigenaar: een medewerker mag klanten invoeren en bijwerken, niet laten verdwijnen.
+    if (acting.role !== 'eigenaar') {
+      return NextResponse.json({ error: 'Alleen de eigenaar kan een klant verwijderen' }, { status: 403 })
+    }
+    const id = request.nextUrl.searchParams.get('id') ?? ''
+    if (!id) return NextResponse.json({ error: 'Welke klant?' }, { status: 400 })
+    const ownerId = invoiceOwnerId(acting)
+    const pipeline = createPipelineClient()
+
+    const [{ count: invoiceCount, error: invErr }, { count: workCount, error: workErr }] = await Promise.all([
+      pipeline.from('invoices').select('id', { count: 'exact', head: true }).eq('sender_id', ownerId).eq('client_id', id),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (pipeline as any).from('work_items').select('id', { count: 'exact', head: true }).eq('user_id', ownerId).eq('client_id', id),
+    ])
+    // [NO-SILENT-EMPTY] Een telling die niet lukte is geen nul: dan weigeren we, niet verwijderen.
+    if (invErr || (workErr && !isMissingRelation(String(workErr.message ?? '')))) {
+      console.error('[BESTE] klant verwijderen: telling mislukt', { id, invErr, workErr })
+      return NextResponse.json({ error: 'Kon niet controleren of deze klant facturen heeft — probeer opnieuw' }, { status: 503 })
+    }
+    const invoices = invoiceCount ?? 0
+    const work = workErr ? 0 : (workCount ?? 0)
+    if (invoices > 0 || work > 0) {
+      const parts = [
+        invoices > 0 ? (invoices === 1 ? '1 factuur' : `${invoices} facturen`) : null,
+        work > 0 ? (work === 1 ? '1 werkorder' : `${work} werkorders`) : null,
+      ].filter(Boolean)
+      return NextResponse.json(
+        { error: `Deze klant heeft ${parts.join(' en ')} en kan daarom niet worden verwijderd` },
+        { status: 409 },
+      )
+    }
+
+    const { error } = await pipeline.from('clients').delete().eq('id', id).eq('user_id', ownerId)
+    if (error) {
+      console.error('[BESTE] klant verwijderen mislukt', { error })
+      return NextResponse.json({ error: 'Verwijderen mislukt — probeer opnieuw' }, { status: 500 })
+    }
+    return NextResponse.json({ ok: true })
+  } catch (e) {
+    console.error('[BESTE] /api/clients DELETE', e)
     return NextResponse.json({ error: 'Server fout' }, { status: 500 })
   }
 }

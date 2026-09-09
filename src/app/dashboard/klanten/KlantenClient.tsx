@@ -33,9 +33,29 @@ interface Client {
   kvk_number: string | null; btw_number: string | null; iban: string | null
   address: string | null; postal_code: string | null; city: string | null
   created_at: string
+  // [BESTE] Optional: absent on an installation behind on clients_term_phone.sql.
+  phone?: string | null
+  payment_term_days?: number | null
 }
 
-const EMPTY = { name: '', email: '', kvk_number: '', btw_number: '', iban: '', address: '', postal_code: '', city: '' }
+const eur = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' })
+const EMPTY = { name: '', email: '', kvk_number: '', btw_number: '', iban: '', address: '', postal_code: '', city: '', phone: '', payment_term_days: '' }
+
+/** The form as it starts for an existing customer: every null shown as an empty field. */
+function formFor(client: Client): typeof EMPTY {
+  return {
+    name:        client.name,
+    email:       client.email       ?? '',
+    kvk_number:  client.kvk_number  ?? '',
+    btw_number:  client.btw_number  ?? '',
+    iban:        client.iban        ?? '',
+    address:     client.address     ?? '',
+    postal_code: client.postal_code ?? '',
+    city:        client.city        ?? '',
+    phone:       client.phone       ?? '',
+    payment_term_days: client.payment_term_days == null ? '' : String(client.payment_term_days),
+  }
+}
 
 // Avatar color from name
 function avatarColor(name: string) {
@@ -43,7 +63,13 @@ function avatarColor(name: string) {
   return colors[name.charCodeAt(0) % colors.length]
 }
 
-export default function KlantenClient({ profile }: { profile: ProfileRow }) {
+export default function KlantenClient({ profile, openByClient = null }: {
+  profile: ProfileRow
+  // [BESTE] What each customer still owes, keyed by client id — counted by the server through
+  // summarise(), the app's one definition of openstaand. Null when that read failed: then no
+  // customer wears an amount, rather than every customer wearing a zero.
+  openByClient?: Record<string, number> | null
+}) {
   const t = translator(useLocale())
   const router   = useRouter()
   const supabase = createClient()
@@ -52,6 +78,9 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
   // expand and briefly highlight the matching client card.
   const searchParams = useSearchParams()
   const focusId = searchParams.get('focus')
+  // [BESTE] The customer card's own "Gegevens bewerken" lands here with ?bewerk={clientId}: the form
+  // opens pre-filled once the list is loaded, the same form the pencil on the row opens.
+  const bewerkId = searchParams.get('bewerk')
   const [highlightId, setHighlightId] = useState<string | null>(null)
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({})
   // [FOCUS-KOP] The sticky controls bar, measured live rather than assumed.
@@ -154,6 +183,7 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
       email: form.email || null, kvk_number: form.kvk_number || null,
       btw_number: form.btw_number || null, iban: form.iban || null,
       address: form.address || null, postal_code: form.postal_code || null, city: form.city || null,
+      phone: form.phone || null, payment_term_days: form.payment_term_days || null,
     }
     const res = await fetch('/api/clients', {
       method: editingId ? 'PATCH' : 'POST',
@@ -174,21 +204,28 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
 
   // [BOEK-029] Open form pre-filled with client data
   function handleEdit(client: Client) {
-    setForm({
-      name:        client.name,
-      email:       client.email       ?? '',
-      kvk_number:  client.kvk_number  ?? '',
-      btw_number:  client.btw_number  ?? '',
-      iban:        client.iban        ?? '',
-      address:     client.address     ?? '',
-      postal_code: client.postal_code ?? '',
-      city:        client.city        ?? '',
-    })
+    setForm(formFor(client))
     setEditingId(client.id)
     setShowForm(true)
     setError(null)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
+
+  // [BESTE] The deep link from the customer card. Same body as handleEdit, written out because a
+  // function declared in the component is not a stable effect dependency.
+  useEffect(() => {
+    if (!bewerkId || loading) return
+    const client = clients.find(c => c.id === bewerkId)
+    if (!client) return
+    // Same wrapper as the ?focus= effect above: one tick, not a synchronous setState in the body.
+    void (async () => {
+      setForm(formFor(client))
+      setEditingId(client.id)
+      setShowForm(true)
+      setError(null)
+    })()
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [bewerkId, loading, clients])
 
   async function handleDelete(id: string) {
     // [MOTION] Was window.confirm('Klant verwijderen?') — a browser box that
@@ -203,8 +240,16 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
     if (!ok) return
     // [NO-SILENT-EMPTY] Het resultaat werd weggegooid: een geweigerde of offline delete kreeg
     // tóch "Klant verwijderd" en de rij kwam bij het volgende bezoek onverklaard terug.
-    const { error: delErr } = await supabase.from('clients').delete().eq('id', id)
-    if (delErr) {
+    // [BESTE] Through the server door, which refuses when invoices stand on this customer — the
+    // browser delete used to leave those invoices pointing at a row that no longer existed.
+    try {
+      const res = await fetch(`/api/clients?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}))
+        showToast(failureText(res.status, json, t('kl.verwijderenMislukt')))
+        return
+      }
+    } catch {
       showToast(t('kl.verwijderenMislukt'))
       return
     }
@@ -226,6 +271,10 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
     { key: 'address',     label: t('nieuw.klant.adres'),    placeholder: 'Straatnaam 1' },
     { key: 'postal_code', label: t('nieuw.klant.postcode'), placeholder: '1234 AB' },
     { key: 'city',        label: t('nieuw.klant.stad'),     placeholder: 'Amsterdam' },
+    // [BESTE] Phone and the agreed payment term. The term pre-fills the due date on a new invoice
+    // for this customer; empty means the app default.
+    { key: 'phone',       label: t('kl.veld.telefoon'),     placeholder: '06 12345678' },
+    { key: 'payment_term_days', label: t('kl.veld.termijn'), placeholder: '30' },
   ] as const
 
   return (
@@ -348,6 +397,12 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
                       <p style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, marginBottom: 2 }}>{client.name}</p>
                       <p style={{ fontSize: 13, color: '#5F6368', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{client.email ?? t('kld.geenEmail')}</p>
                     </div>
+                    {/* [BESTE] What this customer still owes — only when there is something. */}
+                    {openByClient && (openByClient[client.id] ?? 0) > 0 && (
+                      <span style={{ fontSize: 12, fontWeight: 600, color: '#7C5800', background: '#FEF7E0', borderRadius: R.full, padding: '4px 10px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                        {t('kl.open', { amount: eur.format(openByClient[client.id]) })}
+                      </span>
+                    )}
                     <span className="material-symbols-outlined icon-dir" style={{ fontSize: 20, color: '#80868b', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} aria-hidden>chevron_right</span>
                   </div>
 
@@ -358,6 +413,8 @@ export default function KlantenClient({ profile }: { profile: ProfileRow }) {
                         {client.kvk_number  && <InfoLine label="KVK"  value={client.kvk_number} />}
                         {client.btw_number  && <InfoLine label="BTW"  value={client.btw_number} />}
                         {client.iban        && <InfoLine label="IBAN" value={client.iban} />}
+                        {client.phone       && <InfoLine label={t('kl.veld.telefoon')} value={client.phone} />}
+                        {client.payment_term_days != null && <InfoLine label={t('kld.termijn')} value={t('kl.termijnDagen', { days: client.payment_term_days })} />}
                         {client.address     && <InfoLine label={t('inst.adres')} value={[client.address, client.postal_code, client.city].filter(Boolean).join(', ')} />}
                       </div>
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>

@@ -392,6 +392,19 @@ export default function IntakeButton({
           documentId: data.document_id ?? null,
         })
         else showToast(data.message || t('int.toegevoegd'))
+      } else if (data.destination === 'reminder') {
+        // [HERINNERING-NOOIT] Een betalingsherinnering wordt bewaard en aan zijn factuur gekoppeld,
+        // nooit geboekt. De zin zegt wat er met de factuur is (betaald / open / niet in de boeken)
+        // en hoort dus in de blijvende modal, niet in een toast.
+        noteLanded(file.name, t('int.landed.herinnering'))
+        if (mayNavigate()) setDestModal({
+          fileName: file.name,
+          message: data.message || t('int.herinneringBewaard'),
+          folderName: data.folder_name ?? null,
+          folderId: data.folder_id ?? null,
+          documentId: data.document_id ?? null,
+        })
+        else showToast(data.message || t('int.herinneringBewaard'))
       } else if (data.destination === 'turnover') {
         // [INTAKE-DEST-OMZET] Een kassabestand is GEBOEKTE OMZET — /api/intake schrijft de dagen
         // meteen in daily_turnover en zegt in zijn eigen boodschap "Controleer in Dagomzet".
@@ -947,7 +960,7 @@ export interface IntakeResult {
   // met wat we van die leverancier hebben (welke factuur mis ik?).
   // 'turnover' = kassa-omzet, meteen geboekt in daily_turnover → te zien in Dagomzet.
   // 'ledger'   = grootboek/controle-check, nadrukkelijk GEEN geld → werkt door in de reconciliatie.
-  destination?: 'invoice' | 'receipt' | 'bank' | 'document' | 'statement' | 'turnover' | 'ledger'
+  destination?: 'invoice' | 'receipt' | 'bank' | 'document' | 'statement' | 'reminder' | 'turnover' | 'ledger'
   message?: string
   // [UNREAD-HONESTY] true wanneer het bestand wél is opgeslagen maar NIET gelezen kon worden. Dat is
   // iets anders dan "geen factuur herkend": er is niets van geboekt en er moet nog iets gebeuren.

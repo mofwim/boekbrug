@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 130 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 138 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 17 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -195,6 +195,8 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('client_extra_lines.sql', 'column', 'client_extra_line2', 'invoices', 'public'),
   ('client_extra_lines.sql', 'column', 'client_extra_line3', 'invoices', 'public'),
   ('client_extra_lines.sql', 'column', 'client_extra_line4', 'invoices', 'public'),
+  ('clients_term_phone.sql', 'column', 'payment_term_days', 'clients', 'public'),
+  ('clients_term_phone.sql', 'column', 'phone', 'clients', 'public'),
   ('company_members_sales_role.sql', 'column', 'created_by', 'invoices', 'public'),
   ('company_members_sales_role.sql', 'column', 'created_by', 'clients', 'public'),
   ('company_members_sales_role.sql', 'function', 'acting_for_owner', null, 'public'),
@@ -318,6 +320,9 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('invoice_tax_kind.sql', 'column', 'tax_kind', 'invoices', 'public'),
   ('invoice_tax_kind.sql', 'constraint', 'invoices_tax_kind_known', null, 'public'),
   ('invoice_untaxed_amount.sql', 'column', 'untaxed_amount', 'invoices', 'public'),
+  ('invoices_deposit.sql', 'column', 'deposit_on_offerte_id', 'invoices', 'public'),
+  ('invoices_deposit.sql', 'index', 'invoices_deposit_on_offerte_idx', null, 'public'),
+  ('invoices_first_viewed.sql', 'column', 'first_viewed_at', 'invoices', 'public'),
   ('kas_opening_balance.sql', 'column', 'kas_opening_balance', 'profiles', 'public'),
   ('kluis_subscriptions.sql', 'index', 'kluis_subscriptions_session_uidx', null, 'public'),
   ('kluis_subscriptions.sql', 'index', 'kluis_subscriptions_user_idx', null, 'public'),
@@ -412,6 +417,10 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('supplier_aliases.sql', 'policy', 'supplier_aliases_insert_own', 'supplier_aliases', 'public'),
   ('supplier_aliases.sql', 'policy', 'supplier_aliases_select_own', 'supplier_aliases', 'public'),
   ('supplier_aliases.sql', 'policy', 'supplier_aliases_update_own', 'supplier_aliases', 'public'),
+  ('supplier_defaults.sql', 'column', 'default_btw_rate', 'suppliers', 'public'),
+  ('supplier_defaults.sql', 'column', 'default_category', 'suppliers', 'public'),
+  ('supplier_defaults.sql', 'constraint', 'suppliers_default_btw_rate_legal', null, 'public'),
+  ('supplier_defaults.sql', 'constraint', 'suppliers_default_category_known', null, 'public'),
   ('supplier_edit.sql', 'index', 'supplier_iban_history_supplier_idx', null, 'public'),
   ('supplier_edit.sql', 'index', 'supplier_iban_history_user_iban_idx', null, 'public'),
   ('supplier_edit.sql', 'policy', 'supplier_iban_history_insert_own', 'supplier_iban_history', 'public'),
@@ -454,7 +463,17 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('vehicles.sql', 'policy', 'vehicles_update_own', 'vehicles', 'public'),
   ('vehicles.sql', 'table', 'vehicles', null, 'public'),
   ('verwerkt_freeze_level.sql', 'function_body', 'prevent_verwerkt_invoice_changes', '.accountant_status,.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
-  ('work_done_counts.sql', 'function', 'work_done_counts', null, 'public')
+  ('work_done_counts.sql', 'function', 'work_done_counts', null, 'public'),
+  ('work_items.sql', 'column', 'lines', 'work_items', 'public'),
+  ('work_items.sql', 'column', 'work_item_id', 'invoices', 'public'),
+  ('work_items.sql', 'column', 'work_item_id', 'time_entries', 'public'),
+  ('work_items.sql', 'column', 'work_item_id', 'documents', 'public'),
+  ('work_items.sql', 'index', 'idx_documents_work_item', null, 'public'),
+  ('work_items.sql', 'index', 'idx_invoices_work_item', null, 'public'),
+  ('work_items_periods.sql', 'column', 'billed_periods', 'work_items', 'public'),
+  ('work_items_repeat.sql', 'column', 'repeat_every', 'work_items', 'public'),
+  ('work_items_repeat.sql', 'column', 'visits', 'work_items', 'public'),
+  ('work_items_repeat_kwartaal.sql', 'constraint', 'work_items_repeat_every_check', null, 'public')
 ),
 bevonden as (
   select p.*,
@@ -571,7 +590,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 147
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 155
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen
