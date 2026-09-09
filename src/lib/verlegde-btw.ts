@@ -78,6 +78,13 @@ export interface VerlegdeVondst {
   voorgesteldTarief: number;
   /** What would land in 2a, and identically in 5b when fully deductible. */
   bedrag: number;
+  /**
+   * [VERLEGD-AFTREK] The share of `bedrag` this owner may deduct in 5b: 1 for an owner with a
+   * full right of deduction, 0 under the KOR (no right of deduction at all), and the attribution
+   * or pro-rata share under the exempt regime. Handed in by the caller, which is the only place
+   * that knows the owner's regime; never read from the document, which knows nothing about it.
+   */
+  aftrekDeel: number;
 }
 
 /**
@@ -94,6 +101,8 @@ export function verlegdeBtwOpInkoop(input: {
   btwAmount: number | null | undefined;
   /** The rate to use when the owner has already answered. Falls back to the trade's standard. */
   bevestigdTarief?: number | null;
+  /** The deductible share of the shifted BTW (0..1). Absent means a full right of deduction. */
+  aftrekDeel?: number | null;
 }): VerlegdeVondst | null {
   const tekst = input.text ?? "";
   if (!tekst) return null;
@@ -112,6 +121,10 @@ export function verlegdeBtwOpInkoop(input: {
     ? input.bevestigdTarief
     : VERLEGD_DEFAULT_RATE;
 
+  const deel = typeof input.aftrekDeel === "number" && Number.isFinite(input.aftrekDeel)
+    ? Math.min(1, Math.max(0, input.aftrekDeel))
+    : 1;
+
   return {
     marker: treffer,
     grondslag: ex,
@@ -119,6 +132,7 @@ export function verlegdeBtwOpInkoop(input: {
     // Rounded to the cent here so 2a and its matching 5b are the SAME number. Rounding them
     // separately downstream is how two figures that must cancel stop cancelling.
     bedrag: round2(Math.abs(ex) * (tarief / 100)) * Math.sign(ex || 1),
+    aftrekDeel: deel,
   };
 }
 
@@ -130,6 +144,12 @@ export interface VerlegdTotaal {
   btw: number;
   /** How many invoices it rests on, so a note can say so instead of stating a bare figure. */
   aantal: number;
+  /**
+   * [VERLEGD-AFTREK] What of `btw` this owner may deduct in 5b — the sum of every invoice's
+   * bedrag × aftrekDeel. Equal to `btw` for an owner with a full right of deduction, which is
+   * what makes 2a and 5b cancel; smaller under the KOR or the exempt regime, where they do not.
+   */
+  aftrekbaar: number;
 }
 
 /** Fold the found invoices into one 2a line. Returns null when there is nothing to declare. */
@@ -137,13 +157,16 @@ export function totaalVerlegd(vondsten: readonly VerlegdeVondst[]): VerlegdTotaa
   if (vondsten.length === 0) return null;
   let grondslag = 0;
   let btw = 0;
+  let aftrekbaar = 0;
   for (const v of vondsten) {
     grondslag += v.grondslag;
     btw += v.bedrag;
+    aftrekbaar += v.bedrag * v.aftrekDeel;
   }
   return {
     grondslag: round2(grondslag),
     btw: round2(btw),
     aantal: vondsten.length,
+    aftrekbaar: round2(aftrekbaar),
   };
 }

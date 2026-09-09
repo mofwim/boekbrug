@@ -32,7 +32,7 @@ import { fetchRateShares } from "@/lib/btw-rate-split-fetch";
 import { readExcludedBankIds } from "@/lib/bank-ignored-excluded";
 // [VRIJGESTELD] The exempt regime + cost attributions, from the one shared collector.
 import { collectVatExemption } from "@/lib/vat-exemption-collect";
-import { exemptShareOf } from "@/lib/vat-exemption";
+import { exemptShareOf, getVatDeduction } from "@/lib/vat-exemption";
 // [VERLEGD-NAAR-MIJ] Rubriek 2a — BTW die een leverancier naar deze eigenaar heeft verlegd.
 import { verlegdeBtwOpInkoop, totaalVerlegd } from "@/lib/verlegde-btw";
 // [SUPPLETIE-VERREKEND] Corrections from earlier filed quarters — see the block at the return.
@@ -439,24 +439,46 @@ export async function GET(req: NextRequest) {
   //    Het TARIEF staat niet op zo'n factuur — die draagt geen BTW — dus verlegde-btw.ts stelt het
   //    vaktarief voor (21% voor bouw en personeelsuitleen) en de notitie op de aangifte zegt
   //    erbij dat dat gecontroleerd hoort te worden. Verzinnen doet de app het niet; verzwijgen ook niet.
+  // [VERLEGD-AFTREK] The share of a verlegde purchase's BTW this owner may deduct in 5b — the
+  // rule financial-result applies to the ordinary voorbelasting (bookVoorbelasting + the pro
+  // rata), restated for the one figure that never passes through it because the invoice carries
+  // no BTW of its own. KOR: no right of deduction (art. 25 Wet OB). Exempt regime: the owner's
+  // attribution per invoice, and the rounded-up pro-rata percentage for what serves both; an
+  // undecidable ratio deducts nothing, exactly as deductibleVoorbelasting withholds it.
+  const aftrekDeelVan = (invoiceId: string | null | undefined): number => {
+    if (korActive) return 0;
+    if (!exemption.active) return 1;
+    switch (getVatDeduction(invoiceId ? exemption.deductionByInvoice.get(invoiceId) : null)) {
+      case "direct_taxed": return 1;
+      case "direct_exempt": return 0;
+      default: return typeof result.proRataPercent === "number" ? result.proRataPercent / 100 : 0;
+    }
+  };
   const verlegdeVondsten = invRaw
     .filter((i) => effDir(i) === "incoming" && ["received", "paid"].includes(String(i.status ?? "")))
     .map((i) => {
       const fc = i.field_confidence as Record<string, unknown> | null;
       const merk = fc && typeof fc === "object" ? (fc._btw_verlegd as { grondslag: number | null } | undefined) : undefined;
       if (!merk) return null;
+      // [VERLEGD-GRONDSLAG] The stored header first. The reader wrote `grondslag` once, at intake,
+      // and the amounts route never refreshes it — so after the owner corrected a misread
+      // EUR 19.000 to EUR 1.900 the return still declared EUR 19.000 on two lines. The header is
+      // the number the owner has since confirmed or corrected; the frozen one only stands in for a
+      // row whose header carries nothing.
+      const kop = Number(i.total_ex_btw);
       return verlegdeBtwOpInkoop({
         // De vlag IS het bewijs: hij is bij het inlezen gezet op de tekst van het document zelf.
         // Hier is die tekst er niet meer, dus de zin wordt niet opnieuw gezocht.
         text: "btw verlegd",
-        totalExBtw: merk.grondslag ?? (i.total_ex_btw as number | null),
+        totalExBtw: Number.isFinite(kop) && kop !== 0 ? kop : merk.grondslag,
         btwAmount: i.btw_amount as number | null,
+        aftrekDeel: aftrekDeelVan(i.id),
       });
     })
     .filter((v): v is NonNullable<typeof v> => v !== null);
 
   const aangifte = buildAangifte(
-    { ...result, intraEuOmzet: icp.totalExBtw, verlegdNaarMij: totaalVerlegd(verlegdeVondsten) },
+    { ...result, intraEuOmzet: icp.totalExBtw, verlegdNaarMij: totaalVerlegd(verlegdeVondsten), korActive },
     { ...completeness, euPurchaseNote: foreignPurchaseNote(euPurchases) },
     `Q${quarter} ${year}`, regimeNotes,
   );

@@ -96,3 +96,18 @@ test("[VERLEGD-NAAR-MIJ] een creditnota keert de kant om", () => {
   assert.equal(v.bedrag, -210);
   assert.equal(totaalVerlegd([v])!.btw, -210);
 });
+
+test("[VERLEGD-AFTREK] the deductible share is the caller's, and the total carries it", () => {
+  // The document knows nothing about the owner's regime; the share is handed in. Absent means a
+  // full right of deduction — every owner without a regime — so 2a and 5b still cancel there.
+  const vol = verlegdeBtwOpInkoop({ text: "BTW verlegd", totalExBtw: 1000, btwAmount: 0 })!;
+  assert.equal(vol.aftrekDeel, 1);
+  const deels = verlegdeBtwOpInkoop({ text: "BTW verlegd", totalExBtw: 1000, btwAmount: 0, aftrekDeel: 0.2 })!;
+  const niets = verlegdeBtwOpInkoop({ text: "BTW verlegd", totalExBtw: 500, btwAmount: 0, aftrekDeel: 0 })!;
+  const t = totaalVerlegd([vol, deels, niets])!;
+  assert.equal(t.btw, 525, "2a: 210 + 210 + 105");
+  assert.equal(t.aftrekbaar, 252, "5b: 210 + 42 + 0");
+  // A share is a fraction of the amount, never a multiplier: out of range is clamped.
+  assert.equal(verlegdeBtwOpInkoop({ text: "BTW verlegd", totalExBtw: 100, btwAmount: 0, aftrekDeel: 7 })!.aftrekDeel, 1);
+  assert.equal(verlegdeBtwOpInkoop({ text: "BTW verlegd", totalExBtw: 100, btwAmount: 0, aftrekDeel: -1 })!.aftrekDeel, 0);
+});

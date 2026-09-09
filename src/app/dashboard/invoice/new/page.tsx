@@ -34,7 +34,7 @@ import { matchArticles, foldText, type Article } from '@/lib/articles'
 import { COMMON_PAYMENT_TERMS, DEFAULT_PAYMENT_TERM, MAX_PAYMENT_TERM_DAYS, parsePaymentTerm, dueDateFromTerm, longPaymentTermNotice } from '@/lib/payment-term'
 import { applyDiscount, parseDiscount, discountLabel, lineNetEx } from '@/lib/invoice-discount'
 // [AANBETALING] A deposit on an offerte and its settlement on the final invoice — see aanbetaling.ts.
-import { depositLines, settlementLines, parseDepositPercent } from '@/lib/aanbetaling'
+import { depositLines, settlementLines, parseDepositPercent, discountLines } from '@/lib/aanbetaling'
 // [REGEL-AFRONDING] round2: de uitsplitsing hieronder rekent over dezelfde afgeronde
 // regelbedragen als het totaal, en als invoice_lines.line_total.
 import { round2 } from '@/lib/invoice-totals'
@@ -607,6 +607,8 @@ function NewInvoicePageContent() {
   const depositPct = offerteParam ? parseDepositPercent(aanbetalingParam) : null
   // [AANBETALING] The numbers of the deposits the final invoice settles — for the banner only.
   const [settledDeposits, setSettledDeposits] = useState<string[]>([])
+  // [AANBETALING-KORTING] The offerte's document discount travelled as credit lines (see the load).
+  const [discountAsLines, setDiscountAsLines] = useState(false)
 
   // [SUBNAV] Dynamic title (factuur / offerte / creditnota) + the offerte
   // "Omzetten naar factuur" action, pushed into the shared sub-page header.
@@ -724,6 +726,7 @@ function NewInvoicePageContent() {
           .select('discount_type, discount_value, invoice_number')
           .eq('id', offerteParam)
           .maybeSingle()
+        let discountTravelledAsLines = false
         if (depositPct) {
           // [AANBETALING] Not the offerte's lines: a share of them, per btw rate, after the
           // offerte's own discounts. No document discount on the deposit — it is already inside
@@ -749,9 +752,24 @@ function NewInvoicePageContent() {
           // [AANBETALING] Every ISSUED deposit on this offerte comes off as a credit line per rate.
           const deposits = await issuedDepositsOn(supabase, offerteParam)
           setSettledDeposits(deposits.numbers)
-          setLines([...fromOfferte, ...deposits.lines])
+          // [AANBETALING-KORTING] With a deposit to settle, the offerte's document discount comes
+          // along as credit lines instead of as the header discount. A header discount is a share
+          // of the NET subtotal, and the settlement lines sit inside that subtotal — so the deposit,
+          // already computed from the discounted amount, was discounted a second time: pct × deposit
+          // too much on the final invoice (EUR 47,39 on the offerte in aanbetaling.ts). Without a
+          // deposit nothing changes: the header discount travels as it did.
+          const korting = deposits.lines.length > 0
+            ? discountLines({
+                lines: offLines,
+                discount: parseDiscount(offHead?.discount_type, offHead?.discount_value),
+                invoiceNumber: offHead?.invoice_number ?? null,
+              }).map(l => ({ ...l, unit: null }))
+            : []
+          discountTravelledAsLines = korting.length > 0
+          setDiscountAsLines(discountTravelledAsLines)
+          setLines([...fromOfferte, ...korting, ...deposits.lines])
         }
-        if (!depositPct && (offHead?.discount_type === 'percent' || offHead?.discount_type === 'amount')) {
+        if (!depositPct && !discountTravelledAsLines && (offHead?.discount_type === 'percent' || offHead?.discount_type === 'amount')) {
           setDiscountType(offHead.discount_type)
           setDiscountValue(offHead.discount_value == null ? '' : String(offHead.discount_value))
         }
@@ -1647,7 +1665,7 @@ function NewInvoicePageContent() {
                     <><strong>{t('nieuw.banner.aanbetaling', { pct: depositPct })}</strong> — {t('nieuw.banner.aanbetalingUitleg')}</>
                   ) : (
                     <><strong>{t('nieuw.banner.vanOfferte')}</strong> — {t('nieuw.banner.vanOfferteUitleg')}
-                    {settledDeposits.length > 0 && <> · {t('nieuw.banner.aanbetalingVerrekend', { numbers: settledDeposits.join(', ') })}</>}</>
+                    {settledDeposits.length > 0 && <> · {t('nieuw.banner.aanbetalingVerrekend', { numbers: settledDeposits.join(', ') })}</>}{discountAsLines && <> · {t('nieuw.banner.kortingAlsRegel')}</>}</>
                   )}
                 </p>
               </div>

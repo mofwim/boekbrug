@@ -324,10 +324,16 @@ export function InvoicePDF({
   //
   // De verdeling over de tarieven komt uit dezelfde module als het scherm en de UBL-export, want
   // die drie moeten per definitie hetzelfde antwoord geven.
-  const korting = parseDiscount(
-    (invoice as { discount_type?: unknown }).discount_type,
-    (invoice as { discount_value?: unknown }).discount_value,
-  )
+  // [KORTING-EENMAAL] Only over REAL lines. The fallback row above IS the stored header total, and
+  // that total is already net of the discount — applying it again printed a EUR 1.089 invoice
+  // (900 ex, 10% korting) as EUR 980,10, with no warning and a payment QR that quietly vanished
+  // because its amount no longer matched the page. The UBL export makes the same choice.
+  const korting = groups.length > 0
+    ? parseDiscount(
+        (invoice as { discount_type?: unknown }).discount_type,
+        (invoice as { discount_value?: unknown }).discount_value,
+      )
+    : null
   const kortingUitkomst = applyDiscount(
     rateLines.map((g) => ({ line_total: g.ex, btw_rate: g.rate })),
     korting,

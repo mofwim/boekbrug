@@ -313,6 +313,8 @@ export const MESSAGES = {
   'nieuw.banner.aanbetaling': { nl: 'Aanbetaling {pct}% op de offerte', ar: 'دفعة مقدمة {pct}% على عرض السعر', en: 'Deposit of {pct}% on the quote' },
   'nieuw.banner.aanbetalingUitleg': { nl: 'De offerte blijft open. De eindfactuur verrekent dit bedrag vanzelf.', ar: 'يبقى عرض السعر مفتوحاً. الفاتورة النهائية تخصم هذا المبلغ تلقائياً.', en: 'The quote stays open. The final invoice settles this amount by itself.' },
   'nieuw.banner.aanbetalingVerrekend': { nl: 'Verrekend: {numbers}', ar: 'تم الخصم: {numbers}', en: 'Settled: {numbers}' },
+  // [AANBETALING-KORTING] The offerte's document discount is on the lines when a deposit is settled.
+  'nieuw.banner.kortingAlsRegel': { nl: 'De korting van de offerte staat als regel', ar: 'خصم عرض السعر مُدرج كبند', en: 'The quote’s discount is a line' },
   'nieuw.banner.vervangend': { nl: 'Vervangende factuur', ar: 'فاتورة بديلة', en: 'Replacement invoice' },
   'nieuw.banner.gevonden': { nl: 'We vonden de factuur die je eerder maakte', ar: 'وجدنا الفاتورة التي أنشأتها سابقاً', en: 'We found the invoice you made earlier' },
   'nieuw.banner.overnemen': { nl: 'Overnemen', ar: 'استيرادها', en: 'Use it' },
