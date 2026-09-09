@@ -358,7 +358,7 @@ export default function LeveranciersClient({
               </div>
               {/* Identifiers are Latin strings in every language, so the line keeps its own direction. */}
               <div dir="ltr" style={{ fontSize: 12.5, color: M3.neutral, marginTop: 2, lineHeight: 1.5, fontFamily: FONT_NUM, textAlign: 'start' }}>
-                {[s.iban ?? t('leveranciers.lijst.zonderIban'), s.kvk && `KVK ${s.kvk}`, s.btw].filter(Boolean).join(' · ')}
+                {[s.iban ?? t('leveranciers.lijst.zonderIban'), s.kvk && `KVK ${s.kvk}`, s.btw, s.country && s.country !== 'NL' ? s.country : null].filter(Boolean).join(' · ')}
               </div>
               <div style={{ fontSize: 12, color: M3.neutral, marginTop: 2, lineHeight: 1.5 }}>
                 {[

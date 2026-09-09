@@ -49,6 +49,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   let body: {
     name?: string | null; iban?: string | null; kvk?: string | null; btw?: string | null
     defaultBtwRate?: string | number | null; defaultCategory?: string | null
+    // [LEVERANCIER-LAND] ISO code; absent = not on the form, '' = cleared.
+    country?: string | null
   }
   try {
     body = await req.json()
@@ -67,7 +69,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (readErr) return NextResponse.json({ error: t('lev.fout.opzoeken'), code: 'lookup_failed', detail: readErr.message }, { status: 503 })
   if (!current) return NextResponse.json({ error: t('lev.fout.nietGevonden'), code: 'not_found' }, { status: 404 })
 
-  const plan = planSupplierEdit(current, body)
+  // [LEVERANCIER-LAND] The country in its OWN read: supplier_country.sql is newer than the generated
+  // types and than some installations, and a column the typed select above does not know would
+  // have failed the whole read. Unreadable = not recorded, which is the Netherlands — and a form
+  // that carries a country then writes it below, best effort, with the migration named in the log.
+  let currentCountry: string | null = null
+  {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: landRow } = await (supabase as any)
+      .from('suppliers')
+      .select('country')
+      .eq('id', current.id)
+      .eq('user_id', ownerId)
+      .maybeSingle()
+    currentCountry = (landRow as { country?: string | null } | null)?.country ?? null
+  }
+
+  const plan = planSupplierEdit({ ...current, country: currentCountry }, body)
   if (!plan.ok) {
     return NextResponse.json(
       { error: t(SUPPLIER_PIN_REFUSAL_KEY[plan.code]), field: plan.field, code: plan.code },
@@ -99,11 +117,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   // ── 2. The row itself, only what moved ──
-  const { error: upErr } = await supabase
-    .from('suppliers')
-    .update(plan.changes)
-    .eq('id', current.id)
-    .eq('user_id', ownerId)
+  //
+  // [LEVERANCIER-LAND] The country is written in its own step (2b): one unknown column in this
+  // update would refuse the whole edit on an installation behind on supplier_country.sql.
+  const { country: nieuwLand, ...typedChanges } = plan.changes
+  const { error: upErr } = Object.keys(typedChanges).length > 0
+    ? await supabase
+        .from('suppliers')
+        .update(typedChanges)
+        .eq('id', current.id)
+        .eq('user_id', ownerId)
+    : { error: null }
   if (upErr) {
     // A number another supplier of this owner already carries: say WHO, and point at the merge.
     const dup = duplicateField(upErr)
@@ -132,6 +156,26 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: t('lev.fout.bijwerken'), code: 'update_failed', detail: upErr.message }, { status: 500 })
   }
 
+  // ── 2b. The country, best effort on purpose ──
+  //
+  // An installation behind on the migration keeps the rest of the edit and loses the country; the
+  // log names the file to apply, and the answer says the country was not stored.
+  let countryStored = true
+  if ('country' in plan.changes) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: landErr } = await (supabase as any)
+      .from('suppliers')
+      .update({ country: nieuwLand ?? null })
+      .eq('id', current.id)
+      .eq('user_id', ownerId)
+    if (landErr) {
+      countryStored = false
+      console.warn('[LEVERANCIER-LAND] country not stored — pas supabase/migrations/supplier_country.sql toe', {
+        supplierId: current.id, error: (landErr as { message?: string }).message,
+      })
+    }
+  }
+
   // ── 3. The display name on the invoices linked to this supplier ──
   //
   // By supplier_id only, never by name-matching. client_name is the key half the screens group on;
@@ -151,7 +195,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     invoicesRenamed = (touched ?? []).length
   }
 
-  const trail = supplierEditTrail(current, plan.changes)
+  const trail = supplierEditTrail({ ...current, country: currentCountry }, plan.changes)
   await logAuditAction({
     userId: ownerId,
     action: 'supplier.updated',
@@ -168,5 +212,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     name: plan.changes.name ?? current.name,
     ibanReplaced: Boolean(plan.iban?.from),
     invoicesRenamed,
+    countryStored,
   })
 }

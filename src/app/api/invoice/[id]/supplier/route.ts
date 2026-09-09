@@ -121,10 +121,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       .eq('user_id', ownerId)
       .maybeSingle()
     const changes = supplierPinChanges(current ?? {}, plan.values)
-    if (Object.keys(changes).length > 0) {
+    // [LEVERANCIER-LAND] The country travels apart from the typed update: its column
+    // (supplier_country.sql) is newer than the generated types and than some installations. This
+    // four-field form never carries it, so today the split is a type-level one; the day it does,
+    // the write below is best effort and the log names the migration, like the edit route.
+    const { country: nieuwLand, ...typedChanges } = changes
+    if (Object.keys(typedChanges).length > 0) {
       const { error: upErr } = await supabase
         .from('suppliers')
-        .update(changes)
+        .update(typedChanges)
         .eq('id', supplierId)
         .eq('user_id', ownerId)
       // [NO-SILENT-EMPTY] A refused write is reported. The alias above already stands, so the
@@ -137,6 +142,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         )
       }
       pinned = true
+    }
+    if ('country' in changes) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: landErr } = await (supabase as any)
+        .from('suppliers')
+        .update({ country: nieuwLand ?? null })
+        .eq('id', supplierId)
+        .eq('user_id', ownerId)
+      if (landErr) {
+        console.warn('[LEVERANCIER-LAND] country not stored — pas supabase/migrations/supplier_country.sql toe', {
+          supplierId, error: (landErr as { message?: string }).message,
+        })
+      } else {
+        pinned = true
+      }
     }
     supplierName = changes.name ?? current?.name ?? plan.values.name
   }

@@ -26,7 +26,10 @@ import { badDebtNote, vatClawbackNote, BAD_DEBT_MIN_EUR } from "@/lib/bad-debt";
 import { collectCashCostOverlaps } from "@/lib/cash-cost-overlap-collect";
 import { doubleCostNote } from "@/lib/cash-cost-overlap";
 // [ICP] Rubriek 3b + the separate ICP-opgaaf, read from the customers' EU VAT numbers.
-import { buildIcp, icpNote, buildForeignPurchases, foreignPurchaseNote, type IcpInvoice } from "@/lib/icp";
+import { buildIcp, icpNote, type IcpInvoice } from "@/lib/icp";
+// [BUITENLANDSE-INKOOP] Rubriek 4a/4b — btw on purchases from suppliers abroad, shifted to this owner.
+import { foreignPurchaseVat, foreignPurchaseIds, foreignPurchaseNote } from "@/lib/foreign-purchase-vat";
+import { readSupplierCountries, SUPPLIER_COUNTRY_READ_FAILED_NOTE } from "@/lib/supplier-country";
 // [RUBRIEK-SPLIT] Omzet per BTW rate from the invoice's own lines — one helper, two surfaces.
 import { fetchRateShares } from "@/lib/btw-rate-split-fetch";
 import { readExcludedBankIds } from "@/lib/bank-ignored-excluded";
@@ -72,7 +75,7 @@ export async function GET(req: NextRequest) {
   // Invoices (both directions) in the quarter. [PAGINATION] paged past the 1000-row cap.
   const invRaw = await fetchAllRows((from, to) => pipeline
     .from("invoices")
-    .select("id, invoice_number, client_name, direction, status, invoice_type, total_ex_btw, btw_amount, client_btw_number, sender_id, receiver_id, field_confidence, tax_kind")
+    .select("id, invoice_number, client_name, direction, status, invoice_type, total_ex_btw, btw_amount, client_btw_number, supplier_id, sender_id, receiver_id, field_confidence, tax_kind")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start)
     .lte("invoice_date", end)
@@ -414,24 +417,6 @@ export async function GET(req: NextRequest) {
   const icNote = icpNote(icp);
   if (icNote) regimeNotes.push(icNote);
 
-  // [ICP] The purchase mirror (4a/4b). Not computed — see buildForeignPurchases for why — but
-  // NAMED, so the accountant does not have to page through the quarter to find which invoices
-  // carry verlegde BTW.
-  const euPurchases = buildForeignPurchases({
-    invoices: invRaw.map((i): IcpInvoice => ({
-      // [OFFERTE-GEEN-OMZET] Or an unaccepted quote becomes a line of the opgaaf, keyed on
-      // the customer's EU VAT number, for a supply that never happened.
-      invoiceType: (i.invoice_type as string | null) ?? null,
-      invoiceNumber: (i.invoice_number as string | null) ?? null,
-      clientName: (i.client_name as string | null) ?? null,
-      clientVatNumber: (i.client_btw_number as string | null) ?? null,
-      direction: effDir(i),
-      status: (i.status as string | null) ?? null,
-      totalExBtw: i.total_ex_btw as number | null,
-      btwAmount: i.btw_amount as number | null,
-    })),
-  });
-
   // ── [VERLEGD-NAAR-MIJ] Rubriek 2a — inkoop waarop de leverancier de BTW naar deze eigenaar
   //    heeft verlegd (art. 12 lid 5 Wet OB). Herkend bij het inlezen en vastgelegd in
   //    field_confidence._btw_verlegd; hier alleen opgeteld.
@@ -454,8 +439,31 @@ export async function GET(req: NextRequest) {
       default: return typeof result.proRataPercent === "number" ? result.proRataPercent / 100 : 0;
     }
   };
+  // ── [BUITENLANDSE-INKOOP] Rubriek 4a/4b — inkoop bij een leverancier buiten Nederland, waarop de
+  //    btw naar deze eigenaar is verlegd. The country is the owner's word on the supplier's card
+  //    (its own tolerant read — the column is newer than some installations) or, where nothing was
+  //    recorded, the prefix of the supplier's btw-nummer; the rate is proposed the way 2a proposes
+  //    it, and the deductible share is the owner's, per invoice, through the same aftrekDeelVan.
+  //    ONE DOCUMENT, ONE RUBRIEK: whatever a foreign invoice prints, it is 4a/4b and not 2a — the
+  //    ids placed here are kept out of the 2a set below.
+  const landen = await readSupplierCountries(pipeline, ownerId);
+  if (landen.failed) regimeNotes.push(SUPPLIER_COUNTRY_READ_FAILED_NOTE);
+  const buitenland = foreignPurchaseVat(invRaw.map((i) => ({
+    id: i.id,
+    direction: effDir(i),
+    status: (i.status as string | null) ?? null,
+    invoiceNumber: (i.invoice_number as string | null) ?? null,
+    supplierName: (i.client_name as string | null) ?? null,
+    totalExBtw: i.total_ex_btw as number | null,
+    btwAmount: i.btw_amount as number | null,
+    supplierCountry: i.supplier_id ? landen.byId.get(i.supplier_id) ?? null : null,
+    supplierVatNumber: (i.client_btw_number as string | null) ?? null,
+    aftrekDeel: aftrekDeelVan(i.id),
+  })));
+  const buitenlandIds = foreignPurchaseIds(buitenland);
+
   const verlegdeVondsten = invRaw
-    .filter((i) => effDir(i) === "incoming" && ["received", "paid"].includes(String(i.status ?? "")))
+    .filter((i) => effDir(i) === "incoming" && ["received", "paid"].includes(String(i.status ?? "")) && !(i.id && buitenlandIds.has(i.id)))
     .map((i) => {
       const fc = i.field_confidence as Record<string, unknown> | null;
       const merk = fc && typeof fc === "object" ? (fc._btw_verlegd as { grondslag: number | null } | undefined) : undefined;
@@ -478,8 +486,8 @@ export async function GET(req: NextRequest) {
     .filter((v): v is NonNullable<typeof v> => v !== null);
 
   const aangifte = buildAangifte(
-    { ...result, intraEuOmzet: icp.totalExBtw, verlegdNaarMij: totaalVerlegd(verlegdeVondsten), korActive },
-    { ...completeness, euPurchaseNote: foreignPurchaseNote(euPurchases) },
+    { ...result, intraEuOmzet: icp.totalExBtw, verlegdNaarMij: totaalVerlegd(verlegdeVondsten), korActive, verlegdBuitenEu: buitenland.nonEu, verlegdBinnenEu: buitenland.eu },
+    { ...completeness, euPurchaseNote: foreignPurchaseNote(buitenland) },
     `Q${quarter} ${year}`, regimeNotes,
   );
 
@@ -566,7 +574,7 @@ export async function GET(req: NextRequest) {
     // declaration, and presenting it as a rubriek would be the one thing that makes an owner
     // think it was filed with the rest.
     icp: { lines: icp.lines, totalExBtw: Math.round(icp.totalExBtw), problems: icp.problems },
-    euPurchases: { count: euPurchases.purchases.length, totalExBtw: Math.round(euPurchases.totalExBtw) },
+    euPurchases: { count: buitenland.items.length, totalExBtw: Math.round(buitenland.items.reduce((sum, x) => sum + x.grondslag, 0)) },
     // [SUPPLETIE-VERREKEND] Corrections from earlier FILED quarters that are €1.000 or less and have
     // not been declared anywhere yet. The Belastingdienst allows those to be processed in the next
     // regular aangifte, and this app has been saying so on two screens without ever producing the

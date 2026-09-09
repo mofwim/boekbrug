@@ -133,7 +133,7 @@ export interface ReadinessSignals {
   omzetZonderBtwNonCash?: number;
   quarterDays: number;                  // calendar days in the quarter
   hasUndecidableRate: boolean;          // a sale landed in rubriek 1c (mis-derived rate)
-  hasEuPurchase: boolean;               // an EU inkoop (rubriek 4b — accountant handles)
+  hasEuPurchase: boolean;               // an EU inkoop (rubriek 4b — computed in the concept at the proposed rate)
   // [KAS-NEGATIEF] The lowest point the cash drawer reached this quarter, when it went BELOW zero
   // (from lowestDrawerPoint). A negative kassaldo is physically impossible and the single biggest
   // red flag the Belastingdienst uses to reject a cash administration (it implies hidden omzet), so
@@ -704,7 +704,9 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
         ? "Omzet volledig ingedeeld per BTW-tarief."
         : `Aandacht: ${detailBits.join(", ")}.`;
       if (s.hasEuPurchase) {
-        notes.push("Er zijn EU-inkopen: BTW-verlegging (rubriek 4b) wordt niet automatisch berekend — je boekhouder verwerkt dit.");
+        // [BUITENLANDSE-INKOOP] The concept computes 4b now, at the proposed rate; the owner's job
+        // is to check the rate per invoice, not to have the rubriek placed.
+        notes.push("Er zijn EU-inkopen: de verlegde btw staat in het concept in rubriek 4b, tegen het voorgestelde tarief van 21% — controleer het tarief per factuur met je boekhouder.");
       }
     } else if (applicable) {
       // Activity but no revenue recorded at all — the whole sales side is missing.

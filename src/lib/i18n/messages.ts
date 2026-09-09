@@ -604,6 +604,10 @@ export const MESSAGES = {
   'lev.kvk': { nl: 'KVK-nummer', ar: 'رقم KVK', en: 'KVK number' },
   'lev.kvk.hint': { nl: '8 cijfers. Leeg laten mag.', ar: '٨ أرقام. يمكن تركه فارغاً.', en: '8 digits. May be left empty.' },
   'lev.btw': { nl: 'Btw-nummer', ar: 'رقم الضريبة', en: 'VAT number' },
+  // [LEVERANCIER-LAND] The supplier's country; outside NL their btw is shifted to the owner (4a/4b).
+  'lev.land': { nl: 'Land (code)', ar: 'الدولة (رمز)', en: 'Country (code)' },
+  'lev.land.hint': { nl: 'Twee letters (NL, DE, US). Buiten Nederland: de btw is naar jou verlegd, rubriek 4a of 4b.', ar: 'حرفان (NL, DE, US). خارج هولندا: الضريبة محوَّلة إليك، البند 4a أو 4b.', en: 'Two letters (NL, DE, US). Outside the Netherlands: the VAT shifts to you, box 4a or 4b.' },
+  'lev.fout.land': { nl: 'Land: gebruik de landcode van twee letters (NL, DE, US).', ar: 'الدولة: استخدم رمز الدولة من حرفين (NL, DE, US).', en: 'Country: use the two-letter country code (NL, DE, US).' },
   'lev.btw.hint': {
     nl: 'Staat verplicht op een factuur (art. 35a). Leeg laten mag.',
     ar: 'إلزامي على الفاتورة (المادة 35a). يمكن تركه فارغاً.',

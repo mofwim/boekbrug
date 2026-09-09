@@ -25070,17 +25070,17 @@ test("[TWEE-BOEKEN] a paid invoice the supplier still lists is a contradiction, 
 //
 // The BTW form has three boxes for turnover that carries no Dutch BTW and they are not
 // interchangeable: 1e is domestic 0% and verlegde omzet, 3a is export outside the EU, 3c is
-// installation and distance sales inside it. This concept can emit 1a, 1b, 1c, 1e and 3b — a grep
-// for a 3a or 3c row returns nothing — so an export to a customer in London lands in 1e.
+// installation and distance sales inside it. This concept can emit 1a, 1b, 1c, 1e, 2a, 3b, 4a and
+// 4b — a grep for a 3a or 3c row returns nothing — so an export to a customer in London lands in 1e.
 //
 // Every total is right. All three boxes carry EUR 0 of BTW, so 5a and 5g do not move by a cent,
 // and that is exactly what made it invisible: nothing reconciles, nothing warns, and the filed
 // return states domestic 0%-omzet where there was an export.
 //
-// The app cannot split it — there is no country for a customer anywhere in the schema, which is
-// the same absence that makes the e-factuur refuse to name a buyer's country rather than default
-// it to NL. So it says so, in the concept and on the page that sells the concept, and leaves the
-// number alone. A guess printed on a tax return would be the worse answer by a distance.
+// The app does not split it yet — the customer's country exists since [KLANT-LAND], the kind of
+// supply (goods leaving the EU, an installation, a distance sale) does not, and half an answer is
+// still a guess. So it says so, in the concept and on the page that sells the concept, and leaves
+// the number alone. A guess printed on a tax return would be the worse answer by a distance.
 test("[RUBRIEK-1E] the concept names what 1e holds, and the public page names the limit", () => {
   const pure = code("src/lib/aangifte.ts");
 
@@ -25090,20 +25090,22 @@ test("[RUBRIEK-1E] the concept names what 1e holds, and the public page names th
   // note asked for rather than a weakening. 2a is a rubriek the app now COMPUTES, from a marker on
   // the supplier's own invoice. 3a and 3c remain outside it for the reason below: they turn on
   // where the customer is, and this schema holds no country for a customer anywhere.
-  assert.match(pure, /code: "1a" \| "1b" \| "1c" \| "1e" \| "2a" \| "3b";/,
+  // [BUITENLANDSE-INKOOP] Tripped again when 4a/4b shipped — two more rubrieken the app COMPUTES,
+  // from the SUPPLIER's country. 3a and 3c still turn on the customer and the kind of supply.
+  assert.match(pure, /code: "1a" \| "1b" \| "1c" \| "1e" \| "2a" \| "3b" \| "4a" \| "4b";/,
     "the rubriek vocabulary changed. That is not automatically wrong — but it is never incidental, " +
       "so update this list deliberately and check the 3a/3c reasoning below still holds");
   assert.ok(!/code: "3a"/.test(pure) && !/code: "3c"/.test(pure),
-    "a 3a or 3c row now ships. Those depend on where the CUSTOMER is, and there is no country for " +
-      "a customer anywhere in this schema — so such a row can only be a guess printed on a tax return");
+    "a 3a or 3c row now ships. Those depend on where the CUSTOMER is AND what kind of supply it was, " +
+      "and the kind of supply is recorded nowhere — so such a row can only be a guess printed on a tax return");
 
   // The note fires on the AMOUNT, so a quarter with no 0%-turnover stays quiet. An aangifte that
   // lectures every owner about export is one whose notes stop being read.
   assert.match(pure, /const bedrag1e = rows\.find\(\(r\) => r\.code === "1e"\)\?\.omzet \?\? 0;/);
   assert.match(pure, /if \(bedrag1e !== 0\) \{/, "no 0%-turnover, no note");
   assert.match(pure, /3a \(uitvoer\)/, "…and it names the box the turnover may belong in");
-  assert.match(pure, /land van je klant nergens vast/,
-    "…and why the app cannot decide it, which is the honest half");
+  assert.match(pure, /Rubriek 3a en 3c rekent dit concept nog niet uit/,
+    "…and that the concept does not decide it, which is the honest half");
 
   // It is a NOTE, not a computation. Nothing about it may move a figure.
   assert.doesNotMatch(pure, /code: "3a"/, "no invented rubriek row");
@@ -25113,7 +25115,7 @@ test("[RUBRIEK-1E] the concept names what 1e holds, and the public page names th
   // and filing. Its own header: an office that finds a claim untrue does not complain, it stops
   // answering.
   const publiek = code("src/app/voor-boekhouders/page.tsx");
-  assert.match(publiek, /Welke rubrieken: 1a, 1b, 1c, 1e en 3b\./);
+  assert.match(publiek, /Welke rubrieken: 1a, 1b, 1c, 1e, 2a, 3b, 4a en 4b\./);
   assert.match(publiek, /Rubriek 3a \(uitvoer buiten de EU\) en 3c/);
 });
 
@@ -25931,7 +25933,8 @@ test("[LEVERANCIER-BEWERKEN] the edit route keeps the old IBAN first, renames by
 
   // 1. History BEFORE the update.
   const historyAt = deur.indexOf("from('supplier_iban_history').insert(");
-  const updateAt = deur.indexOf(".update(plan.changes)");
+  // [LEVERANCIER-LAND] The typed part of the changes; the country is written apart, after it.
+  const updateAt = deur.indexOf(".update(typedChanges)");
   assert.ok(historyAt > 0, "the old IBAN is written to supplier_iban_history");
   assert.ok(updateAt > historyAt, "…and BEFORE the supplier row is overwritten");
 
@@ -26828,7 +26831,7 @@ test("[VERLEGD-NAAR-MIJ] 2a is declared and deducted from ONE number", () => {
   // EUR 420 was allowed, while the note beside it said "per saldo betaal je er niets over".
   assert.match(a, /const verlegdAftrek = !verlegd \|\| input\.korActive\s*\?\s*0\s*:\s*euro\(typeof verlegd\.aftrekbaar === "number" \? verlegd\.aftrekbaar : verlegd\.btw\);/,
     "the deductible share of 2a is no longer derived from the owner's right of deduction");
-  assert.match(a, /const voorbelasting = euro\(input\.btwVoorbelasting\) \+ verlegdAftrek;/,
+  assert.match(a, /const voorbelasting = euro\(input\.btwVoorbelasting\) \+ verlegdAftrek \+ v4a\.aftrek \+ v4b\.aftrek;/,
     "5b stopped including the verlegde BTW's deductible share. Then 2a raises what is owed and " +
       "nothing deducts it — the owner pays BTW on a purchase they were entitled to deduct in the same return");
   assert.match(a, /Onder de KOR heb je geen recht op aftrek/,
@@ -28950,7 +28953,7 @@ test("[VERLEGD-AFTREK] the route and the package hand 2a the owner's right of de
     assert.match(src, /if \(!exemption\.active\) return 1;/, `${file}: no regime — a full right of deduction`);
     assert.match(src, /case "direct_exempt": return 0;/, `${file}: a purchase attributed to exempt work deducts nothing`);
     assert.match(src, /aftrekDeel: aftrekDeelVan\(i\.id\),/, `${file}: the share does not reach the vondst`);
-    assert.match(src, /verlegdNaarMij: totaalVerlegd\(verlegdeVondsten\), korActive \}/,
+    assert.match(src, /verlegdNaarMij: totaalVerlegd\(verlegdeVondsten\), korActive,/,
       `${file}: 2a or the KOR flag no longer reaches the engine — the accountant's ZIP and the owner's ` +
         "screen then disagree about 5a and 5b for the same quarter");
     // [VERLEGD-GRONDSLAG] The stored header first. The reader froze `grondslag` at intake and the
@@ -28963,6 +28966,95 @@ test("[VERLEGD-AFTREK] the route and the package hand 2a the owner's right of de
   // The package can only read the mark if it asks for the column.
   assert.match(code("src/lib/closing-package.ts"), /INVOICE_FIELDS =[\s\S]{0,700}receiver_id, field_confidence, discount_type/,
     "INVOICE_FIELDS dropped field_confidence — every verlegde purchase then silently leaves the ZIP's 2a");
+});
+
+// ── [BUITENLANDSE-INKOOP] Rubriek 4a/4b: bought abroad, declared here, deducted here ─────────
+//
+// A zzp'er's Adobe, AWS, UK-designer and OpenAI invoices carry no Dutch btw: the btw is shifted to
+// the buyer, owed in 4b (another member state) or 4a (outside the EU) and, with a right of
+// deduction, back in 5b. The app LISTED the EU ones it could see through the prefix of a btw-nummer
+// and computed nothing; a supplier without an EU prefix reached neither a rubriek nor a note. For
+// most owners the two lines cancel — the return was still wrong on both — and under the KOR or a
+// partial exemption the btw is genuinely owed and was not declared.
+//
+// The country is the owner's word on the supplier's card first, the prefix second, the Netherlands
+// where there is neither — so no existing row moves until someone records something. The rate is
+// proposed the way 2a proposes it, the deductible share is the owner's per invoice, and a foreign
+// invoice that DOES charge btw is listed to be checked, never shifted. One document, one rubriek:
+// an invoice placed in 4a/4b is kept out of 2a whatever it prints.
+test("[BUITENLANDSE-INKOOP] 4a and 4b are computed from the supplier's country, and every surface carries them", () => {
+  const pure = code("src/lib/foreign-purchase-vat.ts");
+  assert.match(pure, /if \(!country \|\| country === "NL"\) continue;/,
+    "a supplier placed nowhere, or in the Netherlands, must reach neither rubriek — most purchases are domestic");
+  assert.match(pure, /const recorded = normalizeCountry\(args\.supplierCountry\);\s*if \(recorded\) return recorded;/,
+    "the owner's recorded country no longer outranks the btw-nummer's prefix");
+  assert.match(pure, /if \(Math\.abs\(btwOnInvoice\) >= 0\.005\) \{/,
+    "a foreign invoice that charges btw is being shifted — that btw is the supplier's, and would be counted twice");
+  assert.match(pure, /round2\(Math\.abs\(ex\) \* \(tarief \/ 100\)\) \* Math\.sign\(ex\)/,
+    "the btw is no longer rounded per invoice with the sign of the document — a creditnota from abroad then adds instead of reduces");
+  assert.match(pure, /Math\.min\(1, Math\.max\(0, i\.aftrekDeel\)\)/, "the deductible share is no longer clamped to 0..1");
+  assert.match(pure, /isEuMemberState\(country\) \? "4b" : "4a"/, "the EU/non-EU split is no longer decided by the member-state list");
+
+  const a = code("src/lib/aangifte.ts");
+  assert.match(a, /rows\.push\(\{ code: "4a", label: RATE_LABEL\["4a"\], omzet: euro\(input\.verlegdBuitenEu\.grondslag\), btw: v4a\.btw \}\)/,
+    "the 4a row is no longer pushed");
+  assert.match(a, /rows\.push\(\{ code: "4b", label: RATE_LABEL\["4b"\], omzet: euro\(input\.verlegdBinnenEu\.grondslag\), btw: v4b\.btw \}\)/,
+    "the 4b row is no longer pushed");
+  assert.match(a, /const aftrek = input\.korActive \? 0 : euro\(typeof v\.aftrekbaar === "number" \? v\.aftrekbaar : v\.btw\);/,
+    "5b no longer takes the deductible share only, and nothing under the KOR (art. 25 Wet OB)");
+  assert.match(a, /const voorbelasting = euro\(input\.btwVoorbelasting\) \+ verlegdAftrek \+ v4a\.aftrek \+ v4b\.aftrek;/,
+    "5b stopped including the deductible share of 4a/4b — then the btw is owed and nothing deducts it");
+  assert.match(a, /rows\.sort\(\(a, b\) => RUBRIEK_ORDER\.indexOf\(a\.code\) - RUBRIEK_ORDER\.indexOf\(b\.code\)\);/,
+    "the rows no longer follow the order of the paper form");
+  assert.match(a, /completeness\.hasEuPurchase && input\.verlegdBinnenEu === undefined/,
+    "the bare 'not computed' sentence fires beside a computed 4b — the concept then contradicts itself");
+
+  // Both concepts, the same rule, the same rows — and the 2a set minus what went abroad.
+  for (const file of ["src/app/api/aangifte/route.ts", "src/lib/closing-package.ts"]) {
+    const src = code(file);
+    assert.match(src, /readSupplierCountries\(/, `${file}: the supplier's recorded country is not read`);
+    assert.match(src, /if \(landen\.failed\) regimeNotes\.push\(SUPPLIER_COUNTRY_READ_FAILED_NOTE\);/,
+      `${file}: a failed country read is silent — 4a/4b then quietly miss every supplier placed by hand`);
+    assert.match(src, /supplierCountry: i\.supplier_id \? landen\.byId\.get\(i\.supplier_id\) \?\? null : null,/,
+      `${file}: the recorded country does not reach the rule`);
+    assert.match(src, /supplierVatNumber: /, `${file}: the btw-nummer's prefix does not reach the rule`);
+    assert.match(src, /aftrekDeel: aftrekDeelVan\(i\.id\),\s*\}\)\)\);/, `${file}: the owner's deductible share does not reach 4a/4b`);
+    assert.match(src, /const buitenlandIds = foreignPurchaseIds\(buitenland\);/, `${file}: no set of what went to 4a/4b`);
+    assert.match(src, /buitenlandIds\.has\(i\.id\)/,
+      `${file}: an invoice placed in 4a/4b can still land in 2a as well — one document, two rubrieken`);
+    assert.match(src, /korActive, verlegdBuitenEu: buitenland\.nonEu, verlegdBinnenEu: buitenland\.eu \}/,
+      `${file}: 4a/4b no longer reach the engine`);
+    assert.match(src, /euPurchaseNote: foreignPurchaseNote\(buitenland\)/, `${file}: the invoices behind 4a/4b are no longer named`);
+  }
+  assert.match(code("src/app/api/aangifte/route.ts"), /client_btw_number, supplier_id, sender_id/,
+    "the route's select lost supplier_id — every recorded country is then invisible to the concept");
+  assert.match(code("src/lib/closing-package.ts"), /INVOICE_FIELDS =[\s\S]{0,700}client_btw_number, supplier_id, client_address/,
+    "INVOICE_FIELDS lost supplier_id — every recorded country is then invisible to the ZIP");
+  assert.match(code("src/lib/closing-package.ts"), /zip\.file\("inkopen-buitenland\.csv"/, "the per-invoice list left the ZIP");
+
+  // The listing that computed nothing is gone, and so is every sentence that said so.
+  assert.doesNotMatch(code("src/lib/icp.ts"), /buildForeignPurchases|berekent die verlegging NIET/,
+    "icp.ts still carries the listing that computed nothing");
+  assert.doesNotMatch(code("src/lib/readiness.ts"), /wordt niet automatisch berekend/, "readiness still tells the owner 4b is not computed");
+  assert.match(code("src/app/voor-boekhouders/page.tsx"), /1e, 2a, 3b, 4a en 4b/, "the public page still lists the old rubrieken");
+
+  // Where the country comes from: the supplier's card, in its own tolerant read and its own write.
+  const pin = code("src/lib/supplier-pin.ts");
+  assert.match(pin, /if \('country' in input\) \{/, "the country is no longer read only when the form carries it");
+  assert.match(pin, /return \{ ok: false, field: 'country', code: 'country_shape' \}/,
+    "a typed non-code is stored (as NULL, which reads as NL) instead of refused");
+  const deur = code("src/app/api/supplier/[id]/route.ts");
+  assert.match(deur, /planSupplierEdit\(\{ \.\.\.current, country: currentCountry \}, body\)/,
+    "the route plans against a current row without its country — every edit then rewrites it");
+  assert.match(deur, /const \{ country: nieuwLand, \.\.\.typedChanges \} = plan\.changes/,
+    "the country is written in the typed update — an installation behind on the migration then refuses the whole edit");
+  assert.match(deur, /supabase\/migrations\/supplier_country\.sql/, "…and a failed country write no longer names the migration");
+  const reader = code("src/lib/supplier-country.ts");
+  assert.match(reader, /if \(isUnknownColumn\(err, "country"\)\) return \{ byId, columnMissing: true, failed: false \};/,
+    "a missing column and a failed read are no longer kept apart — the concept then cannot say which it was");
+  const mig = code("supabase/migrations/supplier_country.sql");
+  assert.match(mig, /ALTER TABLE public\.suppliers\s+ADD COLUMN IF NOT EXISTS country text/);
+  assert.match(mig, /country ~ '\^\[A-Z\]\{2\}\$'/, "the column no longer refuses anything but a two-letter code");
 });
 
 // ── [KORTING-EENMAAL] A header-only document is not discounted a second time ──────────────────
