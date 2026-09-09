@@ -17,6 +17,8 @@ import {
   contractStat, contractGroups, periodOf, type WorkStatus,
 } from "@/lib/werk";
 import type { WorkRow } from "@/lib/werk-rows";
+// [WERK-STAND] The money position the screen opens on.
+import { loadWorkStand } from "@/lib/werk-stand";
 
 export const dynamic = "force-dynamic";
 
@@ -115,6 +117,13 @@ export async function GET(req: NextRequest) {
       .order("updated_at", { ascending: false }).limit(1).maybeSingle();
     if (error) return NextResponse.json({ error: "Kon het vorige werk niet lezen." }, { status: 500 });
     return NextResponse.json({ ok: true, lines: storedLines(data?.lines), title: data?.title ?? null });
+  }
+
+  // [WERK-STAND] "Wat laat jij liggen?" — the counts and the signals, the same as Vandaag's.
+  if (req.nextUrl.searchParams.get("stand") === "1") {
+    const stand = await loadWorkStand(supabase, user.id, skin, amsterdamToday());
+    if (!stand) return NextResponse.json({ error: "Kon de stand niet lezen." }, { status: 500 });
+    return NextResponse.json({ ok: true, ...stand });
   }
 
   // [CONTRACT] The overview: every repeating row of this skin with this period's hours and costs,

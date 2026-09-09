@@ -5,7 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
-import { WorkList, WorkCard, StatusChips, LinesEditor, MarginLine, AttachedList, VisitsPanel, DocumentsList, TogetherOffer, WorkForm, WorkSheet, HistoryList, HoursForm, ReadinessList, ContractsPanel, EMPTY_FORM, invoiceButtonState, type T } from "../../src/app/dashboard/werk/WerkPanels";
+import { WorkList, WorkCard, StatusChips, LinesEditor, MarginLine, AttachedList, VisitsPanel, DocumentsList, TogetherOffer, WorkForm, WorkSheet, HistoryList, HoursForm, ReadinessList, ContractsPanel, EMPTY_FORM, invoiceButtonState, StandPanel, type T } from "../../src/app/dashboard/werk/WerkPanels";
 import { VakCardView } from "../../src/components/settings/VakCard";
 import { werkZin, werkSignaalZin } from "../../src/app/dashboard/vandaag/VandaagClient";
 import { workSkin } from "../../src/lib/werk";
@@ -211,4 +211,36 @@ test("[CONTRACT] the portfolio groups a client's locations, names the attention,
   assert.equal(invoiceButtonState({ status: "bezig", invoice_id: null, repeat_every: "week", visits: [], fields: { maandbedrag: 1850 }, billed_periods: [] }, null, "2026-09-08"), "make");
   assert.equal(invoiceButtonState({ status: "bezig", invoice_id: null, repeat_every: "week", visits: [], fields: { maandbedrag: 1850 }, billed_periods: [{ period: "2026-09", invoice_id: "x" }] }, null, "2026-09-08"), "none");
   assert.equal(werkSignaalZin({ kind: "contract_ending", n: 2 }, t).text, "2 contracten lopen binnen 60 dagen af.");
+});
+
+test("[WERK-STAND] the Werk screen opens on the money: what is ready, what leaks, or one quiet line", () => {
+  const stand = {
+    counts: { open: 2, bezig: 1, wacht: 0, klaar: 3, klaarExBtw: 2840 },
+    signals: [
+      { kind: "meerwerk_open" as const, n: 2, amount: 280 },
+      { kind: "hours_without_rate" as const, n: 7 },
+      { kind: "costs_unlinked" as const, n: 1, amount: 95 },
+    ],
+  };
+  const html = renderToStaticMarkup(<StandPanel stand={stand} t={t} onTap={() => {}} />);
+  assert.ok(html.includes("Wat laat jij liggen?"), "the question is the heading");
+  assert.ok(html.includes("3 klaar voor de factuur · € 2.840,00"), "ready work with its amount, first");
+  assert.ok(html.includes("280,00") && html.includes("meerwerk"), "meerwerk not invoiced, with its amount");
+  assert.ok(html.includes("7 uur") && html.includes("zonder tarief"), "hours without a rate");
+  assert.ok(html.includes("bonnen") && html.includes("95,00"), "a known supplier's bon on no work");
+  const quiet = renderToStaticMarkup(<StandPanel stand={{ counts: { open: 0, bezig: 0, wacht: 0, klaar: 0, klaarExBtw: 0 }, signals: [] }} t={t} onTap={() => {}} />);
+  assert.ok(quiet.includes("Niets blijft liggen."), "nothing open and nothing leaking is one quiet line");
+  const failed = renderToStaticMarkup(<StandPanel stand="failed" t={t} onTap={() => {}} />);
+  assert.ok(failed.includes("kon niet worden gelezen"), "a failed read says so, never a zero");
+});
+
+test("[WERK-STAND] creating work asks for the money first; the rest waits behind 'Meer velden'", () => {
+  const garage = renderToStaticMarkup(<WorkForm skin={workSkin("automonteur")!} t={t} value={{ ...EMPTY_FORM }} onChange={() => {}} />);
+  const summary = garage.indexOf("<summary");
+  assert.ok(summary > 0 && garage.includes("Meer velden"), "there is a Meer velden disclosure");
+  const before = garage.slice(0, summary);
+  assert.ok(before.includes("Klant") && before.includes("Omschrijving") && before.includes("Kenteken") && before.includes("Begroot"), "customer, work, plate and the agreed amount come first");
+  assert.ok(!before.includes("Kilometerstand") && !before.includes("Monteur"), "the odometer and the mechanic wait behind the disclosure");
+  const editing = renderToStaticMarkup(<WorkForm skin={workSkin("automonteur")!} t={t} value={{ ...EMPTY_FORM }} onChange={() => {}} editing />);
+  assert.ok(!editing.includes("<summary"), "editing shows everything, nothing folded");
 });
