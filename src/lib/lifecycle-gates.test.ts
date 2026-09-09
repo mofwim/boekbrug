@@ -29063,3 +29063,58 @@ test("[VERLEGD-VERKOOP] the option, the refusal, the sentence, the e-invoice cat
   assert.match(code("src/lib/aanbetaling.ts"), /g\.treatment === "reverse_charge" \? "\(btw verlegd\)"/,
     "a deposit line on a verlegde offerte would charge btw the customer was told to account for");
 });
+
+// ── [KLANT-LAND] The customer's country exists, and a 0% invoice to an EU business is guarded ─────
+//
+// This schema held no country for a customer anywhere; the audit's first sales finding followed
+// from it — a EUR 10.000 sale to a German business could leave at 0% with no customer btw-id and
+// nothing refusing it (art. 138 BTW-richtlijn: without the buyer's number the 0% is refused and
+// the seller owes the 21%). The owner's instruction: build the field WITH the verleggingsregeling,
+// because the same field serves the guard and the ICP.
+test("[KLANT-LAND] the field on both customer screens, the snapshot on the invoice, the country on the PDF, the guard at the door", () => {
+  const mig = readFileSync("supabase/migrations/client_country.sql", "utf8");
+  assert.match(mig, /ADD COLUMN IF NOT EXISTS country text\s+CHECK \(country IS NULL OR country ~ '\^\[A-Z\]\{2\}\$'\)/,
+    "clients.country must be an ISO code or nothing — the constraint is what keeps 'Duitsland' out of a column the ICP reads");
+  assert.match(mig, /ADD COLUMN IF NOT EXISTS client_country text/, "the invoice needs its own snapshot of the country");
+
+  // One normalisation, and a typed country that is not a code is refused rather than dropped.
+  const api = code("src/app/api/clients/route.ts");
+  assert.match(api, /country: normalizeCountry\(body\.country\)/, "the API no longer normalises the country");
+  assert.match(api, /if \(landOngeldig\(body as Record<string, unknown>, v\)\) return NextResponse\.json\(\{ error: LAND_FOUT \}, \{ status: 400 \}\)/,
+    "a country that is not a code must be refused — saved as NULL it silently reads as the Netherlands");
+  assert.match(api, /const OPTIONAL_COLUMNS = \['phone', 'payment_term_days', 'country'\]/,
+    "an installation behind on client_country.sql must still save the customer without it");
+
+  // Both customer screens carry it; the create screen carries it to the invoice.
+  assert.match(code("src/app/dashboard/klanten/KlantenClient.tsx"), /\{ key: 'country',\s+label: t\('kl\.veld\.land'\),\s+placeholder: 'NL' \}/);
+  const nieuw = code("src/app/dashboard/invoice/new/page.tsx");
+  assert.match(nieuw, /setClientCountry\(c\.country \?\? ''\)/, "picking a customer must bring their country along");
+  assert.equal((nieuw.match(/client_country: normalizeCountry\(clientCountry\),/g) ?? []).length, 3,
+    "the three bodies that carry the customer's address must carry the country: draft, update, preview");
+  assert.match(nieuw, /const euNul = checkEuZeroRatedInvoice\(\{ clientCountry, clientBtwNumber: clientBtw, invoiceType, korActive: korActief, lines \}\)/,
+    "the create screen no longer asks for the btw-id before a 0% invoice to an EU business leaves");
+
+  // Written in their own step, so a missing column costs the country and never the customer or the invoice.
+  const draft = code("src/app/api/invoice/draft/route.ts");
+  assert.match(draft, /\.update\(\{ country: nieuwLand \} as never\)/, "the new customer's country is no longer written");
+  assert.match(draft, /\.update\(\{ client_country: klantLand \} as never\)/, "the invoice's snapshot of the country is no longer written");
+  assert.match(draft, /supabase\/migrations\/client_country\.sql toe/, "…and a failure must name the migration");
+
+  // The door refuses before the number, beside the KOR and verlegd checks.
+  const send = code("src/app/api/invoice/send/route.ts");
+  assert.match(send, /const euCheck = checkEuZeroRatedInvoice\(\{/, "the send route must run the check");
+  const checkAt = send.indexOf("const euCheck = checkEuZeroRatedInvoice(");
+  const numberAt = send.indexOf("generateInvoiceNumber(");
+  assert.ok(checkAt > 0 && numberAt > checkAt, "the EU check must run before a number is issued");
+  const mod = code("src/lib/client-country.ts");
+  assert.match(mod, /code: "eu_nul_zonder_btw_nummer"/);
+  assert.match(mod, /if \(!country \|\| !isOtherEuMemberState\(country\)\) return \{ ok: true \};/,
+    "an unknown or Dutch country must never be refused — every row before the column existed reads as the Netherlands");
+  assert.match(mod, /if \(lines\.every\(\(l\) => l\.vat_treatment === "exempt"\)\) return \{ ok: true \};/,
+    "an exempt supply needs no buyer number — the exemption is not a zero rate");
+
+  // The document names the country of a foreign customer (art. 35a lid 1 sub c), never 'Nederland'.
+  const pdf = code("src/lib/invoice-pdf.tsx");
+  assert.match(pdf, /const clientCountry = clientCountryCode && clientCountryCode !== 'NL' \? countryNameNl\(clientCountryCode\) : ''/);
+  assert.match(pdf, /\{clientCountry !== '' && <Text style=\{styles\.partyText\}>\{clientCountry\}<\/Text>\}/);
+});

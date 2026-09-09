@@ -30,6 +30,7 @@ import { formatDateNL, formatEuroNL, deriveBtwRate } from './format-nl'
 import { reverseChargeNotice } from './icp'
 import { domesticReverseChargeNotice } from './reverse-charge-invoice'
 import { storedVatTreatment, type StoredVatTreatment } from './line-vat-treatment'
+import { countryNameNl, normalizeCountry } from './client-country'
 // [CREDITNOTA-REF] Art. 219: a corrective document must name the invoice it corrects.
 import { creditnotaReferenceLine } from './creditnota'
 // [UNIT] Nette schrijfwijze van de eenheid; laat onbekende tekst ongemoeid.
@@ -324,6 +325,11 @@ export function InvoicePDF({
   // [FACTUUR-A] Normalize BTW-id casing on a legal document.
   const senderBtw = profile.btw_number ? String(profile.btw_number).toUpperCase() : '—'
   const clientBtw = invoice.client_btw_number ? String(invoice.client_btw_number).toUpperCase() : ''
+  // [KLANT-LAND] Art. 35a lid 1 sub c: the customer's address — for a foreign customer that includes
+  // the country, printed as its Dutch name under the city. A Dutch or unrecorded country prints
+  // nothing, which is exactly the block every invoice rendered before the column existed.
+  const clientCountryCode = normalizeCountry(invoice.client_country)
+  const clientCountry = clientCountryCode && clientCountryCode !== 'NL' ? countryNameNl(clientCountryCode) : ''
 
   const groups = btwBreakdown(lines ?? [])
   // Fallback for legacy invoices without lines: one derived rate from totals.
@@ -487,6 +493,7 @@ export function InvoicePDF({
             <Text style={styles.partyText}>
               {invoice.client_postal_code || ''} {invoice.client_city || ''}
             </Text>
+            {clientCountry !== '' && <Text style={styles.partyText}>{clientCountry}</Text>}
             {clientBtw !== '' && <Text style={styles.partyText}>BTW nr.: {clientBtw}</Text>}
             {invoice.client_email ? (
               <Text style={styles.partyText}>{invoice.client_email}</Text>

@@ -22,6 +22,8 @@ import { writeWithTrail, isUnknownColumn } from '@/lib/created-by'
 import { isMissingRelation } from '@/lib/pg-missing'
 // [BESTE] The agreed term is a whole number of days within the typo guard, or nothing.
 import { parsePaymentTerm } from '@/lib/payment-term'
+// [KLANT-LAND] ISO country code, two letters or nothing (client_country.sql).
+import { normalizeCountry } from '@/lib/client-country'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,18 +45,33 @@ function velden(body: Record<string, unknown>) {
     // [BESTE] Phone and the payment term agreed with this customer (clients_term_phone.sql).
     phone: tekst(body.phone),
     payment_term_days: parsePaymentTerm(body.payment_term_days),
+    // [KLANT-LAND] The country as a code; anything that is not one is refused by landOngeldig below,
+    // never stored as a guess.
+    country: normalizeCountry(body.country),
   }
 }
 
-/** The two [BESTE] columns, dropped when an installation is behind on clients_term_phone.sql. */
-function withoutTermPhone<T extends { phone?: unknown; payment_term_days?: unknown }>(v: T) {
+/** Typed a country that is not a two-letter code: say so, do not save a customer without it. */
+function landOngeldig(body: Record<string, unknown>, v: { country: string | null }): boolean {
+  return typeof body.country === 'string' && body.country.trim() !== '' && v.country === null
+}
+// Dutch: this sentence goes to the screen.
+const LAND_FOUT = 'Land: gebruik de landcode van twee letters (NL, DE, BE)'
+
+/**
+ * The columns that only exist after a migration — [BESTE] clients_term_phone.sql and [KLANT-LAND]
+ * client_country.sql — dropped together when an installation is behind on either, so the rest of
+ * the customer is still saved.
+ */
+function withoutOptional<T extends { phone?: unknown; payment_term_days?: unknown; country?: unknown }>(v: T) {
   const rest = { ...v }
   delete rest.phone
   delete rest.payment_term_days
+  delete rest.country
   return rest
 }
-const TERM_PHONE_COLUMNS = ['phone', 'payment_term_days']
-const missesTermPhone = (error: unknown) => TERM_PHONE_COLUMNS.some((c) => isUnknownColumn(error, c))
+const OPTIONAL_COLUMNS = ['phone', 'payment_term_days', 'country']
+const missesOptional = (error: unknown) => OPTIONAL_COLUMNS.some((c) => isUnknownColumn(error, c))
 
 export async function POST(request: NextRequest) {
   try {
@@ -67,6 +84,7 @@ export async function POST(request: NextRequest) {
     }
     const v = velden(body as Record<string, unknown>)
     if (!v.name) return NextResponse.json({ error: 'Een klant heeft een naam nodig' }, { status: 400 })
+    if (landOngeldig(body as Record<string, unknown>, v)) return NextResponse.json({ error: LAND_FOUT }, { status: 400 })
 
     // service_role: user_id en created_by worden door de SERVER gezet, niet door de browser.
     const pipeline = createPipelineClient()
@@ -79,13 +97,13 @@ export async function POST(request: NextRequest) {
         .single(),
       { created_by: invoiceCreatedBy(acting) },
     )
-    // [BESTE] Behind on clients_term_phone.sql: save the customer without the two new fields
-    // rather than refuse the customer.
-    if (error && missesTermPhone(error)) {
+    // [BESTE] [KLANT-LAND] Behind on clients_term_phone.sql or client_country.sql: save the customer
+    // without the optional fields rather than refuse the customer.
+    if (error && missesOptional(error)) {
       ;({ data, error } = await writeWithTrail<{ id: string }>(
         (spoor) => pipeline
           .from('clients')
-          .insert({ ...withoutTermPhone(insertRow), ...spoor } as never)
+          .insert({ ...withoutOptional(insertRow), ...spoor } as never)
           .select('id')
           .single(),
         { created_by: invoiceCreatedBy(acting) },
@@ -114,6 +132,7 @@ export async function PATCH(request: NextRequest) {
 
     const v = velden(body as Record<string, unknown>)
     if (!v.name) return NextResponse.json({ error: 'Een klant heeft een naam nodig' }, { status: 400 })
+    if (landOngeldig(body as Record<string, unknown>, v)) return NextResponse.json({ error: LAND_FOUT }, { status: 400 })
     // clients.name is NOT NULL; de guard hierboven bewijst dat al, TypeScript ziet het niet.
     const patch = { ...v, name: v.name }
 
@@ -132,7 +151,7 @@ export async function PATCH(request: NextRequest) {
     let { error } = await run(patch)
     // [BESTE] Same fallback as POST: an installation behind on clients_term_phone.sql keeps the
     // rest of the card editable.
-    if (error && missesTermPhone(error)) ({ error } = await run(withoutTermPhone(patch)))
+    if (error && missesOptional(error)) ({ error } = await run(withoutOptional(patch)))
 
     // Filtert een medewerker op een kolom die nog niet bestaat, dan is dat GEEN reden om het
     // filter te laten vallen: zonder created_by is er geen leesgrens, en dan zou hij de klant van

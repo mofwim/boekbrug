@@ -51,6 +51,7 @@ import { statusLabel } from '@/lib/invoice-status'
 import type { MessageKey } from '@/lib/i18n/messages'
 import { KOR_RATE_HINT } from '@/lib/kor-invoice'
 import { hasReverseChargeLine, storedVatTreatment } from '@/lib/line-vat-treatment'
+import { checkEuZeroRatedInvoice, countryNameNl, normalizeCountry } from '@/lib/client-country'
 import { M3, columnInner, COLUMN, sheetPaddingBottom } from '@/lib/design/tokens'
 // [PRIJS-MODUS] Typen met of zonder btw — één pure omrekening, gedeeld met het bewerkscherm.
 // Wat er wordt OPGESLAGEN blijft ex-btw; dit is een invoerstand, geen opslagformaat.
@@ -139,6 +140,8 @@ type Client = {
   kvk_number: string
   // [BESTE] The payment term agreed with this customer (clients_term_phone.sql); absent = default.
   payment_term_days?: number | null
+  // [KLANT-LAND] ISO code (client_country.sql); absent = not recorded, read as the Netherlands.
+  country?: string | null
 }
 
 // [VRIJGESTELD] Sentinel for the BTW-tarief dropdown. "Vrijgesteld" is not a rate, but a
@@ -454,6 +457,7 @@ function NewInvoicePageContent() {
   const aiClientPostal  = searchParams.get('client_postal_code') ?? ''
   const aiClientCity    = searchParams.get('client_city') ?? ''
   const aiClientBtw     = searchParams.get('client_btw_number') ?? ''
+  const aiClientCountry = searchParams.get('client_country') ?? ''
   const aiDescription   = searchParams.get('description') ?? ''
   const aiAmount        = parseFloat(searchParams.get('amount') ?? '0') || 0
   const aiBtwRate       = parseFloat(searchParams.get('btw_rate') ?? '21') || 21
@@ -528,6 +532,8 @@ function NewInvoicePageContent() {
   const [clientPostal, setClientPostal]   = useState(aiClientPostal)
   const [clientCity, setClientCity]       = useState(aiClientCity)
   const [clientBtw, setClientBtw]         = useState(aiClientBtw)
+  // [KLANT-LAND] The customer's country code; empty reads as the Netherlands everywhere.
+  const [clientCountry, setClientCountry] = useState(aiClientCountry)
   // [KLANT-EXTRA] Twee vrije regels direct onder de klantnaam op het document — "t.a.v. …", een
   // afdeling of het inkoopordernummer dat de klant op de factuur wil zien staan. Per document,
   // niet per klant: een inkoopordernummer verschilt per factuur.
@@ -831,6 +837,7 @@ function NewInvoicePageContent() {
     setClientPostal(c.postal_code ?? '')
     setClientCity(c.city ?? '')
     setClientBtw(c.btw_number ?? '')
+    setClientCountry(c.country ?? '')
     setClientSearch(c.name)
     setShowDropdown(false)
     applyClientTerm(c)
@@ -1131,6 +1138,7 @@ function NewInvoicePageContent() {
         client_postal_code: clientPostal,
         client_city: clientCity,
         client_btw_number: clientBtw,
+        client_country: normalizeCountry(clientCountry),
         client_extra_line1: clientExtra1,
         client_extra_line2: clientExtra2,
         client_extra_line3: clientExtra3,
@@ -1273,6 +1281,14 @@ function NewInvoicePageContent() {
       setError(t('nieuw.fout.verlegdZonderBtw'))
       return
     }
+    // [KLANT-LAND] A 0% factuur to a business in another member state needs the customer's btw-id
+    // (art. 138 BTW-richtlijn) — the send door refuses it; asked here first, where the field is one
+    // tap away. Both ways out are in the sentence: the number, or Dutch btw for a consumer.
+    const euNul = checkEuZeroRatedInvoice({ clientCountry, clientBtwNumber: clientBtw, invoiceType, korActive: korActief, lines })
+    if (!euNul.ok) {
+      setError(t('nieuw.fout.euZonderBtw', { land: countryNameNl(euNul.country) }))
+      return
+    }
 
     // [MIN-REGEL] A negative aantal is a CREDIT line — a return settled on this invoice instead of
     // on a separate creditnota, exactly as a wholesaler writes it. Zero is still a mistake, and the
@@ -1360,6 +1376,7 @@ function NewInvoicePageContent() {
         client_postal_code: clientPostal,
         client_city: clientCity,
         client_btw_number: clientBtw,
+        client_country: normalizeCountry(clientCountry),
         client_extra_line1: clientExtra1,
         client_extra_line2: clientExtra2,
         client_extra_line3: clientExtra3,
@@ -1774,6 +1791,11 @@ function NewInvoicePageContent() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                 <OutlinedInput value={clientPostal} onChange={e => setClientPostal(e.target.value)} placeholder="1234 AB" label={t('nieuw.klant.postcode')} focusColor={cfg.focusColor} />
                 <OutlinedInput value={clientCity} onChange={e => setClientCity(e.target.value)} placeholder="Amsterdam" label={t('nieuw.klant.stad')} focusColor={cfg.focusColor} />
+              </div>
+              {/* [KLANT-LAND] Two letters; empty reads as the Netherlands. It decides the 0%-guard at the
+                  send door and the country line under the city on a foreign customer's invoice. */}
+              <div style={{ marginTop: 8, maxWidth: 200 }}>
+                <OutlinedInput value={clientCountry} onChange={e => setClientCountry(e.target.value.toUpperCase())} placeholder="NL" label={t('nieuw.klant.land')} focusColor={cfg.focusColor} />
               </div>
               <div>
                 <OutlinedInput value={clientBtw} onChange={e => setClientBtw(e.target.value)} placeholder="NL123456789B01" label={t('nieuw.klant.btw')} focusColor={cfg.focusColor} hasError={(!!clientBtw.trim() && looksLikeDutchBtw(clientBtw) && !isValidDutchBtw(clientBtw)) || euVatSuspect} />
@@ -2328,6 +2350,7 @@ function NewInvoicePageContent() {
                         client_postal_code: clientPostal,
                         client_city: clientCity,
                         client_btw_number: clientBtw,
+                        client_country: normalizeCountry(clientCountry),
                         // [KLANT-EXTRA] De twee vrije klantregels horen er ook op. Zonder deze
                         // vier velden toont het voorbeeld een ander adresblok dan de factuur die
                         // straks verstuurd wordt — en een voorbeeld dat afwijkt van het document
