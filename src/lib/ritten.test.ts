@@ -15,6 +15,10 @@ import {
   mileageYear,
   normalizeMileageInput,
   MAX_KM_PER_TRIP,
+  MAX_TRIPS_PER_INVOICE,
+  groupBillableTrips,
+  linesFromTrips,
+  parseMileageIds,
   type MileageEntry,
 } from "./ritten";
 
@@ -172,4 +176,75 @@ test("[RITTEN] the two column questions are answered by the columns", () => {
   assert.equal(isBusiness({ business: null }), true);
   assert.equal(isUninvoiced({ invoice_id: null }), true);
   assert.equal(isUninvoiced({ invoice_id: "inv-1" }), false);
+});
+
+// ── Onto an invoice, once ─────────────────────────────────────────────────────────────────────
+
+test("[RITTEN] only trips that can be invoiced are offered, grouped per customer", () => {
+  const groups = groupBillableTrips([
+    trip({ id: "a", rate_per_km: 0.23 }),
+    trip({ id: "b", rate_per_km: 0.23, kilometers: 10, driven_on: "2026-01-02" }),
+    trip({ id: "c", rate_per_km: 0.23, client_id: "c2", kilometers: 100 }),
+    trip({ id: "d", rate_per_km: 0.23, invoice_id: "inv-1" }),   // already billed
+    trip({ id: "e", rate_per_km: null }),                        // no rate: nobody owes anything
+    trip({ id: "f", rate_per_km: 0.23, business: false }),       // private
+    trip({ id: "g", rate_per_km: 0.23, client_id: null }),       // no customer to bill
+  ]);
+  assert.deepEqual(groups.map((g) => g.clientId), ["c2", "c1"], "largest first");
+  const own = groups.find((g) => g.clientId === "c1");
+  assert.equal(own?.trips.length, 2);
+  assert.equal(own?.kilometers, 50);
+  assert.equal(own?.value, 11.5, "40 × 0,23 + 10 × 0,23");
+  assert.equal(own?.trips[0].id, "b", "oldest first, the way a statement reads");
+});
+
+test("[RITTEN] the invoice lines are the trips, oldest first, in kilometres", () => {
+  const built = linesFromTrips([
+    trip({ id: "b", rate_per_km: 0.23, kilometers: 10, driven_on: "2026-01-02", purpose: "Intake" }),
+    trip({ id: "a", rate_per_km: 0.23 }),
+  ]);
+  assert.deepEqual(built.billedIds, ["b", "a"]);
+  assert.equal(built.lines[0].unit, "km", "so the e-factuur carries KMT and not 'piece'");
+  assert.equal(built.lines[0].quantity, 10);
+  assert.equal(built.lines[0].unit_price, 0.23);
+  assert.equal(built.lines[0].btw_rate, 21);
+  assert.match(built.lines[0].description, /02-01 · kantoor – Zwolle · Intake/);
+});
+
+test("[RITTEN] a btw rate that is not a rate falls back to 21, never to zero", () => {
+  // Number(null) is 0, and 0% on an invoice reads as vrijgesteld — it takes real turnover out of
+  // the aangifte. The same trap the hours had.
+  for (const bad of [null, undefined, "", " ", [], false, 7]) {
+    assert.equal(linesFromTrips([trip({ rate_per_km: 0.23 })], bad).lines[0].btw_rate, 21,
+      `btw rate ${JSON.stringify(bad)} must not become 0%`);
+  }
+  assert.equal(linesFromTrips([trip({ rate_per_km: 0.23 })], 9).lines[0].btw_rate, 9, "a real rate is used");
+});
+
+test("[RITTEN] a billed or private trip never reaches a line, and is named", () => {
+  const built = linesFromTrips([
+    trip({ id: "billed", rate_per_km: 0.23, invoice_id: "inv-1" }),
+    trip({ id: "prive", rate_per_km: 0.23, business: false }),
+    trip({ id: "geenTarief", rate_per_km: null }),
+  ]);
+  assert.equal(built.lines.length, 0);
+  assert.deepEqual(built.billedIds, []);
+  assert.equal(built.skippedPrivate.length, 1);
+  assert.equal(built.skippedWithoutRate.length, 1);
+});
+
+test("[RITTEN] the ids that may be asked for are uuids, deduplicated and bounded", () => {
+  const id = "11111111-2222-3333-4444-555555555555";
+  const ok = parseMileageIds([id, id.toUpperCase()]);
+  assert.equal(ok.ok, true);
+  if (ok.ok) assert.deepEqual(ok.ids, [id], "the same trip twice is one trip");
+  assert.deepEqual(parseMileageIds("x"), { ok: false, code: "not_a_list" });
+  assert.deepEqual(parseMileageIds([]), { ok: false, code: "empty" });
+  assert.deepEqual(parseMileageIds(["nope"]), { ok: false, code: "not_an_id" });
+  // The ceiling counts DISTINCT trips: the same id repeated collapses to one, so a list that is
+  // long only because it repeats itself is not refused.
+  const many = Array.from({ length: MAX_TRIPS_PER_INVOICE + 1 }, (_, i) =>
+    `11111111-2222-3333-4444-${String(i).padStart(12, "0")}`);
+  assert.deepEqual(parseMileageIds(many), { ok: false, code: "too_many" });
+  assert.equal(parseMileageIds(Array.from({ length: 300 }, () => id)).ok, true);
 });

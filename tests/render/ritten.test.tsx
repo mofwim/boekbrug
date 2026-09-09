@@ -65,6 +65,20 @@ test("[RITTEN] the year states the business kilometres and what they are worth",
   assert.match(html, /Bij 1 rit staat geen tarief/);
   assert.match(html, /Staat op een factuur/);
   assert.match(html, /Privé/);
+  // The trip that CAN be billed is offered as one, and only that one: € 9,20, not € 25,30.
+  assert.match(html, /Klaar om te factureren/);
+  assert.match(html, /Maak factuur/);
+});
+
+test("[RITTEN] nothing is offered for travel nobody owes", async () => {
+  const html = await render([
+    trip({ rate_per_km: null }),                       // no rate agreed
+    trip({ id: "r2", client_id: null }),               // no customer to bill
+    trip({ id: "r3", business: false }),               // private
+    trip({ id: "r4", invoice_id: "inv-1" }),           // already billed
+  ]);
+  assert.doesNotMatch(html, /Maak factuur/,
+    "a button that can only produce an empty invoice is worse than no button");
 });
 
 test("[RITTEN] an empty log says so, and claims no deduction", async () => {

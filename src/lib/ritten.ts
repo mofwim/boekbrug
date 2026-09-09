@@ -23,7 +23,7 @@
 //
 // Pure. Run: npx tsx --test src/lib/ritten.test.ts
 
-import { round2 } from "./invoice-totals";
+import { round2, isValidBtwRate } from "./invoice-totals";
 
 export interface MileageEntry {
   id?: string;
@@ -229,4 +229,149 @@ export function normalizeMileageInput(
       business: row.business !== false,
     },
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// [RITTEN-EENMALIG] From the log onto an invoice — once, and only once.
+//
+// The same two checks the hours have, for the same reason: a trip that reaches an invoice must
+// leave the billable pool in the SAME request, or it goes out again next month and the customer
+// is the one who notices. Pure on purpose — a safety property that can only be exercised by
+// calling a route is a safety property nobody tests.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * How many trips may go on one invoice.
+ *
+ * 200 is validateDraftLines' own ceiling on lines, and one trip becomes one line. A larger number
+ * here would be refused downstream with a message about lines, on a screen talking about trips.
+ */
+export const MAX_TRIPS_PER_INVOICE = 200;
+
+export type MileageIdsRefusal = "not_a_list" | "not_an_id" | "empty" | "too_many";
+
+export function parseMileageIds(
+  raw: unknown,
+): { ok: true; ids: string[] } | { ok: false; code: MileageIdsRefusal } {
+  if (!Array.isArray(raw)) return { ok: false, code: "not_a_list" };
+  const seen = new Set<string>();
+  for (const v of raw) {
+    if (typeof v !== "string") return { ok: false, code: "not_an_id" };
+    const id = v.trim();
+    // The shape the database uses. A non-uuid would come back as a Postgres error inside the
+    // stamping step, where the only honest thing left is to undo an invoice that already exists.
+    if (!UUID.test(id)) return { ok: false, code: "not_an_id" };
+    seen.add(id.toLowerCase());
+  }
+  if (seen.size === 0) return { ok: false, code: "empty" };
+  if (seen.size > MAX_TRIPS_PER_INVOICE) return { ok: false, code: "too_many" };
+  return { ok: true, ids: [...seen] };
+}
+
+/** What the customer reads on the line: the day, the route, and what it was for. */
+export function tripLineDescription(
+  entry: Pick<MileageEntry, "driven_on" | "from_place" | "to_place" | "purpose">,
+): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(entry.driven_on ?? ""));
+  const route = [entry.from_place, entry.to_place].map((p) => String(p ?? "").trim()).filter(Boolean).join(" – ");
+  const purpose = String(entry.purpose ?? "").trim();
+  const tail = [route, purpose].filter(Boolean).join(" · ");
+  if (!m) return tail;
+  return `${m[3]}-${m[2]} · ${tail}`;
+}
+
+/** The unit a kilometre line carries, so the e-factuur exports KMT instead of C62 ("piece"). */
+export const KM_UNIT = "km";
+
+/** The rate travel is billed at when the request does not say. Travel is an ordinary service. */
+export const DEFAULT_TRIP_BTW_RATE = 21;
+
+export interface TripLineDraft {
+  description: string;
+  quantity: number;
+  unit_price: number;
+  btw_rate: number;
+  unit: string;
+}
+
+/**
+ * Invoice lines out of trips, and the ids that are ON those lines.
+ *
+ * Three kinds are left out and NAMED rather than silently dropped: a trip already on an invoice,
+ * a private trip, and a trip with no agreed rate. The third is the ordinary one — a drive to the
+ * wholesaler is a business kilometre that no customer owes anything for.
+ */
+export function linesFromTrips(
+  entries: readonly MileageEntry[],
+  // `unknown`, not `number`: Number(null) is 0, a legal rate, so a body carrying
+  // `ritten_btw_rate: null` would bill the whole travel invoice at 0% — which reads as vrijgesteld
+  // and takes real turnover out of the aangifte. The check below is what decides.
+  btwRate: unknown = DEFAULT_TRIP_BTW_RATE,
+): {
+  lines: TripLineDraft[];
+  skippedWithoutRate: MileageEntry[];
+  skippedPrivate: MileageEntry[];
+  billedIds: string[];
+} {
+  const rate = isValidBtwRate(btwRate) ? Number(btwRate) : DEFAULT_TRIP_BTW_RATE;
+
+  const lines: TripLineDraft[] = [];
+  const skippedWithoutRate: MileageEntry[] = [];
+  const billedIds: string[] = [];
+  const skippedPrivate = entries.filter((e) => isUninvoiced(e) && !isBusiness(e));
+
+  // Oldest first: a customer reads a period from the top down, the way a statement is written.
+  const ordered = [...entries]
+    .filter((e) => isUninvoiced(e) && isBusiness(e))
+    .sort((a, b) => String(a.driven_on ?? "").localeCompare(String(b.driven_on ?? "")));
+
+  for (const e of ordered) {
+    const value = tripValue(e);
+    if (value === null) { skippedWithoutRate.push(e); continue; }
+    lines.push({
+      description: tripLineDescription(e),
+      quantity: Math.round(Number(e.kilometers) * 10) / 10,
+      unit_price: Number(e.rate_per_km),
+      btw_rate: rate,
+      unit: KM_UNIT,
+    });
+    if (e.id) billedIds.push(e.id);
+  }
+
+  return { lines, skippedWithoutRate, skippedPrivate, billedIds };
+}
+
+export interface TripGroup {
+  clientId: string | null;
+  /** The trips that can go on an invoice for this customer, oldest first. */
+  trips: MileageEntry[];
+  kilometers: number;
+  /** Ex btw, summed from each trip's own rounded value — the invoice's own arithmetic. */
+  value: number;
+}
+
+/**
+ * The trips that are ready for an invoice, grouped per customer.
+ *
+ * Ready means: not yet invoiced, business, priced, and belonging to a customer. A trip with no
+ * customer cannot be invoiced to anybody, so it is not offered — it still counts for the
+ * deduction, which is what it was written down for.
+ */
+export function groupBillableTrips(entries: readonly MileageEntry[]): TripGroup[] {
+  const groups = new Map<string, TripGroup>();
+  for (const entry of entries) {
+    if (!isUninvoiced(entry) || !isBusiness(entry)) continue;
+    if (!entry.client_id) continue;
+    const value = tripValue(entry);
+    if (value === null) continue;
+    const group = groups.get(entry.client_id) ?? { clientId: entry.client_id, trips: [], kilometers: 0, value: 0 };
+    group.trips.push(entry);
+    group.kilometers = round2(group.kilometers + Number(entry.kilometers));
+    group.value = round2(group.value + value);
+    groups.set(entry.client_id, group);
+  }
+  for (const group of groups.values()) {
+    group.trips.sort((a, b) => String(a.driven_on ?? "").localeCompare(String(b.driven_on ?? "")));
+  }
+  return [...groups.values()].sort((a, b) => b.value - a.value);
 }
