@@ -4597,7 +4597,8 @@ test("[OFFERTE-OMZETTEN-VOLLEDIG] converting a quote carries everything the quot
   // The discount is on the header, so it needs its own read. A line-only load cannot see it.
   assert.match(
     page,
-    /\.select\('discount_type, discount_value'\)[\s\S]{0,120}?\.eq\('id', offerteParam\)/,
+    // [AANBETALING] The same read also carries the offerte's number, for the deposit line's text.
+    /\.select\('discount_type, discount_value(?:, invoice_number)?'\)[\s\S]{0,120}?\.eq\('id', offerteParam\)/,
     "the quote's discount must be read from the header — that is the amount the customer said " +
       "yes to",
   );

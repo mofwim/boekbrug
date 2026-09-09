@@ -25,6 +25,8 @@ import { getActingFor, getActingForClient } from '@/lib/acting-for-server'
 import { invoiceOwnerId, invoiceCreatedBy, isActingForOther } from '@/lib/acting-for'
 import { computeDraftTotals, validateDraftLines } from '@/lib/draft-totals'
 import { checkInvoiceDates } from '@/lib/invoice-dates'
+// [AANBETALING] The offerte a deposit invoice is a deposit on — checked, then written apart.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 import { parseDiscount, lineNetEx } from '@/lib/invoice-discount'
 // [UNIT] Alleen eenheden die de app kent belanden in de database. Vrije tekst uit een
 // gemanipuleerd verzoek hoort niet op een factuurregel die straks een e-factuur wordt.
@@ -252,6 +254,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Een factuur zonder klant kan niet' }, { status: 400 })
     }
 
+    // ── [AANBETALING] A deposit names its offerte, and the offerte must be this owner's ──────
+    // Only a factuur can be a deposit; the offerte must exist under this owner and BE an offerte.
+    // A wrong id is refused, never silently dropped: a deposit that forgot its offerte would be
+    // billed a second time on the final invoice.
+    const depositRaw = body.deposit_on_offerte_id
+    let depositOnOfferteId: string | null = null
+    if (depositRaw != null && depositRaw !== '') {
+      if (typeof depositRaw !== 'string' || !UUID_RE.test(depositRaw) || soort !== 'factuur') {
+        return NextResponse.json({ error: 'Een aanbetaling hoort bij een offerte' }, { status: 400 })
+      }
+      const { data: offerte, error: offerteErr } = await pipeline
+        .from('invoices')
+        .select('id, invoice_type, sender_id')
+        .eq('id', depositRaw)
+        .eq('sender_id', ownerId)
+        .in('invoice_type', ['pro_forma', 'offerte'])
+        .maybeSingle()
+      if (offerteErr) {
+        return NextResponse.json({ error: 'De offerte kon niet worden gelezen. Probeer het opnieuw.' }, { status: 503 })
+      }
+      if (!offerte) return NextResponse.json({ error: 'Offerte niet gevonden' }, { status: 404 })
+      depositOnOfferteId = offerte.id
+    }
+
 
     // ── De klant ─────────────────────────────────────────────────────────────
     // Een klant die inline is ingetikt (geen keuze uit de lijst) wordt hier aangemaakt, onder de
@@ -354,6 +380,24 @@ export async function POST(request: NextRequest) {
     if (insertErr || !factuur) {
       console.error('[ACTING-FOR] concept aanmaken mislukt', { insertErr, ownerId, namens: isActingForOther(acting) })
       return NextResponse.json({ error: 'Aanmaken mislukt — probeer opnieuw' }, { status: 500 })
+    }
+
+    // ── [AANBETALING] The link to the offerte, in its own write ───────────────────────────
+    // Apart from the insert for the same reason as the client lines below: the trail must not
+    // fall with it. But unlike those lines this one may NOT fail quietly — a deposit without its
+    // offerte is billed again on the final invoice — so a failed link removes the concept.
+    if (depositOnOfferteId) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: linkErr } = await (pipeline as any)
+        .from('invoices')
+        .update({ deposit_on_offerte_id: depositOnOfferteId })
+        .eq('id', factuur.id)
+        .eq('sender_id', ownerId)
+      if (linkErr) {
+        console.error('[AANBETALING] koppeling aan de offerte mislukt — concept verwijderd', { invoiceId: factuur.id, error: linkErr.message })
+        await pipeline.from('invoices').delete().eq('id', factuur.id).eq('sender_id', ownerId)
+        return NextResponse.json({ error: 'De aanbetaling kon niet aan de offerte worden gekoppeld — probeer opnieuw' }, { status: 500 })
+      }
     }
 
     // ── [KLANT-EXTRA] De twee vrije klantregels, in een EIGEN schrijfbeurt ───

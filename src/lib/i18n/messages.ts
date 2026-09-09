@@ -309,6 +309,10 @@ export const MESSAGES = {
   },
 
   'nieuw.banner.vanOfferte': { nl: 'Factuur op basis van offerte', ar: 'فاتورة مبنيّة على عرض سعر', en: 'Invoice based on a quote' },
+  // [AANBETALING] The banner on a deposit invoice, and the note on the final one.
+  'nieuw.banner.aanbetaling': { nl: 'Aanbetaling {pct}% op de offerte', ar: 'دفعة مقدمة {pct}% على عرض السعر', en: 'Deposit of {pct}% on the quote' },
+  'nieuw.banner.aanbetalingUitleg': { nl: 'De offerte blijft open. De eindfactuur verrekent dit bedrag vanzelf.', ar: 'يبقى عرض السعر مفتوحاً. الفاتورة النهائية تخصم هذا المبلغ تلقائياً.', en: 'The quote stays open. The final invoice settles this amount by itself.' },
+  'nieuw.banner.aanbetalingVerrekend': { nl: 'Verrekend: {numbers}', ar: 'تم الخصم: {numbers}', en: 'Settled: {numbers}' },
   'nieuw.banner.vervangend': { nl: 'Vervangende factuur', ar: 'فاتورة بديلة', en: 'Replacement invoice' },
   'nieuw.banner.gevonden': { nl: 'We vonden de factuur die je eerder maakte', ar: 'وجدنا الفاتورة التي أنشأتها سابقاً', en: 'We found the invoice you made earlier' },
   'nieuw.banner.overnemen': { nl: 'Overnemen', ar: 'استيرادها', en: 'Use it' },
@@ -343,6 +347,10 @@ export const MESSAGES = {
   'lijst.leeg.eerste': { nl: 'Maak je eerste factuur aan', ar: 'أنشئ فاتورتك الأولى', en: 'Create your first invoice' },
   'lijst.nieuw': { nl: 'Nieuwe factuur', ar: 'فاتورة جديدة', en: 'New invoice' },
   'lijst.maak': { nl: 'Maak factuur aan', ar: 'أنشئ الفاتورة', en: 'Create the invoice' },
+  // [AANBETALING] A deposit invoice on an accepted offerte.
+  'lijst.aanbetaling': { nl: 'Aanbetaling', ar: 'دفعة مقدمة', en: 'Deposit' },
+  'lijst.aanbetaling.vraag': { nl: 'Welk percentage van de offerte factureer je nu als aanbetaling?', ar: 'ما نسبة عرض السعر التي تفوترها الآن كدفعة مقدمة؟', en: 'What percentage of the quote do you invoice now as a deposit?' },
+  'lijst.aanbetaling.ongeldig': { nl: 'Een aanbetaling is een heel getal van 1 tot 99 procent.', ar: 'الدفعة المقدمة رقم صحيح من 1 إلى 99 بالمئة.', en: 'A deposit is a whole number from 1 to 99 percent.' },
   'lijst.vernieuwen': { nl: 'Vernieuwen', ar: 'تحديث', en: 'Refresh' },
   'lijst.openen': { nl: 'Openen', ar: 'فتح', en: 'Open' },
   'lijst.sluiten': { nl: 'Sluiten', ar: 'إغلاق', en: 'Close' },

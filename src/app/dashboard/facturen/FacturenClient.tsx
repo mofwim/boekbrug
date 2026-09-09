@@ -51,6 +51,8 @@ import { useCloseOnBack } from '@/lib/use-close-on-back'
 // [DATE-NL] A date the owner types, in the order they read it — see date-field-nl.ts.
 import DateFieldNL from '@/components/ui/DateFieldNL'
 import { statusChip, isInvoiceStatus } from '@/lib/invoice-status'
+// [AANBETALING] The percentage the owner types, judged once.
+import { parseDepositPercent } from '@/lib/aanbetaling'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 // [PAY-REDEN] One rule for what a refused pay-toggle says, shared with /vandaag and /manage.
@@ -1856,6 +1858,36 @@ export default function FacturenClient({
                           }}
                           style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: 'none', cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: M3.primaryContainer, color: M3.onPrimaryContainer }}>
                           {t('lijst.maak')}
+                        </button>
+                      )}
+                      {/* [AANBETALING] Part of the offerte now, the rest on the final invoice. The
+                          editor builds the deposit lines per btw rate; the offerte stays open. */}
+                      {isOfferte && inv.status === 'sent' && (
+                        <button
+                          onClick={async e => {
+                            e.stopPropagation()
+                            const raw = await dialog.prompt({ message: t('lijst.aanbetaling.vraag'), defaultValue: '30', placeholder: '30' })
+                            if (raw === null) return
+                            const pct = parseDepositPercent(raw)
+                            if (!pct) { showToast(t('lijst.aanbetaling.ongeldig')); return }
+                            const { data: full } = await supabase
+                              .from('invoices')
+                              .select('client_name, client_email, client_address, client_postal_code, client_city, client_btw_number')
+                              .eq('id', inv.id)
+                              .single()
+                            const src = (full ?? inv) as { client_name?: string | null; client_email?: string | null; client_address?: string | null; client_postal_code?: string | null; client_city?: string | null; client_btw_number?: string | null }
+                            router.push(
+                              `/dashboard/invoice/new?from_offerte=${inv.id}&aanbetaling=${pct}` +
+                              `&client_name=${encodeURIComponent(src.client_name ?? '')}` +
+                              `&client_email=${encodeURIComponent(src.client_email ?? '')}` +
+                              `&client_address=${encodeURIComponent(src.client_address ?? '')}` +
+                              `&client_postal_code=${encodeURIComponent(src.client_postal_code ?? '')}` +
+                              `&client_city=${encodeURIComponent(src.client_city ?? '')}` +
+                              `&client_btw_number=${encodeURIComponent(src.client_btw_number ?? '')}`
+                            )
+                          }}
+                          style={{ fontSize: 12, fontWeight: 500, borderRadius: R.full, border: `1px solid ${M3.outline}`, cursor: 'pointer', padding: '6px 14px', fontFamily: FONT, background: '#fff', color: M3.onSurface }}>
+                          {t('lijst.aanbetaling')}
                         </button>
                       )}
                     </div>

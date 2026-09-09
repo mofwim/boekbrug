@@ -54,7 +54,16 @@ button said "Facturen".
 - The open balance on the customer list, counted server-side through summarise() and shown only
   when there is something; null when the read failed, so nobody wears a zero.
 
-## Batch 2b — next, each its own researched batch
+## Batch 2b — the aanbetaling, shipped; the rest paused
+
+- **Aanbetalingsfactuur on an accepted offerte** (invoices_deposit.sql). A share per btw rate after
+  the offerte's own discounts, its own number and btw (factuurstelsel); the offerte stays open; the
+  final invoice from that offerte settles every issued deposit with a credit line per rate, so the
+  btw on the whole work is charged exactly once across the two documents (aanbetaling.ts, tested
+  on the identity deposit + settlement = 0). Jortt's termijnfactuur, Moneybird's negative line.
+
+The remaining 2b items are paused on the consultant's advice of 9 September ("stop met bouwen;
+5–10 bouwbedrijven, 4–6 weken, meet verloren en gevonden geld"), pending the owner's decision:
 
 Cost kind on a purchase invoice defaulted from the supplier (unblocks the margin breakdown); tips and drawer count on the
 day closing; a period lock with the accountant's quarter verdict; privé/zakelijk split on a bank
