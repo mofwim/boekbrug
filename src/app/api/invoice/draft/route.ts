@@ -163,13 +163,18 @@ export async function POST(request: NextRequest) {
       // [IN-CHUNK] Gechunkt. Een kwartaal aan uren op één factuur is geen randgeval maar de
       // gewone reden om deze knop te gebruiken, en voorbij een paar honderd id's liep de lijst de
       // URL over. De 503 hieronder ving dat al netjes op — dit haalt de aanleiding weg.
-      let uren: Array<{ id: string; client_id: string | null; worked_on: string | null; description: string | null; hours: number | null; hourly_rate: number | null; invoice_id: string | null }> | null = null
+      // [DECLARABEL] `billable` is newer than the generated types — the same cast every new column
+      // gets here, on the READ only.
+      let uren: Array<{ id: string; client_id: string | null; worked_on: string | null; description: string | null; hours: number | null; hourly_rate: number | null; invoice_id: string | null; billable: boolean | null }> | null = null
       let urenErr: { message: string } | null = null
       try {
         uren = await fetchAllRowsForIds(gevraagd.ids, (chunk, from, to) =>
-          pipeline
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (pipeline as any)
             .from('time_entries')
-            .select('id, client_id, worked_on, description, hours, hourly_rate, invoice_id')
+            // [DECLARABEL] billable travels: linesFromEntries reads it, and an absent column reads
+            // as "may be invoiced" — the screen already filters, and this door must not depend on it.
+            .select('id, client_id, worked_on, description, hours, hourly_rate, invoice_id, billable')
             .in('id', chunk)
             .eq('user_id', ownerId)
             .is('invoice_id', null)

@@ -91,7 +91,9 @@ export async function loadWorkForInvoice(db: any, userId: string, ids: string[],
     for (let from = 0; ; from += HOURS_PAGE) {
       const { data, error: hoursErr } = await db
         .from("time_entries")
-        .select("id, client_id, worked_on, description, hours, hourly_rate, invoice_id")
+        // [DECLARABEL] billable travels, or linesFromEntries cannot see it: an absent column reads
+        // as "may be invoiced", and the owner's own time would land on the customer's invoice.
+        .select("id, client_id, worked_on, description, hours, hourly_rate, invoice_id, billable")
         .eq("user_id", userId).eq("work_item_id", row.id).is("invoice_id", null)
         .order("worked_on", { ascending: true }).order("id", { ascending: true }).range(from, from + HOURS_PAGE - 1);
       if (hoursErr) return { ok: false, error: "De uren konden niet worden gelezen. Probeer het opnieuw.", status: 503 };

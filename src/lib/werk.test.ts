@@ -386,3 +386,32 @@ test("[UREN-OUD] a read that did not run is no signal, and zero old hours is no 
   assert.deepEqual(workSignals(base), [], "absent: the read did not run, so the app says nothing");
   assert.deepEqual(workSignals({ ...base, oldUnbilledHours: { n: 0, amount: 0 } }), [], "nothing old is not a warning");
 });
+
+// ── [STRIPPENKAART] What the audit of my own batch found ─────────────────────────────────────
+
+test("[STRIPPENKAART] a bundle that is already billed is not counted as ready to invoice", () => {
+  const sold: WorkLine[] = [{ kind: "vast", description: "Strippenkaart 10 uur", quantity: 1, unit: "post", unit_price: 950, btw_rate: 21 }];
+  const fresh = workCounts([{ status: "klaar", invoice_id: null, fields: { bundel_uren: 10 }, lines: sold }]);
+  assert.deepEqual([fresh.klaar, fresh.klaarExBtw], [1, 950], "before it is billed it IS ready");
+  // It stays OPEN by design after billing; counting its price again would put money on the money
+  // header that no button can act on, and that the owner already invoiced.
+  const billed = workCounts([{ status: "klaar", invoice_id: "inv-1", fields: { bundel_uren: 10 }, lines: sold }]);
+  assert.deepEqual([billed.klaar, billed.klaarExBtw], [0, 0]);
+  const running = workCounts([{ status: "bezig", invoice_id: "inv-1", fields: { bundel_uren: 10 }, lines: sold }]);
+  assert.deepEqual([running.bezig, running.klaarExBtw], [1, 0], "and it is still work in hand");
+});
+
+test("[DECLARABEL] own time attached to work never holds up the invoice button", () => {
+  const row = { status: "klaar", invoice_id: null, repeat_every: null, visits: [], client_name: "Klant", lines: [] as WorkLine[] };
+  const ready = financialReadiness({
+    row,
+    hours: [
+      { hours: 4, hourly_rate: 110, invoice_id: null },
+      { hours: 2, hourly_rate: null, invoice_id: null, billable: false },
+    ],
+  });
+  assert.equal(ready.ok, true, "the acquisition hour carries no rate and is not part of any invoice");
+  assert.equal(ready.amountExBtw, 440, "…and it is not in the amount either");
+  const held = financialReadiness({ row, hours: [{ hours: 2, hourly_rate: null, invoice_id: null }] });
+  assert.equal(held.ok, false, "a BILLABLE hour without a rate still holds it up");
+});
