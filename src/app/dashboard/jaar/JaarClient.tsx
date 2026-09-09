@@ -13,6 +13,7 @@ import { translator } from '@/lib/i18n/t'
 import type { IbJaarOverzicht } from '@/lib/ib-jaar'
 import { failureText } from '@/lib/server-message'
 import OpdrachtgeversPanel from '@/components/dba/OpdrachtgeversPanel'
+import OnderhandenWerkPanel from '@/components/jaar/OnderhandenWerkPanel'
 
 const CARD: React.CSSProperties = { background: '#fff', border: '1px solid #E0E0E0', borderRadius: 12, padding: '16px 20px' }
 const eur = (n: number) => `€ ${n.toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -156,6 +157,9 @@ export default function JaarClient() {
       {/* [OPDRACHTGEVER] Who this year's money came from. Only on the owner's own year: an
           accountant looking at a client's year gets the auditfile, not this. */}
       {!clientId && <OpdrachtgeversPanel year={year} />}
+      {/* [ONDERHANDEN-WERK] What was still uninvoiced on 31 December. It belongs to this year's
+          result, so it stands beside the year — the same owner-only rule as above. */}
+      {!clientId && <OnderhandenWerkPanel year={year} />}
 
       {overzicht && !busy && (
         <p style={{ fontSize: 13, margin: 0 }}>

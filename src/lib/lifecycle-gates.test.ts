@@ -29341,3 +29341,62 @@ test("[DECLARABEL-DEEL] the billable share is a whole percentage, and absent whe
   const screen = code("src/app/dashboard/uren/UrenClient.tsx");
   assert.match(screen, /pct === null \? t\('uren\.split', \{ declarabel \}\) : t\('uren\.splitPct', \{ declarabel, pct \}\)/);
 });
+
+// ─── [ONDERHANDEN-WERK] What was worked and not yet invoiced on the last day of the year ──────
+//
+// A dienstverlener works in December and invoices in January. Those hours belong to the old year
+// as an asset; leave them out and the profit is too low, in a year that is already filed. Every
+// accountant asks for the figure and no zzp package computes it, because none of them holds the
+// hours and the invoices in one place.
+//
+// The gate holds the two ways the figure goes wrong, and both are silent:
+//
+//   1. An hour billed in January must still count on 31 December. That is a question about the
+//      INVOICE's date, not about whether an invoice exists today — so the invoice dates travel.
+//   2. An hour with no rate has no defensible value. Counted and named, never valued at zero and
+//      never at an average, because an owner who cannot reconcile the figure cannot sign it.
+test("[ONDERHANDEN-WERK] the figure is dated, priced by the invoice's own arithmetic, and honest about what it left out", () => {
+  const pure = code("src/lib/onderhanden-werk.ts");
+  const route = code("src/app/api/onderhanden-werk/route.ts");
+  const panel = code("src/components/jaar/OnderhandenWerkPanel.tsx");
+
+  // Rule 1: the cutoff is compared against the INVOICE date, and an invoice ON the day counts as
+  // billed. `date > until` is the whole rule; `>=` would move a 31 December invoice into the asset.
+  assert.match(pure, /return \{ open: date > until, unknown: false \};/,
+    "an invoice dated after the cutoff must still be work in progress on the cutoff");
+  assert.match(pure, /if \(!entry\.invoice_id\) return \{ open: true, unknown: false \};/);
+  // An invoice we could not date is left out AND reported — never guessed at in either direction.
+  assert.match(pure, /if \(state\.unknown\) \{ unknownInvoices \+= 1; continue; \}/);
+  assert.match(panel, /data\.unknownInvoices > 0 &&/,
+    "the screen must be able to say the figure may be understated");
+
+  // Rule 2: unpriced work is counted, not valued.
+  assert.match(pure, /row\.withoutRate \+= 1;\s*withoutRate \+= 1;/);
+  // [CENT] The value is the invoice's value: entryValue rounds each hour exactly as its invoice
+  // line will, and this module adds those rounded amounts instead of rounding again per client.
+  assert.match(pure, /import \{ entryValue, isDeclarable, type TimeEntry \} from "\.\/uren";/,
+    "onderhanden werk that does not equal the invoice settling it is two answers to one question");
+  // [DECLARABEL] Own time is not an asset — nobody is ever going to pay for it.
+  assert.match(pure, /if \(!isDeclarable\(entry as TimeEntry\)\) continue;/);
+  // Work done after the cutoff belongs to the next year, whatever its invoice says.
+  assert.match(pure, /if \(!workedOn \|\| workedOn > until\) continue;/);
+
+  // The route reads every hour up to the cutoff (not only that year's — an hour from 2024 that was
+  // never billed is still being carried), pages both reads, and refuses to answer with an empty
+  // year when it could not look.
+  assert.match(route, /\.lte\("worked_on", until\)/);
+  assert.doesNotMatch(route, /\.gte\("worked_on"/,
+    "older uninvoiced hours are part of what the owner is carrying");
+  assert.match(route, /fetchAllRows<WipEntry>/);
+  assert.match(route, /fetchAllRowsForIds<\{ id: string; invoice_date: string \| null \}, string>/);
+  assert.match(route, /status: 503/);
+  // The owner's own year only — an accountant reading a client's year gets the auditfile. The
+  // route reads client ids out of its OWN result, so the rule is about the PARAMETER: there is no
+  // door here for asking about somebody else's year.
+  assert.doesNotMatch(route, /searchParams\.get\("clientId"\)/);
+  assert.match(route, /\.eq\("user_id", user\.id\)/);
+  assert.match(code("src/app/dashboard/jaar/JaarClient.tsx"), /\{!clientId && <OnderhandenWerkPanel year=\{year\} \/>\}/);
+  // The W&V above this panel is invoices. Saying that this amount is not in it turns a second
+  // figure into an addition instead of a contradiction.
+  assert.match(panel, /t\('ohw\.nietInSaldo'\)/);
+});
