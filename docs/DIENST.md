@@ -89,7 +89,7 @@ drawdown, work-in-progress value, meerwerk flagging, and a DBA dossier.
 | Urencriterium | 1,225-hour meter on the uren screen | counts only recorded hours; non-billable hours have no home |
 | Opdracht with agreed hours and budget | DIENST skin: referentie, afgesproken uren; over-budget signal | no maandbedrag/retainer on this skin (the schoonmaak skin has it) |
 | Strippenkaart / prepaid bundle | — | a prepaid balance that hours draw down against, with expiry |
-| Offerte → opdracht → deelfactuur | offertes, aanbetaling, final invoice settles it | offerte is not linked to the opdracht row |
+| Offerte → opdracht → deelfactuur | offertes, aanbetaling, final invoice settles it, [OFFERTE-WERK] turns the accepted offerte into the opdracht | — |
 | Reiskosten | reiskosten line kind (per km) on the opdracht | no km log per client; the public tool computes only |
 | EU clients | verlegde-btw.ts, icp.ts, ICP in the aangifte | — |
 | Unbilled hours signal | hours without a rate on Vandaag and Werk | hours WITH a rate but on no invoice for 30+ days is the bigger leak |
@@ -116,6 +116,7 @@ to what the trades needed, because it is arithmetic on rows the app already has.
 | [RETAINER] | maandbedrag + einddatum on the dienstverlening opdracht — the schoonmaak contract's arithmetic, billed per period under the optimistic lock, with the sixty-day renewal countdown. | `werk.ts` (DIENST skin) |
 | [STRIPPENKAART] | Hours sold up front: invoiced once while the row STAYS OPEN, the balance (sold, used, left) on the work, the overrun stated in hours and never acted on. Prepaid hours are never "waiting for an invoice". | `werk.ts`, `stampBundle`, the work door |
 | [UREN-OUD] | Hours worked, priced, and still on no invoice after thirty days — in euros, on Vandaag and on the Werk screen, leading to the hours screen. The segment's largest leak. | `werk-stand.ts`, `workSignals` |
+| [OFFERTE-WERK] | The accepted offerte becomes the opdracht: its client, its lines and its amount as the begroting. One offerte becomes one piece of work, and it is archived the moment it does, so there is one door to the money. Deleting the work reopens it. | `werk.ts`, `/api/werk`, the work screen |
 | [OPDRACHTGEVER] | Who this year's money came from: per client the revenue, the share, the hours, the invoices; the count and the largest share. Facts only — no threshold, no verdict, because there is no rule to check against. | `opdrachtgevers.ts`, `/api/opdrachtgevers`, the Jaar screen |
 
 What was deliberately NOT built: a timer (the hours screen says why in its own header), a

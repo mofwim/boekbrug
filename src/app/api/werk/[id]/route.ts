@@ -157,7 +157,15 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     };
   }
 
-  return NextResponse.json({ ok: true, row, skin: skin?.skin ?? null, hours, hoursTotal, linesTotal, costs, documents, invoice, margin, history, readFailed, candidates });
+  // [OFFERTE-WERK] Where this work came from, by name — the owner reads a number, not a uuid.
+  let offerte: { id: string; invoice_number: string | null } | null = null;
+  const offerteId = (row as { offerte_id?: string | null }).offerte_id ?? null;
+  if (offerteId) {
+    const { data: o } = await db.from("invoices").select("id, invoice_number").eq("id", offerteId).eq("sender_id", user.id).maybeSingle();
+    if (o) offerte = { id: String(o.id), invoice_number: (o.invoice_number as string | null) ?? null };
+  }
+
+  return NextResponse.json({ ok: true, row, skin: skin?.skin ?? null, hours, hoursTotal, linesTotal, costs, documents, invoice, margin, history, readFailed, candidates, offerte });
 }
 
 export async function POST(req: NextRequest, ctx: Ctx) {

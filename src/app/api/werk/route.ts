@@ -14,6 +14,7 @@ import { normalizeKenteken, isKentekenShape } from "@/lib/vehicle";
 import { amsterdamToday, amsterdamClock } from "@/lib/format-nl";
 import {
   workSkin, vaksForSkin, readFields, readLines, storedLines, storedVisits, storedPeriods, isRepeat, isWorkStatus, isCalendarDay, HAND_STATUSES, canDelete,
+  workLinesFromOfferte, type OfferteLine,
   contractStat, contractGroups, periodOf, type WorkStatus,
 } from "@/lib/werk";
 import type { WorkRow } from "@/lib/werk-rows";
@@ -22,7 +23,7 @@ import { loadWorkStand } from "@/lib/werk-stand";
 
 export const dynamic = "force-dynamic";
 
-const COLUMNS = "id, vak, title, client_id, client_name, vehicle_id, status, planned_on, done_on, fields, lines, repeat_every, visits, billed_periods, notes, invoice_id, created_at";
+const COLUMNS = "id, vak, title, client_id, client_name, vehicle_id, status, planned_on, done_on, fields, lines, repeat_every, visits, billed_periods, notes, invoice_id, offerte_id, created_at";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LIST_MAX = 300;
 
@@ -117,6 +118,36 @@ export async function GET(req: NextRequest) {
       .order("updated_at", { ascending: false }).limit(1).maybeSingle();
     if (error) return NextResponse.json({ error: "Kon het vorige werk niet lezen." }, { status: 500 });
     return NextResponse.json({ ok: true, lines: storedLines(data?.lines), title: data?.title ?? null });
+  }
+
+  // [OFFERTE-WERK] The offertes this owner can turn into work: issued, not archived, and not
+  // already used. The accepted ones first — that is the one the owner is looking for.
+  if (req.nextUrl.searchParams.get("offertes") === "1") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db2 = supabase as any;
+    const { data: rows, error: offErr } = await db2.from("invoices")
+      .select("id, invoice_number, client_id, client_name, total_ex_btw, invoice_date, offerte_response")
+      .eq("sender_id", user.id).eq("direction", "outgoing")
+      .in("invoice_type", ["pro_forma", "offerte"])
+      .in("status", ["sent", "overdue"])
+      .order("invoice_date", { ascending: false }).limit(50);
+    if (offErr) return NextResponse.json({ error: "Kon de offertes niet laden." }, { status: 500 });
+    const list = (rows ?? []) as Array<Record<string, unknown>>;
+    // Which of them already became work. A failed read means we cannot say, and then the list is
+    // refused rather than offering an offerte that would become a second piece of work.
+    const { data: used, error: usedErr } = await db2.from("work_items")
+      .select("offerte_id").eq("user_id", user.id).not("offerte_id", "is", null).limit(500);
+    if (usedErr) return NextResponse.json({ error: "Kon de offertes niet laden." }, { status: 500 });
+    const taken = new Set(((used ?? []) as Array<{ offerte_id: string }>).map((r) => r.offerte_id));
+    const open = list.filter((r) => !taken.has(String(r.id)));
+    open.sort((a, b) => Number(b.offerte_response === "akkoord") - Number(a.offerte_response === "akkoord"));
+    return NextResponse.json({ ok: true, offertes: open.map((r) => ({
+      id: String(r.id), invoice_number: (r.invoice_number as string | null) ?? null,
+      client_name: (r.client_name as string | null) ?? null,
+      total_ex_btw: typeof r.total_ex_btw === "number" ? r.total_ex_btw : null,
+      invoice_date: (r.invoice_date as string | null) ?? null,
+      akkoord: r.offerte_response === "akkoord",
+    })) });
   }
 
   // [WERK-STAND] "Wat laat jij liggen?" — the counts and the signals, the same as Vandaag's.
@@ -235,6 +266,36 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── [OFFERTE-WERK] The accepted offerte becomes this work ───────────────────────────────
+  //
+  // Everything the owner would retype travels: the client, the lines and the agreed amount as the
+  // begroting. The offerte is ARCHIVED the moment the work exists — the same as when it becomes
+  // an invoice, and for the same reason: from here on there may be one door to the money, not two.
+  const offerteId = typeof body.offerte_id === "string" && UUID.test(body.offerte_id) ? body.offerte_id : null;
+  let offerteLines: ReturnType<typeof workLinesFromOfferte> | null = null;
+  let offerteBegroot: number | null = null;
+  if (offerteId) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const odb = supabase as any;
+    const { data: off, error: offErr } = await odb.from("invoices")
+      .select("id, invoice_number, total_ex_btw, invoice_type, status")
+      .eq("id", offerteId).eq("sender_id", user.id)
+      .in("invoice_type", ["pro_forma", "offerte"])
+      .in("status", ["sent", "overdue"])
+      .maybeSingle();
+    if (offErr) return NextResponse.json({ error: "Kon de offerte niet lezen. Probeer het opnieuw." }, { status: 503 });
+    if (!off) return NextResponse.json({ error: "Deze offerte kan geen werk worden.", code: "offerte_not_open" }, { status: 409 });
+    const { data: used, error: usedErr } = await odb.from("work_items").select("id").eq("user_id", user.id).eq("offerte_id", offerteId).maybeSingle();
+    if (usedErr) return NextResponse.json({ error: "Kon de offerte niet lezen. Probeer het opnieuw." }, { status: 503 });
+    if (used) return NextResponse.json({ error: "Van deze offerte is al werk gemaakt.", code: "offerte_used" }, { status: 409 });
+    const { data: ol, error: olErr } = await odb.from("invoice_lines")
+      .select("description, quantity, unit, unit_price, btw_rate").eq("invoice_id", offerteId).limit(200);
+    if (olErr) return NextResponse.json({ error: "Kon de offerteregels niet lezen. Probeer het opnieuw." }, { status: 503 });
+    offerteLines = workLinesFromOfferte(skin, (ol ?? []) as OfferteLine[]);
+    // The agreed amount, ex btw, as the offerte itself states it — already net of its discounts.
+    offerteBegroot = typeof off.total_ex_btw === "number" ? Math.abs(off.total_ex_btw) : null;
+  }
+
   const record = {
     user_id: user.id,
     vak,
@@ -244,10 +305,13 @@ export async function POST(req: NextRequest) {
     vehicle_id: vehicleId,
     status: "open",
     planned_on: plannedOn,
-    fields: fields.fields,
-    lines: lines.lines,
+    // [OFFERTE-WERK] The offerte's own numbers win over an empty form; a begroting the owner
+    // typed himself is left alone.
+    fields: offerteBegroot !== null && !fields.fields.begroot ? { ...fields.fields, begroot: offerteBegroot } : fields.fields,
+    lines: offerteLines && offerteLines.length > 0 ? offerteLines : lines.lines,
     repeat_every: repeat.repeat,
     notes: text(body.notes, 2000),
+    ...(offerteId ? { offerte_id: offerteId } : {}),
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (supabase as any).from("work_items").insert(record).select(COLUMNS).single();
@@ -257,6 +321,21 @@ export async function POST(req: NextRequest) {
       { status: missingTable(error?.message) ? 503 : 500 },
     );
   }
+
+  // [OFFERTE-WERK] The offerte has done its job. If it cannot be closed the work goes away again:
+  // an offerte still open beside its own work is one agreement with two doors to the money.
+  if (offerteId) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adb = supabase as any;
+    const { data: closed, error: archErr } = await adb.from("invoices")
+      .update({ status: "archived" }).eq("id", offerteId).eq("sender_id", user.id).in("status", ["sent", "overdue"]).select("id");
+    if (archErr || (closed ?? []).length !== 1) {
+      await adb.from("work_items").delete().eq("id", (data as { id: string }).id).eq("user_id", user.id);
+      console.error("[OFFERTE-WERK] offerte niet gesloten — werk teruggedraaid", { offerteId, error: archErr?.message });
+      return NextResponse.json({ error: "De offerte kon niet worden afgesloten. Probeer het opnieuw." }, { status: 500 });
+    }
+  }
+
   const [row] = await withPlates(supabase, user.id, [data as Record<string, unknown>]);
   await logAuditAction({
     userId: user.id, action: "work.created", entityType: "work_item", entityId: row.id,
@@ -379,7 +458,7 @@ export async function DELETE(req: NextRequest) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = supabase as any;
-  const { data: current } = await db.from("work_items").select("id, title, invoice_id, visits").eq("id", id).eq("user_id", user.id).maybeSingle();
+  const { data: current } = await db.from("work_items").select("id, title, invoice_id, offerte_id, visits").eq("id", id).eq("user_id", user.id).maybeSingle();
   if (!current) return NextResponse.json({ error: "Dit werk is niet gevonden." }, { status: 404 });
   const [costsRes, hoursRes] = await Promise.all([
     db.from("invoices").select("id", { count: "exact", head: true }).eq("work_item_id", id),
@@ -395,6 +474,13 @@ export async function DELETE(req: NextRequest) {
   }
   const { error } = await db.from("work_items").delete().eq("id", id).eq("user_id", user.id);
   if (error) return NextResponse.json({ error: "Kon het werk niet verwijderen." }, { status: 500 });
+  // [OFFERTE-WERK] The work is gone, so its offerte is open again — otherwise an owner who deletes
+  // by mistake loses the agreement in the archive with no way back.
+  if (current.offerte_id) {
+    const { error: reopenErr } = await db.from("invoices").update({ status: "sent" })
+      .eq("id", current.offerte_id).eq("sender_id", user.id).eq("status", "archived");
+    if (reopenErr) console.error("[OFFERTE-WERK] werk verwijderd, offerte niet heropend", { id, offerteId: current.offerte_id, error: reopenErr.message });
+  }
   await logAuditAction({
     userId: user.id, action: "work.deleted", entityType: "work_item", entityId: id,
     oldValue: { title: current.title }, ipAddress: getClientIP(req),

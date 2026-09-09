@@ -24,6 +24,8 @@ export interface WorkRow {
   visits: Visit[];
   /** [CONTRACT] The periods a fee contract has invoiced, each with its invoice. */
   billed_periods: BilledPeriod[];
+  /** [OFFERTE-WERK] The accepted offerte this work came from; null when it was typed by hand. */
+  offerte_id?: string | null;
   notes: string | null;
   invoice_id: string | null;
   created_at: string;

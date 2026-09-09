@@ -13866,6 +13866,12 @@ export const MESSAGES = {
   'werk.uren.omschrijving': { nl: 'Wat is er gedaan', en: 'What was done', ar: 'ما الذي أُنجز' },
   'werk.uren.opslaan': { nl: 'Uren opschrijven', en: 'Write hours', ar: 'تسجيل الساعات' },
   'werk.vorigeZoeken': { nl: 'Regels van vorige keer', en: 'Lines from last time', ar: 'بنود المرة السابقة' },
+  // [OFFERTE-WERK] The accepted offerte becomes the work.
+  'werk.offerte.kies': { nl: 'Uit offerte', en: 'From a quote', ar: 'من عرض سعر' },
+  'werk.offerte.geen': { nl: 'Geen', en: 'None', ar: 'لا شيء' },
+  'werk.offerte.uitleg': { nl: 'De regels en het afgesproken bedrag komen mee. De offerte gaat naar het archief.', en: 'The lines and the agreed amount come along. The quote moves to the archive.', ar: 'السطور والمبلغ المتفق عليه تأتي معه. ينتقل العرض إلى الأرشيف.' },
+  'werk.offerte.akkoord': { nl: 'akkoord', en: 'accepted', ar: 'مقبول' },
+  'werk.offerte.uit': { nl: 'Uit offerte {nummer}', en: 'From quote {nummer}', ar: 'من عرض السعر {nummer}' },
   'werk.vorigeRegels': { nl: 'Neem {n} regels over', en: 'Take over {n} lines', ar: 'انسخ {n} بنود' },
   // [RIJSCHOOL] One leerling in training; every les a beurt in the trade's own word.
   'werk.noun.leerling': { nl: 'Leerling', en: 'Learner', ar: 'متدرب' },

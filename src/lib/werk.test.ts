@@ -11,6 +11,7 @@ import {
   bundleHours, bundleState, canInvoiceBundle, bundleInvoiceLines,
   type WorkLine,
   UNBILLED_HOURS_DAYS,
+  workLinesFromOfferte,
 } from "./werk";
 
 test("[WERK] the layer exists for the four verticals and their sister trades, and for nobody else", () => {
@@ -414,4 +415,34 @@ test("[DECLARABEL] own time attached to work never holds up the invoice button",
   assert.equal(ready.amountExBtw, 440, "…and it is not in the amount either");
   const held = financialReadiness({ row, hours: [{ hours: 2, hourly_rate: null, invoice_id: null }] });
   assert.equal(held.ok, false, "a BILLABLE hour without a rate still holds it up");
+});
+
+// ── [OFFERTE-WERK] The accepted offerte becomes the work ─────────────────────────────────────
+
+test("[OFFERTE-WERK] the offerte's lines become work lines: the amounts unchanged, the kind from the unit", () => {
+  const skin = workSkin("dienstverlening")!;
+  const lines = workLinesFromOfferte(skin, [
+    { description: "Advieswerk", quantity: 8, unit: "uur", unit_price: 110, btw_rate: 21 },
+    { description: "Projectbegeleiding", quantity: 1, unit: "post", unit_price: 1500, btw_rate: 21 },
+  ]);
+  assert.deepEqual(lines.map((l) => [l.kind, l.quantity, l.unit_price, l.unit]), [
+    ["arbeid", 8, 110, "uur"],
+    ["vast", 1, 1500, "post"],
+  ]);
+});
+
+test("[OFFERTE-WERK] a unit the trade does not know falls back to its first kind, and keeps its own unit", () => {
+  const skin = workSkin("dienstverlening")!;
+  const [line] = workLinesFromOfferte(skin, [{ description: "Licentie", quantity: 2, unit: "stuks", unit_price: 40, btw_rate: 9 }]);
+  assert.equal(line.kind, skin.lineKinds[0].kind, "a wrong kind costs a label, never an amount");
+  assert.deepEqual([line.unit, line.unit_price, line.btw_rate], ["stuks", 40, 9]);
+});
+
+test("[OFFERTE-WERK] a line the app cannot read as money is left out, never billed as zero", () => {
+  const skin = workSkin("bouw-klus")!;
+  const lines = workLinesFromOfferte(skin, [
+    { description: "Werk", quantity: 1, unit: "post", unit_price: 500, btw_rate: 21 },
+    { description: "Onleesbaar", quantity: null, unit: null, unit_price: null, btw_rate: null },
+  ]);
+  assert.equal(lines.length, 1);
 });
