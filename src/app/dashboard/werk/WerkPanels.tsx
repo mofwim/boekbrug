@@ -18,9 +18,10 @@ import {
   HAND_STATUSES, REPEATS, REPEAT_KEYS, statusKey, linesTotalEx, canInvoice, canInvoicePeriod, contractFee, periodOf, periodLabelNL, nextVisitOn, unbilledVisits, togetherGroups, DEFAULT_LINE_BTW,
   type ContractStat,
   type WorkSkin, type WorkStatus, type WorkLine, type FieldValues, type Visit,
+  bundleHours, canInvoiceBundle,
 } from '@/lib/werk'
 import type { WorkRow, AttachedHours, AttachedCost, AttachedDocument, WorkHistory, WorkInvoiceSummary } from '@/lib/werk-rows'
-import type { WorkMargin, Readiness, WorkCounts, WorkSignal } from '@/lib/werk'
+import type { WorkMargin, Readiness, WorkCounts, WorkSignal, BundleState } from '@/lib/werk'
 // [WERK-STAND] The signal sentences, shared with Vandaag.
 import { werkSignaalZin } from '@/lib/werk-stand-copy'
 
@@ -459,7 +460,13 @@ export function WorkSheet({ title, onClose, children, testId, error }: { title: 
   )
 }
 
-export function invoiceButtonState(row: Pick<WorkRow, 'status' | 'invoice_id'> & Partial<Pick<WorkRow, 'repeat_every' | 'visits' | 'fields' | 'billed_periods'>>, invoice: WorkInvoiceSummary | null, today?: string): 'make' | 'view' | 'none' {
+export function invoiceButtonState(row: Pick<WorkRow, 'status' | 'invoice_id'> & Partial<Pick<WorkRow, 'repeat_every' | 'visits' | 'fields' | 'billed_periods' | 'lines'>>, invoice: WorkInvoiceSummary | null, today?: string): 'make' | 'view' | 'none' {
+  // [STRIPPENKAART] Billed once, up front; afterwards the row stays open and the invoice is there
+  // to look at while the hours draw the bundle down.
+  if (bundleHours(row) !== null) {
+    if (canInvoiceBundle({ ...row, lines: row.lines ?? [] })) return 'make'
+    return invoice || row.invoice_id ? 'view' : 'none'
+  }
   // Repeating work never closes on one invoice: its beurten carry theirs (VisitsPanel links them).
   // [CONTRACT] A fee contract offers this period's invoice instead, once.
   if (row.repeat_every) {
@@ -468,6 +475,33 @@ export function invoiceButtonState(row: Pick<WorkRow, 'status' | 'invoice_id'> &
   }
   if (invoice || row.invoice_id) return 'view'
   return canInvoice(row) ? 'make' : 'none'
+}
+
+/**
+ * [STRIPPENKAART] The balance of a prepaid bundle: sold, used, left — and, once it is exceeded, by
+ * how much. The overrun is stated, never acted on: an hour past the bundle is a top-up or a gift,
+ * and only the owner decides which.
+ */
+export function BundlePanel({ bundle, t }: { bundle: BundleState; t: T }) {
+  return (
+    <div data-testid="work-bundle" style={{
+      fontFamily: FONT, fontSize: 13.5, borderRadius: 12, padding: '10px 12px',
+      background: bundle.overrun > 0 ? '#FCE8E6' : M3.surfaceVariant,
+      color: bundle.overrun > 0 ? '#8C1D18' : M3.onSurface,
+    }}>
+      <div style={{ fontWeight: 700, marginBottom: 2 }}>
+        {t('werk.bundel.kop')} · {bundle.invoiced ? t('werk.bundel.gefactureerd') : t('werk.bundel.nogNietGefactureerd')}
+      </div>
+      <div>{t('werk.bundel.stand', {
+        gebruikt: bundle.used.toLocaleString('nl-NL'),
+        verkocht: bundle.sold.toLocaleString('nl-NL'),
+        over: bundle.remaining.toLocaleString('nl-NL'),
+      })}</div>
+      {bundle.overrun > 0 && (
+        <div style={{ fontWeight: 600, marginTop: 4 }}>{t('werk.bundel.op', { over: bundle.overrun.toLocaleString('nl-NL') })}</div>
+      )}
+    </div>
+  )
 }
 
 /**

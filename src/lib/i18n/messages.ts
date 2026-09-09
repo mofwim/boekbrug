@@ -13894,6 +13894,13 @@ export const MESSAGES = {
   'vandaag.werk.sig.begroting': { nl: '{n} stuks werk boven de begroting.', en: '{n} pieces of work over their estimate.', ar: '{n} أعمال تجاوزت المقدَّر.' },
   // [CONTRACT] A contract on a location: the fixed fee, its end, and the portfolio.
   'werk.veld.maandbedrag': { nl: 'Vast bedrag per maand ex btw', en: 'Fixed amount per month ex VAT', ar: 'مبلغ ثابت شهرياً قبل الضريبة' },
+  // [STRIPPENKAART] Hours sold up front, drawn down by the work on this opdracht.
+  'werk.veld.bundelUren': { nl: 'Strippenkaart (uren)', en: 'Prepaid hours', ar: 'بطاقة ساعات مدفوعة' },
+  'werk.bundel.kop': { nl: 'Strippenkaart', en: 'Prepaid hours', ar: 'بطاقة الساعات' },
+  'werk.bundel.stand': { nl: '{gebruikt} van {verkocht} uur gebruikt · {over} over', en: '{gebruikt} of {verkocht} hours used · {over} left', ar: 'استُخدمت {gebruikt} من {verkocht} ساعة · بقي {over}' },
+  'werk.bundel.op': { nl: 'De strippenkaart is op: {over} uur meer gewerkt dan verkocht.', en: 'The bundle is used up: {over} hours more than sold.', ar: 'انتهت البطاقة: {over} ساعة أكثر مما بيع.' },
+  'werk.bundel.nogNietGefactureerd': { nl: 'Nog niet gefactureerd', en: 'Not invoiced yet', ar: 'لم تُفوتر بعد' },
+  'werk.bundel.gefactureerd': { nl: 'Vooraf gefactureerd', en: 'Invoiced up front', ar: 'فوترت مقدماً' },
   'werk.veld.einddatum': { nl: 'Einddatum contract', en: 'Contract end date', ar: 'تاريخ انتهاء العقد' },
   'werk.filter.contracten': { nl: 'Contracten', en: 'Contracts', ar: 'العقود' },
   'werk.contract.geen': { nl: 'Nog geen contracten.', en: 'No contracts yet.', ar: 'لا عقود بعد.' },
@@ -13910,6 +13917,7 @@ export const MESSAGES = {
   'werk.periodeFactuur': { nl: 'Factureer {periode}', en: 'Invoice {periode}', ar: 'فوتر {periode}' },
   'vandaag.werk.sig.contractEinde': { nl: '{n} contracten lopen binnen 60 dagen af.', en: '{n} contracts end within 60 days.', ar: '{n} عقود تنتهي خلال 60 يوماً.' },
   // [VAK-KIEZEN] The trade, chosen from settings.
+  'vandaag.werk.sig.strippenkaartOp': { nl: '{n} strippenkaarten zijn op: {uren} uur meer gewerkt dan verkocht.', en: '{n} prepaid bundles are used up: {uren} hours more than sold.', ar: '{n} بطاقات ساعات انتهت: {uren} ساعة أكثر مما بيع.' },
   'inst.vak.kop': { nl: 'Mijn vak', en: 'My trade', ar: 'مهنتي' },
   'inst.vak.uitleg': { nl: 'Kies je vak en de app zet jouw werk voorop: werkorders, ritten, klussen of opdrachten.', en: 'Pick your trade and the app puts your work first: work orders, trips, jobs or assignments.', ar: 'اختر مهنتك فيضع التطبيق عملك في المقدمة: أوامر عمل أو رحلات أو مهام أو طلبات.' },
   'inst.vak.geen': { nl: 'Geen vak gekozen', en: 'No trade chosen', ar: 'لم تُختر مهنة' },

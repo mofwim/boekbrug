@@ -228,6 +228,23 @@ export async function stampVisits(db: any, userId: string, workId: string, cover
  * that period are stamped with the same invoice — the fee covered them — so they never show as
  * "nog te factureren".
  */
+/**
+ * [STRIPPENKAART] Bill the bundle ONCE, and leave the row open.
+ *
+ * The difference with closeWork is the whole feature: the row keeps its status, so the hours that
+ * draw the bundle down can still be written on it for months. `.is("invoice_id", null)` is the
+ * race guard - two tabs that both passed canInvoiceBundle both open a draft, and only the first
+ * one lands. The count is the answer; the caller rolls its own draft back when it is short.
+ */
+export async function stampBundle(db: any, userId: string, workId: string, invoiceId: string): Promise<{ ok: true } | { ok: false; reason: "already_billed" | "write_failed" }> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const { data, error } = await db
+    .from("work_items")
+    .update({ invoice_id: invoiceId })
+    .eq("id", workId).eq("user_id", userId).is("invoice_id", null).select("id");
+  if (error) return { ok: false, reason: "write_failed" };
+  return (data ?? []).length === 1 ? { ok: true } : { ok: false, reason: "already_billed" };
+}
+
 export async function stampPeriod(db: any, userId: string, workId: string, period: string, invoiceId: string): Promise<{ ok: true } | { ok: false; reason: "already_billed" | "write_failed" }> { // eslint-disable-line @typescript-eslint/no-explicit-any
   for (let attempt = 0; attempt < 3; attempt++) {
     const { data: fresh, error: readErr } = await db.from("work_items").select("visits, billed_periods, updated_at").eq("id", workId).eq("user_id", userId).maybeSingle();

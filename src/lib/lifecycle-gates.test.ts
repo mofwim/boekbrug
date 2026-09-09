@@ -28809,5 +28809,20 @@ test("[WERK] the trade's own work is one primitive, built on the app, and never 
   assert.match(door, /if \(contractFee\(row\) !== null\) \{[\s\S]*?if \(!canInvoicePeriod\(row, period, today\)\)[\s\S]*?stampPeriod\(db, user\.id, id, period, opened\.invoiceId\)[\s\S]*?rollbackDraft\(/, "the period door proves itself or rolls back");
   assert.match(api, /searchParams\.get\("contracten"\) === "1"[\s\S]*?contractStat\(\{ row: r, hoursMonth/, "the portfolio is the pure module's arithmetic on this month's reads");
   assert.match(stand, /\.not\("work_item_id", "is", null\)[\s\S]*?\.is\("work_item_id", null\)\.in\("client_name", suppliers/, "a loose bon is only a signal for a supplier the owner attached to work before");
+  // [STRIPPENKAART] Hours sold up front. Two rules carry the money: the bundle is billed ONCE
+  // (invoice_id under `.is("invoice_id", null)`), and it is NEVER billed through the ordinary door
+  // — that one closes the row, and the hours that draw the bundle down are written on it for
+  // months afterwards. [RETAINER] The dienstverlener's opdracht carries the fee, the end and the bundle.
+  assert.match(pure, /if \(bundleHours\(row\) !== null\) return false;/, "the ordinary door refuses a bundle");
+  assert.match(pure, /overrun: round2\(Math\.max\(0, used - sold\)\)/, "the overrun is measured, never hidden");
+  assert.match(shared, /export async function stampBundle[\s\S]*?\.is\("invoice_id", null\)\.select\("id"\)/, "the bundle is stamped once, and the row is not closed");
+  assert.doesNotMatch(shared, /export async function stampBundle[\s\S]{0,400}?status: "gefactureerd"/, "a bundle row stays open");
+  assert.match(door, /if \(bundleHours\(row\) !== null\) \{[\s\S]*?canInvoiceBundle\(row\)[\s\S]*?stampBundle\(db, user\.id, id, opened\.invoiceId\)[\s\S]*?rollbackDraft\(/, "the bundle door proves itself or rolls back");
+  // Read from the source, like every other assertion here: this file imports no app modules.
+  const dienstBlok = pure.slice(pure.indexOf("const DIENST: WorkSkin"), pure.indexOf("const LES: WorkSkin"));
+  for (const veld of ["maandbedrag", "einddatum", "bundel_uren"]) {
+    assert.match(dienstBlok, new RegExp(`key: "${veld}"`), `the dienstverlening opdracht is missing ${veld}`);
+  }
+
   assert.ok(existsSync("tests/render/werk.test.tsx"), "the screen is on the render line");
 });

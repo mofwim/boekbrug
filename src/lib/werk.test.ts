@@ -8,6 +8,7 @@ import {
   canInvoiceTogether, togetherGroups, workInvoiceLines, REPEATS, REPEAT_KEYS, isRepeat,
   financialReadiness, overBudget, workSignals,
   contractFee, canInvoicePeriod, periodInvoiceLines, periodLabelNL, storedPeriods, daysUntil, contractStat, contractGroups, periodOf,
+  bundleHours, bundleState, canInvoiceBundle, bundleInvoiceLines,
 } from "./werk";
 
 test("[WERK] the layer exists for the four verticals and their sister trades, and for nobody else", () => {
@@ -311,4 +312,61 @@ test("[WERK] counts, and the two guards", () => {
   assert.equal(canDelete({ invoice_id: null, attachedCosts: 0, attachedHours: 0 }), true);
   assert.equal(canDelete({ invoice_id: null, attachedCosts: 1, attachedHours: 0 }), false);
   assert.equal(canDelete({ invoice_id: "x", attachedCosts: 0, attachedHours: 0 }), false);
+});
+
+// ── [STRIPPENKAART] Hours sold up front, drawn down by the work ───────────────────────────────
+
+test("[STRIPPENKAART] a bundle is hours on a non-repeating row; a rhythm makes it a contract instead", () => {
+  assert.equal(bundleHours({ fields: { bundel_uren: 10 } }), 10);
+  assert.equal(bundleHours({ fields: {} }), null);
+  assert.equal(bundleHours({ fields: { bundel_uren: 0 } }), null, "zero hours is not a bundle");
+  assert.equal(bundleHours({ repeat_every: "maand", fields: { bundel_uren: 10 } }), null, "a bundle is sold once");
+});
+
+test("[STRIPPENKAART] the balance counts every hour on the opdracht, and the overrun is stated not hidden", () => {
+  const row = { status: "bezig", invoice_id: "inv-1", fields: { bundel_uren: 10 } };
+  assert.deepEqual(bundleState({ row, hoursUsed: 4 }), { sold: 10, used: 4, remaining: 6, overrun: 0, invoiced: true });
+  assert.deepEqual(bundleState({ row, hoursUsed: 12.5 }), { sold: 10, used: 12.5, remaining: 0, overrun: 2.5, invoiced: true });
+  assert.equal(bundleState({ row: { status: "open", fields: {} }, hoursUsed: 3 }), null, "not a bundle, no balance");
+});
+
+test("[STRIPPENKAART] the bundle is billed once, and never through the ordinary door that would close the row", () => {
+  const priced = [{ kind: "vast", description: "Strippenkaart 10 uur", quantity: 1, unit_price: 950, btw_rate: 21 }] as const;
+  const fresh = { status: "open", invoice_id: null, fields: { bundel_uren: 10 }, lines: priced };
+  assert.equal(canInvoiceBundle(fresh), true);
+  assert.equal(canInvoice({ status: "klaar", invoice_id: null, fields: { bundel_uren: 10 } }), false,
+    "the ordinary door refuses a bundle — it would close the row and the later hours could never be written on it");
+  assert.equal(canInvoiceBundle({ ...fresh, invoice_id: "inv-1" }), false, "once");
+  assert.equal(canInvoiceBundle({ ...fresh, lines: [] }), false, "a bundle without a price is not an invoice");
+  assert.equal(canInvoiceBundle({ ...fresh, status: "geannuleerd" }), false);
+});
+
+test("[STRIPPENKAART] the invoice carries the row's own lines — the hours are its delivery, not its lines", () => {
+  const lines = bundleInvoiceLines({ lines: [
+    { kind: "vast", description: "Strippenkaart 10 uur", quantity: 1, unit_price: 950, btw_rate: 21 },
+    { kind: "arbeid", description: "Nog geen prijs", quantity: 1, unit_price: 0, btw_rate: 21 },
+  ] as never });
+  assert.deepEqual(lines, [{ description: "Strippenkaart 10 uur", quantity: 1, unit_price: 950, btw_rate: 21 }]);
+});
+
+test("[STRIPPENKAART] a bundle that is used up is a signal, with the hours worked past it", () => {
+  const rows = [
+    { id: "w1", status: "bezig", fields: { bundel_uren: 10 }, lines: [] },
+    { id: "w2", status: "bezig", fields: { bundel_uren: 5 }, lines: [] },
+  ];
+  const signals = workSignals({
+    rows, hoursWithoutRate: 0, unlinkedCosts: { n: 0, amount: 0 },
+    hoursByWork: new Map([["w1", 13], ["w2", 4]]),
+  });
+  assert.deepEqual(signals.filter((s) => s.kind === "bundle_over"), [{ kind: "bundle_over", n: 1, hours: 3 }]);
+});
+
+test("[RETAINER] a dienstverlener's opdracht carries the retainer, the end date and the bundle", () => {
+  const keys = workSkin("dienstverlening")!.fields.map((f) => f.key);
+  for (const k of ["maandbedrag", "einddatum", "bundel_uren"]) {
+    assert.ok(keys.includes(k), `the dienstverlening opdracht is missing ${k}`);
+  }
+  // A retainer is the schoonmaak contract's arithmetic on a consultant's row: same fee, same
+  // period door, same renewal countdown.
+  assert.equal(contractFee({ repeat_every: "maand", fields: { maandbedrag: 1500 } }), 1500);
 });

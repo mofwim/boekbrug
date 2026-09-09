@@ -21,8 +21,8 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { requireOwner } from "@/lib/owner-only";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { amsterdamToday } from "@/lib/format-nl";
-import { canInvoice, unbilledVisits, contractFee, canInvoicePeriod, periodInvoiceLines, periodOf, isPeriod } from "@/lib/werk";
-import { loadWorkForInvoice, openDraftFor, stampHours, stampVisits, stampPeriod, closeWork, rollbackDraft, type WorkLoaded } from "@/lib/werk-factuur";
+import { canInvoice, unbilledVisits, contractFee, canInvoicePeriod, periodInvoiceLines, periodOf, isPeriod, bundleHours, canInvoiceBundle, bundleInvoiceLines } from "@/lib/werk";
+import { loadWorkForInvoice, openDraftFor, stampHours, stampVisits, stampPeriod, stampBundle, closeWork, rollbackDraft, type WorkLoaded } from "@/lib/werk-factuur";
 
 export const dynamic = "force-dynamic";
 
@@ -71,6 +71,31 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       ipAddress: getClientIP(req),
     }).catch(() => {});
     return NextResponse.json({ ok: true, invoiceId: opened.invoiceId, lines: lines.length, hoursBilled: 0, hoursWithoutRate: 0, visitsBilled: 0, period });
+  }
+
+  // [STRIPPENKAART] A bundle is billed up front and the row STAYS OPEN: the hours that draw it
+  // down are written on it for months afterwards. Only the row's own lines go on the invoice —
+  // the hours are its delivery, not its lines, and stamping them would bill them twice.
+  if (bundleHours(row) !== null) {
+    if (!canInvoiceBundle(row)) {
+      return NextResponse.json({ error: "Deze strippenkaart is al gefactureerd, of heeft nog geen bedrag.", code: "bundle_not_invoiceable" }, { status: 409 });
+    }
+    const clientName = (row.client_name ?? "").trim();
+    if (!clientName) return NextResponse.json({ error: "Zet eerst een klant op dit werk.", code: "no_client" }, { status: 409 });
+    const lines = bundleInvoiceLines(row);
+    const opened = await openDraftFor(req, { client_id: row.client_id, client_name: clientName, lines });
+    if (!opened.ok) return NextResponse.json({ error: opened.error, from: "draft" }, { status: opened.status });
+    const stamped = await stampBundle(db, user.id, id, opened.invoiceId);
+    if (!stamped.ok) {
+      await rollbackDraft(db, user.id, opened.invoiceId);
+      return NextResponse.json({ error: "Deze strippenkaart is inmiddels gefactureerd.", code: stamped.reason }, { status: 409 });
+    }
+    await logAuditAction({
+      userId: user.id, action: "work.invoiced", entityType: "work_item", entityId: id,
+      newValue: { invoice_id: opened.invoiceId, title: row.title, bundel_uren: bundleHours(row) },
+      ipAddress: getClientIP(req),
+    }).catch(() => {});
+    return NextResponse.json({ ok: true, invoiceId: opened.invoiceId, lines: lines.length, hoursBilled: 0, hoursWithoutRate: 0, visitsBilled: 0 });
   }
 
   if (!canInvoice({ status: row.status, invoice_id: row.invoice_id ?? null, repeat_every: row.repeat_every, visits: row.visits, fields: row.fields })) {

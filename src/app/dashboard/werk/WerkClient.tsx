@@ -33,12 +33,13 @@ import { amsterdamToday } from '@/lib/format-nl'
 import {
   workSkin, REPEAT_KEYS, canDelete, hoursBudget, phoneTarget, readyMessageNL, dueOn, inWindow, linesTotalInc, financialReadiness, overBudget, contractFee, periodOf, periodLabelNL,
   type WorkStatus, type WorkLine, type WorkMargin, type ContractStat,
+  bundleState,
 } from '@/lib/werk'
 import type { WorkStand } from '@/lib/werk-stand'
 import type { WorkRow, AttachedHours, AttachedCost, AttachedDocument, WorkHistory, WorkInvoiceSummary } from '@/lib/werk-rows'
 import {
   WorkList, WorkSheet, WorkForm, StatusChips, LinesEditor, MarginLine, AttachedList, CandidateList, VisitsPanel, DocumentsList, TogetherOffer, ReadinessList, ContractsPanel,
-  HistoryList, HoursForm, EMPTY_FORM, invoiceButtonState, primaryButton, ghostButton, type WorkFormValue, type LineSuggestion, type T, StandPanel } from './WerkPanels'
+  HistoryList, HoursForm, EMPTY_FORM, invoiceButtonState, primaryButton, ghostButton, type WorkFormValue, type LineSuggestion, type T, StandPanel , BundlePanel } from './WerkPanels'
 
 const FONT = "'Roboto', -apple-system, sans-serif"
 
@@ -544,6 +545,13 @@ export default function WerkClient({ vak }: { vak: string }) {
                 <button type="button" style={{ ...ghostButton, flex: 1 }} disabled={busy} onClick={() => { setPicking(null); setChosen(new Set()) }}>{t('werk.annuleren')}</button>
                 <button type="button" style={{ ...primaryButton, flex: 2 }} disabled={busy || chosen.size === 0} onClick={() => void koppel(picking === 'hours' ? 'attach_hours' : 'attach_cost', [...chosen])}>{t('werk.opslaan')}</button>
               </div>
+            </div>
+          )}
+
+          {/* [STRIPPENKAART] The balance, above the margin: on a bundle this is the money question. */}
+          {bundleState({ row: detail.row, hoursUsed: detail.hoursTotal }) && (
+            <div style={{ margin: '16px 0 0' }}>
+              <BundlePanel bundle={bundleState({ row: detail.row, hoursUsed: detail.hoursTotal })!} t={t} />
             </div>
           )}
 

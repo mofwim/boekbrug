@@ -34,5 +34,6 @@ export function werkSignaalZin(s: WorkSignal, t: Tr): { text: string; href: stri
     case "costs_unlinked": return { text: t("vandaag.werk.sig.kosten", { n: s.n, bedrag: formatEuroNL(s.amount) }), href: "/dashboard/incoming/manage" };
     case "over_budget": return { text: t("vandaag.werk.sig.begroting", { n: s.n }), href: "/dashboard/werk" };
     case "contract_ending": return { text: t("vandaag.werk.sig.contractEinde", { n: s.n }), href: "/dashboard/werk" };
+    case "bundle_over": return { text: t("vandaag.werk.sig.strippenkaartOp", { n: s.n, uren: s.hours.toLocaleString("nl-NL") }), href: "/dashboard/werk" };
   }
 }

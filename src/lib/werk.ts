@@ -270,6 +270,13 @@ const DIENST: WorkSkin = {
   fields: [
     { key: "referentie", type: "text", labelKey: "werk.veld.referentie", onCard: true },
     { key: "afgesproken_uren", type: "number", labelKey: "werk.veld.afgesprokenUren", onCard: true },
+    // [RETAINER] A fixed amount per period turns this opdracht into a retainer, billed by period —
+    // the same arithmetic as the schoonmaak contract, because it is the same fact: money that
+    // arrives every month for work that keeps running. The end date counts down to the renewal.
+    { key: "maandbedrag", type: "number", labelKey: "werk.veld.maandbedrag" },
+    { key: "einddatum", type: "date", labelKey: "werk.veld.einddatum", onCard: true },
+    // [STRIPPENKAART] Hours sold up front. Invoiced once; the hours on this opdracht draw it down.
+    { key: "bundel_uren", type: "number", labelKey: "werk.veld.bundelUren", onCard: true },
   ],
   lineKinds: [
     { kind: "vast", labelKey: "werk.regel.vast", unit: "post" },
@@ -576,6 +583,17 @@ export function financialReadiness(args: {
     ];
     return { ok: items.every((i) => i.ok), items, amountExBtw: fee };
   }
+  // [STRIPPENKAART] A bundle is ready when it has a client and a price and has not been billed.
+  // Its hours are the delivery, so an hour without a rate on it holds nothing up.
+  if (bundleHours(row) !== null) {
+    const items = [
+      { key: "client" as const, ok: !!(row.client_name && row.client_name.trim()) },
+      { key: "lines" as const, ok: linesTotalEx(row.lines) > 0 },
+      { key: "hoursRate" as const, ok: true },
+      { key: "status" as const, ok: canInvoiceBundle(row) },
+    ];
+    return { ok: items.every((i) => i.ok), items, amountExBtw: round2(linesTotalEx(row.lines)) };
+  }
   const unbilled = hours.filter((h) => !h.invoice_id);
   const hoursRevenue = round2(unbilled.reduce((s, h) => s + (h.hourly_rate !== null ? h.hours * h.hourly_rate : 0), 0));
   const own = row.repeat_every ? visitInvoiceLines(row.lines, unbilledVisits(row.visits)) : row.lines;
@@ -608,12 +626,13 @@ export type WorkSignal =
   | { kind: "hours_without_rate"; n: number }
   | { kind: "costs_unlinked"; n: number; amount: number }
   | { kind: "over_budget"; n: number }
-  | { kind: "contract_ending"; n: number };
+  | { kind: "contract_ending"; n: number }
+  | { kind: "bundle_over"; n: number; hours: number };
 
 const EXTRA_KINDS: ReadonlySet<string> = new Set(["meerwerk", "extra"]);
 
 export function workSignals(input: {
-  rows: ReadonlyArray<{ id: string; status: string; fields: FieldValues; lines: readonly WorkLine[] }>;
+  rows: ReadonlyArray<{ id: string; status: string; fields: FieldValues; lines: readonly WorkLine[]; repeat_every?: string | null; invoice_id?: string | null }>;
   /** Unbilled hours on open work that carry no rate — they would fall off the invoice. */
   hoursWithoutRate: number;
   /** Hours attached per open piece of work, to measure against afgesproken_uren. */
@@ -628,6 +647,7 @@ export function workSignals(input: {
   let extraN = 0, extraAmount = 0;
   let overN = 0;
   let endingN = 0;
+  let bundleN = 0, bundleHoursOver = 0;
   for (const r of open) {
     const left = input.today ? daysUntil(r.fields.einddatum, input.today) : null;
     if (left !== null && left <= CONTRACT_ENDING_DAYS) endingN += 1;
@@ -638,12 +658,17 @@ export function workSignals(input: {
     const overHours = typeof agreed === "number" && agreed > 0 && spent > agreed;
     const budget = overBudget(r);
     if (overHours || budget?.over) overN += 1;
+    // [STRIPPENKAART] The bundle is used up and the work goes on. Every hour past this point is a
+    // top-up or a gift, and the owner is the only one who can decide which.
+    const bundle = bundleState({ row: r, hoursUsed: spent });
+    if (bundle && bundle.overrun > 0) { bundleN += 1; bundleHoursOver = round2(bundleHoursOver + bundle.overrun); }
   }
   if (extraN > 0) out.push({ kind: "meerwerk_open", n: extraN, amount: extraAmount });
   if (input.hoursWithoutRate > 0) out.push({ kind: "hours_without_rate", n: input.hoursWithoutRate });
   if (input.unlinkedCosts.n > 0) out.push({ kind: "costs_unlinked", n: input.unlinkedCosts.n, amount: round2(input.unlinkedCosts.amount) });
   if (overN > 0) out.push({ kind: "over_budget", n: overN });
   if (endingN > 0) out.push({ kind: "contract_ending", n: endingN });
+  if (bundleN > 0) out.push({ kind: "bundle_over", n: bundleN, hours: bundleHoursOver });
   return out;
 }
 
@@ -691,6 +716,9 @@ export function workCounts(rows: ReadonlyArray<{ status: string; repeat_every?: 
  * row itself stays open, the invoice is stamped on the beurten it covers.
  */
 export function canInvoice(row: { status: string; invoice_id: string | null; repeat_every?: string | null; visits?: readonly Visit[]; fields?: FieldValues }): boolean {
+  // [STRIPPENKAART] A bundle is billed up front and stays open while it is used; the ordinary door
+  // would close it on its own invoice and the hours after that could never be written on it.
+  if (bundleHours(row) !== null) return false;
   if (row.repeat_every) {
     // [CONTRACT] A contract with a fixed amount per period is billed by period (canInvoicePeriod),
     // never by its beurten — those are covered by the fee.
@@ -743,6 +771,81 @@ export function canInvoicePeriod(row: { status: string; repeat_every?: string | 
   if (row.status === "geannuleerd" || row.status === "gefactureerd") return false;
   if (!isPeriod(period) || period > periodOf(today)) return false;
   return !(row.billed_periods ?? []).some((p) => p.period === period);
+}
+
+// ── [STRIPPENKAART] Hours sold up front, drawn down by the work ───────────────────────────────
+//
+// A coach, a trainer, an interim professional sells 10 or 20 hours in one go: the customer pays
+// once and calls off the hours over the year. Two things must be true and neither is automatic:
+//
+//   1. The bundle is invoiced ONCE. work_items.invoice_id is that record — set while the row stays
+//      OPEN, which is the whole difference with ordinary work. closeWork would move the row to
+//      'gefactureerd', and hours written after that could no longer be attached to it.
+//   2. The hours on the bundle are NEVER invoiced again. They are the delivery of an invoice that
+//      is already paid, so they are not "unbilled hours waiting for money" on any screen.
+//
+// What the app owes the owner in return is the balance: sold, used, left — and the moment it is
+// exceeded, because that hour is either a top-up or a gift.
+
+/**
+ * Hours sold on this row, or null when it is not a bundle.
+ *
+ * Never on a repeating row: a bundle is sold once. A row that carries both a rhythm and a bundle
+ * is read as the contract it says it is, and the fee path decides.
+ */
+export function bundleHours(row: { repeat_every?: string | null; fields?: FieldValues }): number | null {
+  if (row.repeat_every) return null;
+  const v = row.fields?.bundel_uren;
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? round2(v) : null;
+}
+
+export interface BundleState {
+  /** Hours sold. */
+  sold: number;
+  /** Hours written on this opdracht — every hour, invoiced or not: they all draw the bundle down. */
+  used: number;
+  /** What is left, never below zero. */
+  remaining: number;
+  /** Hours worked beyond the bundle. Above zero is a decision, not a mistake. */
+  overrun: number;
+  /** Has the bundle itself been billed? */
+  invoiced: boolean;
+}
+
+/** The balance of one bundle. Null when this row is not a bundle. */
+export function bundleState(args: {
+  row: { status: string; invoice_id?: string | null; repeat_every?: string | null; fields?: FieldValues };
+  /** Hours attached to this opdracht, however they were written. */
+  hoursUsed: number;
+}): BundleState | null {
+  const sold = bundleHours(args.row);
+  if (sold === null) return null;
+  const used = round2(Math.max(0, Number(args.hoursUsed) || 0));
+  return {
+    sold,
+    used,
+    remaining: round2(Math.max(0, sold - used)),
+    overrun: round2(Math.max(0, used - sold)),
+    invoiced: !!args.row.invoice_id,
+  };
+}
+
+/** May the bundle be invoiced? Once, on an open row that states what it costs. */
+export function canInvoiceBundle(row: { status: string; invoice_id?: string | null; repeat_every?: string | null; fields?: FieldValues; lines?: readonly WorkLine[] }): boolean {
+  if (bundleHours(row) === null) return false;
+  if (row.invoice_id) return false;
+  if (row.status === "geannuleerd" || row.status === "gefactureerd") return false;
+  return linesTotalEx(row.lines ?? []) > 0;
+}
+
+/** What the bundle invoice carries: the row's own lines. The hours are its delivery, not its lines. */
+export function bundleInvoiceLines(row: { lines: readonly WorkLine[] }): InvoiceLineDraft[] {
+  return row.lines.filter((l) => l.unit_price > 0).map((l) => ({
+    description: l.description,
+    quantity: round2(l.quantity),
+    unit_price: round2(l.unit_price),
+    btw_rate: l.btw_rate ?? DEFAULT_LINE_BTW,
+  }));
 }
 
 const MONTHS_NL_LONG = ["januari", "februari", "maart", "april", "mei", "juni", "juli", "augustus", "september", "oktober", "november", "december"];

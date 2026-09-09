@@ -5,7 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
-import { WorkList, WorkCard, StatusChips, LinesEditor, MarginLine, AttachedList, VisitsPanel, DocumentsList, TogetherOffer, WorkForm, WorkSheet, HistoryList, HoursForm, ReadinessList, ContractsPanel, EMPTY_FORM, invoiceButtonState, StandPanel, type T } from "../../src/app/dashboard/werk/WerkPanels";
+import { WorkList, WorkCard, StatusChips, LinesEditor, MarginLine, AttachedList, VisitsPanel, DocumentsList, TogetherOffer, WorkForm, WorkSheet, HistoryList, HoursForm, ReadinessList, ContractsPanel, EMPTY_FORM, invoiceButtonState, StandPanel, BundlePanel, type T } from "../../src/app/dashboard/werk/WerkPanels";
 import { VakCardView } from "../../src/components/settings/VakCard";
 import { werkZin, werkSignaalZin } from "../../src/app/dashboard/vandaag/VandaagClient";
 import { workSkin } from "../../src/lib/werk";
@@ -243,4 +243,22 @@ test("[WERK-STAND] creating work asks for the money first; the rest waits behind
   assert.ok(!before.includes("Kilometerstand") && !before.includes("Monteur"), "the odometer and the mechanic wait behind the disclosure");
   const editing = renderToStaticMarkup(<WorkForm skin={workSkin("automonteur")!} t={t} value={{ ...EMPTY_FORM }} onChange={() => {}} editing />);
   assert.ok(!editing.includes("<summary"), "editing shows everything, nothing folded");
+});
+
+test("[STRIPPENKAART] the balance is on the work, and an exceeded bundle says so", () => {
+  const half = renderToStaticMarkup(<BundlePanel t={t} bundle={{ sold: 10, used: 4, remaining: 6, overrun: 0, invoiced: true }} />);
+  assert.ok(half.includes("Strippenkaart") && half.includes("Vooraf gefactureerd"), "the bundle names itself and its state");
+  assert.ok(half.includes("4 van 10 uur gebruikt") && half.includes("6 over"), "sold, used and left");
+  assert.ok(!half.includes("is op"), "a bundle with hours left is not a warning");
+  const over = renderToStaticMarkup(<BundlePanel t={t} bundle={{ sold: 10, used: 12.5, remaining: 0, overrun: 2.5, invoiced: true }} />);
+  assert.ok(over.includes("2,5 uur meer gewerkt dan verkocht"), "the overrun is stated, in hours");
+  const unbilled = renderToStaticMarkup(<BundlePanel t={t} bundle={{ sold: 10, used: 0, remaining: 10, overrun: 0, invoiced: false }} />);
+  assert.ok(unbilled.includes("Nog niet gefactureerd"), "a bundle that was never billed says so");
+});
+
+test("[RETAINER] the dienstverlener's form asks for the retainer, the end date and the bundle", () => {
+  const form = renderToStaticMarkup(<WorkForm skin={workSkin("dienstverlening")!} t={t} value={{ ...EMPTY_FORM }} onChange={() => {}} editing />);
+  assert.ok(form.includes("Vast bedrag per maand"), "the retainer amount");
+  assert.ok(form.includes("Strippenkaart (uren)"), "the prepaid bundle");
+  assert.ok(form.includes("Herhaalt"), "an opdracht may repeat — that is what makes the retainer a retainer");
 });
