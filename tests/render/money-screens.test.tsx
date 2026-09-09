@@ -175,8 +175,8 @@ test("[RENDER-GATE] the pay screen renders, with rows that trip every warning it
   // row (a non-contradicting _einvoice) — so all three lines must be there, in words and not keys,
   // each led by the badge's own label.
   for (const [badge, clause] of [
-    ["Automatisch</strong>", "zelf gelezen en geboekt"],
-    ["Bon · al afgerekend</strong>", "zelf als betaald geboekt"],
+    ["Automatisch</strong>", "elke controle slaagde"],
+    ["Bon · al afgerekend</strong>", "de bon noemt de betaalwijze"],
     ["Cijfers van de leverancier</strong>", "niets van een pagina gelezen"],
   ]) {
     assert.ok(html.includes(badge), `the legend does not lead with the badge's own label: ${badge}`);
@@ -315,7 +315,7 @@ test("[BETAALBEWIJS] every \"Betaald\" carries the bank line that says so", asyn
   }] } });
   assert.match(bank, /afgeschreven/);
   // [AUTO-UITLEG] No such row on this screen → no legend for a badge nobody sees.
-  for (const clause of ["zelf gelezen en geboekt", "zelf als betaald geboekt", "niets van een pagina gelezen"]) {
+  for (const clause of ["elke controle slaagde", "de bon noemt de betaalwijze", "niets van een pagina gelezen"]) {
     assert.ok(!bank.includes(clause), `the legend explains a badge that is not on screen: ${clause}`);
   }
   // Curly quotes, as the rest of the catalogue writes them. The QUOTES are the app's punctuation;

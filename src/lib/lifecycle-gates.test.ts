@@ -21795,17 +21795,19 @@ test("[AUTO-UITLEG] the badges the app awards on its own judgement are explained
   assert.match(manage, /displayed\.some\(\(inv\) => eInvoiceBadge\(inv\) !== null\) \? \[\{ id: 'efactuur', icon: 'verified', badge: t\('inkoop\.cijfersLeverancier'\), text: t\('ink\.eFactuurLegenda'\) \}\]/);
   // The badges' own tooltips stay: a phone never shows a title, a desktop still does.
   assert.match(manage, /title=\{t\('ink\.autoVerifiedUitleg'\)\}/);
-  // The Dutch of the first line names checks the rule runs, and the two claims that may not soften.
+  // The Dutch of the first line: what the app did, on what ground, and the two claims that may not
+  // soften. Short, because it stands at rest ([RUSTIG]): the checks themselves are on every card.
   const cat = readFileSync("src/lib/i18n/messages.ts", "utf8");
   const nl = /'ink\.autoUitleg': \{\s*nl: '([^']+)'/.exec(cat)?.[1] ?? "";
-  for (const clause of ["zelf gelezen en geboekt", "kloppen met elkaar", "geen herinnering, overzicht of creditnota", "Er is niets betaald", "vóór je betaalt", "rekeningnummer"]) {
+  for (const clause of ["las en boekte deze factuur zelf", "elke controle slaagde", "Niets is betaald", "vóór je betaalt"]) {
     assert.ok(nl.includes(clause), `the explanation lost: "${clause}"`);
   }
+  assert.ok(nl.trim().split(/\s+/).length <= 20, "the explanation stands at rest and grew past twenty words — say it at the card instead");
   assert.doesNotMatch(nl, /^Automatisch/, "the badge's label comes from the badge's own key, not typed into the sentence");
   // The receipt line names what the paper must say for the app to have acted — the rule in
   // receipt-auto-settle.ts — and the way back.
   const bon = /'ink\.bonAutoUitleg': \{\s*nl: '([^']+)'/.exec(cat)?.[1] ?? "";
-  for (const clause of ["de bon zelf de betaalwijze noemt", "zet de betaling op de bon terug"]) {
+  for (const clause of ["de bon noemt de betaalwijze", "Zet de betaling terug"]) {
     assert.ok(bon.includes(clause), `the receipt explanation lost: "${clause}"`);
   }
 
