@@ -679,6 +679,16 @@ input::placeholder, textarea::placeholder {
   }
 }
 
+/* [ZIJBALK-ACCOUNT] The home bar's account corner — the Vandaag link, Berichten, the bell and
+   the avatar menu — is drawn in the rail from 1024px (RailAccount.tsx). Hidden here at the SAME
+   breakpoint that shows the rail, so at no width is it in both places or in neither. The element
+   sets display:flex inline; !important is what makes this rule win over it. */
+@media (min-width: 1024px) {
+  .dash-header-account {
+    display: none !important;
+  }
+}
+
 /* ── Inkoopfacturen toolbar ──────────────────────────────────────────────────── */
 /* [TOOLBAR-ROW] "Meerdere betalen" and "Matchen met bank & kas" used to be two
    separate blocks, one under the other. On a phone that is right — together they

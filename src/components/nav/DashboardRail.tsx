@@ -28,6 +28,20 @@
 // right; the wider the row, the further the eye travels between them and the easier it is to read
 // the amount off the wrong line". COLUMN.work stays 680. The rail takes space that was empty.
 //
+// ── [ZIJBALK-DEUR] EACH ROW LOOKS LIKE ITS TILE ──
+//
+// A row is the tile in miniature: the tile's glyph, white, on a small square of the tile's own
+// colour. Both come from DOOR_LOOK in nav-destinations.ts, which the home reads as well, so a row
+// and a tile cannot come to show one door two ways. The active pill is still the pill — colour on
+// its own is invisible to a red-green colourblind reader, and now every row has a colour.
+//
+// ── [ZIJBALK-ACCOUNT] THE ACCOUNT CORNER, ON TOP ──
+//
+// The home bar's trailing corner (name, e-mail, the bell, Berichten, Instellingen, Uitloggen) is
+// drawn here from 1024px and hidden there at the same breakpoint — see RailAccount.tsx. Handed in
+// as a prop by the layout; without it the rail is navigation only, which is what the render tests
+// and the accountant's four-row rail rely on.
+//
 // ── WHAT IT DELIBERATELY DOES NOT COVER ──
 //
 // Between 641px and 1023px there is still only the header's one text link: the phone bar is gone
@@ -45,8 +59,15 @@ import { translator } from '@/lib/i18n/t'
 import { M3, FONT } from '@/lib/design/tokens'
 import type { Role } from '@/lib/navigation'
 import { railSectionsFor, railDestinations, activeHref } from '@/lib/nav-destinations'
+import { RailAccount, type RailAccountInfo } from './RailAccount'
 
-export function DashboardRail({ role, counter = false, work = false }: { role: Role | null; counter?: boolean; work?: boolean }) {
+export function DashboardRail({ role, counter = false, work = false, account }: {
+  role: Role | null
+  counter?: boolean
+  work?: boolean
+  /** [ZIJBALK-ACCOUNT] Who is signed in. Absent → no account block, navigation only. */
+  account?: RailAccountInfo
+}) {
   const pathname = usePathname()
   // Before the early return: a hook may not sit behind a condition.
   const taal = useLocale()
@@ -93,6 +114,7 @@ export function DashboardRail({ role, counter = false, work = false }: { role: R
         fontFamily: FONT,
       }}
     >
+      {account && <RailAccount account={account} role={role} />}
       {sections.map((section, si) => (
         <div key={section.heading ?? `s${si}`} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {section.heading && (
@@ -137,19 +159,34 @@ export function DashboardRail({ role, counter = false, work = false }: { role: R
                   minHeight: 40,
                 }}
               >
+                {/* [ZIJBALK-DEUR] The tile in miniature: white glyph on the door's own colour.
+                    A row without a tint (none today — the tests hold it) falls back to the
+                    neutral the rail used to draw every glyph in. */}
                 <span
-                  className="material-symbols-outlined"
                   aria-hidden
                   style={{
-                    fontSize: 21,
+                    width: 28,
+                    height: 28,
+                    borderRadius: 8,
                     flexShrink: 0,
-                    color: isActive ? M3.onPrimaryContainer : M3.onSurfaceVariant,
-                    fontVariationSettings: isActive
-                      ? "'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 24"
-                      : undefined,
+                    background: item.tint ?? M3.onSurfaceVariant,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                   }}
                 >
-                  {item.icon}
+                  <span
+                    className="material-symbols-outlined"
+                    style={{
+                      fontSize: 17,
+                      color: '#fff',
+                      fontVariationSettings: isActive
+                        ? "'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 24"
+                        : undefined,
+                    }}
+                  >
+                    {item.icon}
+                  </span>
                 </span>
                 <span
                   style={{

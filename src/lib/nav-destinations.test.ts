@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { destinationsFor, railSectionsFor, railDestinations, activeHref, OWNER, OWNER_COUNTER, ACCOUNTANT, OWNER_WERK } from "./nav-destinations";
+import { destinationsFor, railSectionsFor, railDestinations, activeHref, OWNER, OWNER_COUNTER, ACCOUNTANT, OWNER_WERK, DOOR_LOOK, doorLook } from "./nav-destinations";
 
 test("[NAV-BESTEMMINGEN] each role gets its own list, and the trade only moves the second one", () => {
   assert.deepEqual(destinationsFor("zzper"), OWNER);
@@ -147,4 +147,26 @@ test("[ZIJBALK] the deeper destination wins across groups", () => {
   assert.equal(activeHref("/dashboard/incoming", alle), "/dashboard/incoming");
   // …and a screen the rail does not carry still lights nothing.
   assert.equal(activeHref("/dashboard/beveiliging", alle), null);
+});
+
+// ── [ZIJBALK-DEUR] One look per door ────────────────────────────────────────────────────────────
+
+test("[ZIJBALK-DEUR] every rail row carries the look of its tile, from the one table", () => {
+  for (const [role, counter, work] of [
+    ["zzper", false, false], ["zzper", true, false], ["zzper", false, true], ["accountant", false, false],
+  ] as const) {
+    for (const d of railDestinations(role, counter, work)) {
+      const look = DOOR_LOOK[d.href as keyof typeof DOOR_LOOK];
+      assert.ok(look, `${role}: ${d.href} has no entry in DOOR_LOOK`);
+      assert.equal(d.icon, look.icon, `${d.href}: the rail glyph is not the tile's`);
+      assert.equal(d.tint, look.tint, `${d.href}: the rail colour is not the tile's`);
+    }
+  }
+  // The table is total over what it names, and a colour is a colour.
+  for (const [href, look] of Object.entries(DOOR_LOOK)) {
+    assert.match(href, /^\/dashboard/, `${href} is not a dashboard route`);
+    assert.match(look.icon, /^[a-z][a-z0-9_]{2,}$/, `${href} has no glyph`);
+    assert.match(look.tint, /^#[0-9A-Fa-f]{6}$/, `${href} has no colour`);
+  }
+  assert.equal(doorLook("/dashboard/facturen").tint, "#00897B", "the Facturen tile is teal on the home, and so on the rail");
 });
