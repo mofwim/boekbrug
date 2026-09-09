@@ -6563,7 +6563,6 @@ export const MESSAGES = {
   'ink.bak.verlopen': { nl: 'Verlopen', ar: 'متأخرة', en: 'Overdue' },
   'ink.bak.dezeWeek': { nl: 'Deze week', ar: 'هذا الأسبوع', en: 'This week' },
   'ink.bak.later': { nl: 'Later', ar: 'لاحقاً', en: 'Later' },
-  'ink.bak.zonderDatum': { nl: 'Zonder vervaldatum', ar: 'بدون تاريخ استحقاق', en: 'No due date' },
   'ink.filter.zonderOrigineel': {
     nl: 'Zonder origineel',
     ar: 'بدون مستند أصلي',
@@ -8042,6 +8041,33 @@ export const MESSAGES = {
     ar: '{facturen} · مستحقة الدفع: {open} · مدفوعة: {paid}',
     en: '{facturen} · {open} to pay · {paid} paid',
   },
+  // [AUTO-UITLEG] The same line when the list is a window on a larger archive (the paid query
+  // stops at 200): the total in three words, where a whole sentence used to say it.
+  'ink.tellingVan': {
+    nl: '{facturen} van {total} · {open} te betalen · {paid} betaald',
+    ar: '{facturen} من أصل {total} · مستحقة الدفع: {open} · مدفوعة: {paid}',
+    en: '{facturen} of {total} · {open} to pay · {paid} paid',
+  },
+  // [AUTO-UITLEG] What the badges the app awards on its own judgement mean, said once above the
+  // list (BadgeLegend). The badge's own label is printed in front of each line from the badge's
+  // own key, so these hold the explanation only. Every clause of the first is a check
+  // shouldAutoAdvanceInvoice actually runs (auto-advance.ts); "niets betaald" and "vóór je
+  // betaalt" are the two claims a retranslation may never soften.
+  'ink.autoUitleg': {
+    nl: 'De app heeft deze factuur zelf gelezen en geboekt, omdat al zijn controles slaagden: de bedragen kloppen met elkaar en staan zo op het document, het nummer en de datum zijn echt, de lezing was zeker, en het is een gewone factuur (geen herinnering, overzicht of creditnota). Er is niets betaald. Controleer de gegevens toch vóór je betaalt — vooral het rekeningnummer.',
+    ar: 'قرأ التطبيق هذه الفاتورة وقيّدها بنفسه لأن كل فحوصاته نجحت: المبالغ متّسقة مع بعضها ومطبوعة هكذا في المستند، الرقم والتاريخ حقيقيان، القراءة كانت واثقة، وهي فاتورة عادية (لا تذكير ولا كشف ولا إشعار دائن). لم يُدفع شيء. تحقّق من البيانات رغم ذلك قبل الدفع — خصوصاً رقم الحساب.',
+    en: 'The app read and booked this invoice itself, because all of its checks passed: the amounts agree with each other and are printed that way on the document, the number and the date are real, the read was confident, and it is an ordinary invoice (not a reminder, statement or credit note). Nothing has been paid. Still check the details before you pay — the account number above all.',
+  },
+  'ink.bonAutoUitleg': {
+    nl: 'De app heeft deze bon zelf als betaald geboekt, omdat de bon zelf de betaalwijze noemt (contant of pin) — een bon bestaat omdat er al betaald is. Klopt het niet, zet de betaling op de bon terug.',
+    ar: 'قيّد التطبيق هذا الإيصال كمدفوع بنفسه لأن الإيصال نفسه يذكر طريقة الدفع (نقداً أو بالبطاقة) — الإيصال موجود لأن الدفع تمّ أصلاً. إن لم يكن ذلك صحيحاً، تراجع عن الدفعة على الإيصال.',
+    en: 'The app booked this receipt as paid itself, because the receipt names the payment method (cash or card) — a receipt exists because payment already happened. If that is wrong, undo the payment on the receipt.',
+  },
+  'ink.eFactuurLegenda': {
+    nl: 'De bedragen komen uit de e-factuur van de leverancier zelf; er is niets van een pagina gelezen, dus er is niets dat misgelezen kan zijn.',
+    ar: 'المبالغ من الفاتورة الإلكترونية للمورّد نفسه؛ لم يُقرأ شيء من صفحة، فلا شيء يمكن أن يُقرأ خطأً.',
+    en: 'The amounts come from the supplier’s own e-invoice; nothing was read off a page, so nothing can have been misread.',
+  },
   'ink.terugdraaien': {
     nl: 'Terugdraaien',
     ar: 'تراجع',
@@ -8101,11 +8127,6 @@ export const MESSAGES = {
     nl: 'Toon alleen deze',
     ar: 'اعرض هذه فقط',
     en: 'Show only these',
-  },
-  'ink.totaalDisclosure': {
-    nl: 'Je hebt er {total} in totaal. Deze lijst toont de {open} openstaande en de {paid} meest recente betaalde.',
-    ar: 'لديك {total} في المجموع. تعرض هذه القائمة المفتوحة وعددها {open} وأحدث المدفوعة وعددها {paid}.',
-    en: 'You have {total} in total. This list shows the {open} outstanding ones and the {paid} most recently paid.',
   },
   'ink.totaalLabel': {
     nl: 'totaal',
