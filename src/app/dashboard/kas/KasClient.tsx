@@ -817,7 +817,7 @@ export default function KasClient() {
             the ledger, only while such an entry is on screen. */}
         {!loading && !loadError && (
           <BadgeLegend items={filteredEntries.some((e) => e.category === 'betaling')
-            ? [{ id: 'betaling', icon: 'link', badge: '🔗', text: t('kas.betalingAutomatisch') }]
+            ? [{ id: 'betaling', icon: 'link', badge: '🔗', text: t('kas.betalingLegenda') }]
             : []} />
         )}
 
