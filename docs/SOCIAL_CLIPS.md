@@ -232,6 +232,47 @@ Een `Beat` mag een eigen `voice` hebben. Een ondertitel is kort omdat lezen tijd
 zin mag een lidwoord meer hebben, en getallen worden voluit gespeld ("zestienhonderd drieëndertig
 euro vijftig") omdat elke synthesizer over "€ 1.633,50" struikelt.
 
+## De gereedschapskist — zestien publieke pagina's die echt werk doen
+
+Zestien publieke pagina's doen echt werk zonder account: pdf's samenvoegen, splitsen, ondertekenen,
+verkleinen, foto's schalen, een watermerk erop. Ze delen één vorm — er gebeurt niets tot er een
+BESTAND in gaat, daarna verschijnt de bediening, dan een resultaat — dus ze delen ook één definitie
+(`toolClip` in `scripts/record-clips.mts`) in plaats van zestien bijna-gelijke clips.
+
+`npx tsx scripts/make-sample-assets.mts` maakt de bestanden die erin gaan: verzonnen inkoopfacturen
+en een bonfoto die eruitzien als echt werk. Nooit een document van een echte klant — dezelfde regel
+als voor de winkelfoto's, en een video verraadt méér dan een foto.
+
+### Wat het opnemen zelf heeft rechtgezet
+
+Vier dingen die je alleen vindt door te kijken naar wat er is opgenomen:
+
+- **Het bijschrift sprak zijn eigen scherm tegen.** "METEEN TE ZIEN" stond in beeld terwijl de foto
+  vierhonderd pixels lager stond. Dezelfde fout zat in de handtekeningclip: de handtekening
+  verscheen zonder dat iemand hem zag zetten — het enige moment waar die clip om bestaat. Beide
+  clips wisselen nu bewust tussen twee kaders: de knoppen waar je iets doet, en de plek waar je het
+  ziet gebeuren.
+- **De voorbeeldfoto woog 181 kB.** Onder een clip die vraagt of je foto te groot is om te mailen,
+  liet /afbeelding-verkleinen "van 181 kB naar 65 kB" zien — een belofte die het eigen scherm
+  tegensprak. Een telefoonfoto van een bon is een paar MB, en die grootte komt van sensorruis, dus
+  die zit er nu in.
+- **/afbeeldingen-uit-pdf gaf niets terug**, en dat was het JUISTE antwoord: er zat geen enkele
+  afbeelding in de facturen-PDF, alleen vectortekst. Daar hoort een gescande PDF bij, en die maakt
+  het script apart.
+- **Eén verkeerde selector nam vijf goede clips mee.** De opslaanknop van /watermerk-op-foto heet
+  `" Opslaan (204 kB)"` — met een spatie ervoor van het icoon, en met een grootte die meebeweegt.
+  Een anker (`^`) of een getal in de selector is dus twee keer fout. En een gemiste knop is nu een
+  regel in het verslag in plaats van een afgebroken reeks.
+
+### Eén pagina die we bewust NIET filmen
+
+**/factuur-scannen.** Technisch te forceren, en daarom juist niet. De snelheidsbegrenzer is
+fail-closed en heeft Supabase nodig; daarna is het een echte, betaalde Anthropic-aanroep. Je kunt
+dat wegmokken met `page.route()` en een verzonnen antwoord — en dan toont de clip een AI-lezing die
+nooit heeft plaatsgevonden, van een factuur die niet bestaat, als bewijs van een functie die geld
+kost. Dat is geen demo maar een bewering. Deze clip komt er pas als hij tegen een echte omgeving kan
+draaien.
+
 ## Waar te posten
 
 - **LinkedIn** is voor dit publiek waarschijnlijk het sterkst: Nederlandse zzp'ers én de boekhouders

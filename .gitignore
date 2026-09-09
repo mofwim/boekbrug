@@ -102,3 +102,4 @@ store-assets/
 # [PDF-TOOLS] pdf.js runtime, copied from node_modules at build time by
 # scripts/copy-pdfjs.mjs so it can never drift from the installed version.
 /public/pdfjs
+scripts/samples/

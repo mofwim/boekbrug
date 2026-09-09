@@ -471,7 +471,9 @@ async function unfocus(p: Page) {
  * teleporteren; `steps` maakt er een beweging van. De klik zelf tekent zijn eigen rimpel.
  */
 async function moveTo(p: Page, target: ReturnType<Page["locator"]>, steps = 28, settle = 300) {
-  const box = await target.boundingBox();
+  // Kort wachten en dan doorlopen: een muis die niet beweegt kost een beeld, een opname die
+  // dertig seconden hangt en dan gooit kost de hele reeks.
+  const box = await target.boundingBox({ timeout: 4000 }).catch(() => null);
   if (!box) return;
   await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps });
   await p.waitForTimeout(settle);
@@ -524,6 +526,108 @@ async function typeNth(p: Page, index: number, value: string, perChar = 45) {
   await el.type(value, { delay: perChar });
   await p.waitForTimeout(260);
 }
+
+// ── [GEREEDSCHAP] De publieke gereedschapskist, als korte clips ───────────────
+//
+// Zestien publieke pagina's doen echt werk zonder account: pdf's samenvoegen, splitsen,
+// ondertekenen, foto's verkleinen, een watermerk erop. Ze delen één vorm — er gebeurt niets tot
+// er een BESTAND in gaat, daarna verschijnt de bediening, en daarna een resultaat — dus ze delen
+// hier ook één definitie in plaats van zestien bijna-gelijke clips.
+//
+// ── HET BESTAND ──
+//
+// scripts/make-sample-assets.mts maakt verzonnen documenten die eruitzien als echt werk. Nooit een
+// document van een echte klant: dezelfde regel als voor de winkelfoto's, en een video verraadt
+// méér dan een foto. Alle namen, bedragen, KVK- en IBAN-nummers zijn verzonnen.
+//
+// Eén ding daarvan is gemeten en niet bedacht: /afbeeldingen-uit-pdf gaf niets terug op de
+// facturen-PDF, en dat was het JUISTE antwoord — er zit geen enkele afbeelding in, alleen
+// vectortekst. Daar hoort een gescande PDF bij, en die maakt het script nu apart.
+
+/** Eén stap in een gereedschapsclip: wat er op het scherm staat, en wat er ondertussen gebeurt. */
+interface ToolBeat {
+  /** De stempel. Leeg = de vorige laten staan. */
+  stamp?: string;
+  /** Hoe lang deze stap duurt. */
+  ms: number;
+  /** Wat de gebruiker doet. Weglaten = alleen kijken. */
+  act?: (p: Page) => Promise<void>;
+}
+
+interface ToolSpec {
+  name: string;
+  path: string;
+  /** Bestandsnamen uit scripts/samples/ die in het uploadveld gaan. */
+  samples: string[];
+  /** De openingszin, in beeld vóór het bestand erin gaat. */
+  hook: string;
+  /** Hoe lang de tool nodig heeft om het bestand te lezen voordat de bediening verschijnt. */
+  readMs?: number;
+  beats: ToolBeat[];
+}
+
+const SAMPLES = process.env.CLIP_SAMPLES ?? path.join("scripts", "samples");
+
+/** Van compacte beschrijving naar een echte Clip. Eén definitie voor de hele gereedschapskist. */
+function toolClip(spec: ToolSpec): Clip {
+  return {
+    name: spec.name,
+    path: spec.path,
+    view: PHONE,
+    bare: true,
+    maxLen: 60,
+    hook: "",
+    run: async (p, _say, _step, _at, stamp) => {
+      await stamp(spec.hook);
+      await p.waitForTimeout(1900);
+
+      // Het bestand erin. Geen sleep-animatie: setInputFiles is wat de knop ook doet, en een
+      // nagespeelde sleepbeweging is de enige stap in deze clips die niet echt zou zijn.
+      const input = p.locator('input[type="file"]').first();
+      await input.setInputFiles(spec.samples.map((f) => path.join(SAMPLES, f)));
+      await p.waitForTimeout(spec.readMs ?? 2600);
+
+      for (const beat of spec.beats) {
+        if (beat.stamp !== undefined) await stamp(beat.stamp);
+        if (beat.act) await beat.act(p);
+        await p.waitForTimeout(beat.ms);
+      }
+      await stamp("GRATIS, ZONDER ACCOUNT<br><em>boekbrug.nl" + spec.path + "</em>");
+      await p.waitForTimeout(2700);
+    },
+  };
+}
+
+/**
+ * Klikken met de muis erheen, zodat de getekende cursor het doet — en NIET de hele reeks
+ * omleggen als de knop er niet is.
+ *
+ * De eerste versie wachtte de volle 30 seconden op een knop die niet bestond en gooide toen; één
+ * verkeerde selector nam daarmee vijf clips mee die het wél deden. Een gemiste knop is hier een
+ * regel in het verslag, geen afgebroken opname: de clip wordt zwakker, de reeks blijft staan.
+ */
+async function tap(p: Page, target: ReturnType<Page["locator"]>, settle = 520) {
+  if ((await target.count()) === 0) {
+    console.error(`[CLIPS] ! knop niet gevonden — stap overgeslagen`);
+    return;
+  }
+  await moveTo(p, target, 22, 200);
+  await target.click({ timeout: 4000 }).catch(() => console.error(`[CLIPS] ! klik mislukt — stap overgeslagen`));
+  await p.waitForTimeout(settle);
+}
+
+/** De voorbeeldafbeelding: de laatste <img> op de pagina is het resultaatvoorbeeld. */
+const fotoIn = (p: Page) => p.locator("img").last();
+
+/**
+ * Een knop op zijn opschrift.
+ *
+ * Zonder anker (`^`), en dat is gemeten: de opslaanknop van /watermerk-op-foto heet
+ * `" Opslaan (204 kB)"` — met een spatie ervoor van het icoon, en met een grootte die meebeweegt
+ * met de instellingen. Een anker of een getal in de selector is dus twee keer fout.
+ */
+const btn = (p: Page, label: string | RegExp) =>
+  p.locator("button").filter({ hasText: label }).first();
 
 // ── De clips ──────────────────────────────────────────────────────────────────
 // Kort, en elk begint bij een PROBLEEM in plaats van bij een scherm. Wie dit voorbij ziet komen
@@ -1103,6 +1207,202 @@ const CLIPS: Clip[] = [
       await at(59.9);
     },
   },
+  // ── [GEREEDSCHAP] Eerste reeks. Elke bediening hieronder is nagemeten in de draaiende app. ──
+  toolClip({
+    name: "20-watermerk-op-foto",
+    path: "/watermerk-op-foto",
+    samples: ["bon-foto.jpg"],
+    hook: "JE FOTO<br>DOORSTUREN?",
+    beats: [
+      // [KADER] De foto staat 400 pixels ónder de bediening, en die twee passen niet samen in
+      // beeld. De eerste opname liet daardoor "METEEN TE ZIEN" zien terwijl de foto buiten beeld
+      // stond — een bijschrift dat zijn eigen scherm tegensprak. Dus wisselt de clip bewust tussen
+      // twee kaders: de knoppen waar je iets doet, en de foto waar je het ziet gebeuren.
+      {
+        stamp: "ZET ER JE NAAM OP",
+        ms: 700,
+        act: async (p) => {
+          await bringToEyeLine(p, p.locator('input[placeholder="© jouw naam"]').first(), 0.14);
+          // Linksboven meteen: het merk staat dan aan de BOVENkant van de foto, en dat is de kant
+          // die in beeld komt als je naar de foto scrollt.
+          const pos = p.locator("select").first();
+          await pos.selectOption({ label: "Linksboven" }).catch(() => {});
+        },
+      },
+      {
+        ms: 900,
+        act: async (p) => {
+          const naam = p.locator('input[placeholder="© jouw naam"]').first();
+          await moveTo(p, naam, 22, 200);
+          await naam.click();
+          await naam.fill("");
+          await naam.type("© Van Dijk Ontwerp", { delay: 62 });
+        },
+      },
+      {
+        stamp: "METEEN OP JE FOTO",
+        ms: 2600,
+        act: async (p) => { await bringToEyeLine(p, fotoIn(p), 0.17); },
+      },
+      {
+        stamp: "WIT OF ZWART",
+        ms: 1500,
+        act: async (p) => {
+          await bringToEyeLine(p, p.locator('input[placeholder="© jouw naam"]').first(), 0.14);
+          await tap(p, btn(p, /Zwart/));
+        },
+      },
+      {
+        stamp: "",
+        ms: 2200,
+        act: async (p) => { await bringToEyeLine(p, fotoIn(p), 0.17); },
+      },
+      {
+        stamp: "EN OPSLAAN",
+        ms: 2000,
+        act: async (p) => {
+          await bringToEyeLine(p, btn(p, /Opslaan/), 0.34);
+          await moveTo(p, btn(p, /Opslaan/), 22, 200);
+        },
+      },
+    ],
+  }),
+
+  toolClip({
+    name: "21-afbeelding-verkleinen",
+    path: "/afbeelding-verkleinen",
+    samples: ["bon-foto.jpg"],
+    hook: "FOTO TE GROOT<br>OM TE MAILEN?",
+    beats: [
+      { stamp: "KIES EEN DOELGROOTTE", ms: 1400 },
+      { ms: 1500, act: async (p) => { await tap(p, btn(p, /250 kB/)); } },
+      { stamp: "OF EEN ANDER FORMAAT", ms: 1500, act: async (p) => { await tap(p, btn(p, /WebP/)); } },
+      {
+        stamp: "VERKLEINEN",
+        ms: 3200,
+        act: async (p) => {
+          await tap(p, btn(p, /Verkleinen/), 200);
+          await p.waitForTimeout(2400);
+        },
+      },
+      // Het laatste woord is het RESULTAAT, niet de knop die je net indrukte.
+      { stamp: "VAN 1,2 MB<br>NAAR 250 KB", ms: 2600 },
+    ],
+  }),
+
+  toolClip({
+    name: "22-pdf-samenvoegen",
+    path: "/pdf-samenvoegen",
+    samples: ["inkoopfacturen-3p.pdf", "inkoopfactuur-1p.pdf"],
+    hook: "VIER LOSSE PDF'S<br>NAAR JE BOEKHOUDER?",
+    readMs: 3200,
+    beats: [
+      { stamp: "SLEEP ZE ER SAMEN IN", ms: 1600 },
+      {
+        stamp: "ZET DE VOLGORDE GOED",
+        ms: 1800,
+        act: async (p) => { await tap(p, p.locator("button").filter({ hasText: "↑" }).nth(1)); },
+      },
+      {
+        stamp: "SAMENVOEGEN",
+        ms: 3000,
+        act: async (p) => {
+          await tap(p, btn(p, /Samenvoegen/), 200);
+          await p.waitForTimeout(2200);
+        },
+      },
+      { stamp: "ÉÉN DOCUMENT", ms: 2000 },
+    ],
+  }),
+
+  toolClip({
+    name: "23-pdf-ondertekenen",
+    path: "/pdf-ondertekenen",
+    samples: ["inkoopfactuur-1p.pdf"],
+    hook: "MOET JE HEM<br>NOG TEKENEN?",
+    readMs: 3200,
+    beats: [
+      {
+        stamp: "TEKEN MET JE VINGER",
+        ms: 900,
+        // Het tekenvlak staat onder de knoppen en viel buiten beeld: de eerste opname liet de
+        // handtekening verschijnen zonder dat iemand hem zag zetten — precies het moment waar deze
+        // clip om bestaat. Eerst in beeld brengen, dan pas tekenen.
+        act: async (p) => { await bringToEyeLine(p, p.locator("canvas").first(), 0.22); },
+      },
+      {
+        ms: 1600,
+        act: async (p) => {
+          // Een echte handtekening op het echte tekenvlak: muis omlaag, een lus, muis omhoog.
+          const canvas = p.locator("canvas").first();
+          const box = await canvas.boundingBox();
+          if (!box) return;
+          const x = box.x, y = box.y + box.height / 2;
+          await p.mouse.move(x + box.width * 0.12, y + 14, { steps: 8 });
+          await p.mouse.down();
+          for (const [dx, dy] of [[0.20, -26], [0.28, 16], [0.36, -20], [0.46, 10], [0.56, -24], [0.66, 6], [0.78, -12]]) {
+            await p.mouse.move(x + box.width * (dx as number), y + (dy as number), { steps: 6 });
+          }
+          await p.mouse.up();
+          await p.waitForTimeout(400);
+        },
+      },
+      { stamp: "ZET HEM OP DE PAGINA", ms: 2200 },
+      {
+        stamp: "ONDERTEKENEN",
+        ms: 3000,
+        act: async (p) => {
+          await tap(p, btn(p, /Ondertekenen/), 200);
+          await p.waitForTimeout(2200);
+        },
+      },
+      { stamp: "GETEKEND", ms: 1900 },
+    ],
+  }),
+
+  toolClip({
+    name: "24-pdf-naar-tekst",
+    path: "/pdf-naar-tekst",
+    samples: ["inkoopfacturen-3p.pdf"],
+    hook: "TEKST UIT EEN PDF<br>OVERTYPEN?",
+    readMs: 3400,
+    beats: [
+      { stamp: "DE TEKST STAAT ER AL", ms: 2600 },
+      { stamp: "MET OF ZONDER<br>PAGINANUMMERS", ms: 1900, act: async (p) => { await tap(p, btn(p, /Zonder/)); } },
+      { stamp: "KOPIËREN OF OPSLAAN", ms: 2200, act: async (p) => { await moveTo(p, btn(p, /Kopiëren/), 22, 200); } },
+    ],
+  }),
+
+  toolClip({
+    name: "25-pdf-splitsen",
+    path: "/pdf-splitsen",
+    samples: ["inkoopfacturen-3p.pdf"],
+    hook: "ÉÉN PAGINA UIT<br>EEN DIKKE PDF?",
+    readMs: 3400,
+    beats: [
+      { stamp: "KIES WELKE PAGINA'S", ms: 1500 },
+      {
+        ms: 1700,
+        act: async (p) => {
+          const vak = p.locator('input[placeholder*="1-3"]').first();
+          await moveTo(p, vak, 22, 200);
+          await vak.click();
+          await vak.fill("");
+          await vak.type("2", { delay: 120 });
+        },
+      },
+      {
+        stamp: "SPLITSEN",
+        ms: 3000,
+        act: async (p) => {
+          await tap(p, btn(p, /Splitsen/), 200);
+          await p.waitForTimeout(2200);
+        },
+      },
+      { stamp: "ALLEEN DIE PAGINA", ms: 2000 },
+    ],
+  }),
+
   // ── Achter een sessie. Overgeslagen zonder SHOT_EMAIL. ──
   {
     name: "05-klaar-voor-je-boekhouder",
@@ -1329,7 +1629,10 @@ const MAX_LEN_S = 15;
 // afstellen van één uitleg-clip anders elke keer de hele reeks kost — en een reeks die vijf minuten
 // duurt, stel je niet af.
 const ONLY = process.env.CLIP_ONLY;
-const SELECTED = ONLY ? CLIPS.filter((c) => c.name.includes(ONLY)) : CLIPS;
+// Kommagescheiden, want "CLIP_ONLY=2" ving ook 02-uurtarief en 12-factuur-formule: een filter dat
+// te veel pakt kost een kwartier opnemen aan clips waar je niet om vroeg.
+const ONLY_LIST = ONLY ? ONLY.split(",").map((x) => x.trim()).filter(Boolean) : [];
+const SELECTED = ONLY_LIST.length ? CLIPS.filter((c) => ONLY_LIST.some((o) => c.name.includes(o))) : CLIPS;
 if (ONLY && SELECTED.length === 0) {
   console.error(`[CLIPS] CLIP_ONLY=${ONLY} komt met geen enkele clip overeen. Beschikbaar:`);
   for (const c of CLIPS) console.error(`[CLIPS]   ${c.name}`);
@@ -1420,7 +1723,12 @@ for (const clip of SELECTED) {
     }
     if (wait > 0) await page.waitForTimeout(wait);
   };
-  await clip.run(page, say, stepper(page), at, stamper(page));
+  try {
+    await clip.run(page, say, stepper(page), at, stamper(page));
+  } catch (e) {
+    // De opname tot hier is bruikbaar; wegdoen zou de andere clips ook kosten.
+    console.error(`[CLIPS] ! ${clip.name}: afgebroken — ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
+  }
   if (overruns.length > 0) {
     console.error(`[CLIPS] ! ${clip.name}: beeld loopt achter op de stem — ${overruns.join(" · ")}`);
   }
