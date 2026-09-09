@@ -9,6 +9,7 @@ import {
   financialReadiness, overBudget, workSignals,
   contractFee, canInvoicePeriod, periodInvoiceLines, periodLabelNL, storedPeriods, daysUntil, contractStat, contractGroups, periodOf,
   bundleHours, bundleState, canInvoiceBundle, bundleInvoiceLines,
+  type WorkLine,
 } from "./werk";
 
 test("[WERK] the layer exists for the four verticals and their sister trades, and for nobody else", () => {
@@ -331,7 +332,7 @@ test("[STRIPPENKAART] the balance counts every hour on the opdracht, and the ove
 });
 
 test("[STRIPPENKAART] the bundle is billed once, and never through the ordinary door that would close the row", () => {
-  const priced = [{ kind: "vast", description: "Strippenkaart 10 uur", quantity: 1, unit_price: 950, btw_rate: 21 }] as const;
+  const priced: WorkLine[] = [{ kind: "vast", description: "Strippenkaart 10 uur", quantity: 1, unit: "post", unit_price: 950, btw_rate: 21 }];
   const fresh = { status: "open", invoice_id: null, fields: { bundel_uren: 10 }, lines: priced };
   assert.equal(canInvoiceBundle(fresh), true);
   assert.equal(canInvoice({ status: "klaar", invoice_id: null, fields: { bundel_uren: 10 } }), false,
@@ -343,9 +344,9 @@ test("[STRIPPENKAART] the bundle is billed once, and never through the ordinary 
 
 test("[STRIPPENKAART] the invoice carries the row's own lines — the hours are its delivery, not its lines", () => {
   const lines = bundleInvoiceLines({ lines: [
-    { kind: "vast", description: "Strippenkaart 10 uur", quantity: 1, unit_price: 950, btw_rate: 21 },
-    { kind: "arbeid", description: "Nog geen prijs", quantity: 1, unit_price: 0, btw_rate: 21 },
-  ] as never });
+    { kind: "vast", description: "Strippenkaart 10 uur", quantity: 1, unit: "post", unit_price: 950, btw_rate: 21 },
+    { kind: "arbeid", description: "Nog geen prijs", quantity: 1, unit: "uur", unit_price: 0, btw_rate: 21 },
+  ] });
   assert.deepEqual(lines, [{ description: "Strippenkaart 10 uur", quantity: 1, unit_price: 950, btw_rate: 21 }]);
 });
 
