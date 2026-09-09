@@ -177,6 +177,7 @@ export function DashboardRail({ role, counter = false, work = false, account }: 
                 >
                   <span
                     className="material-symbols-outlined"
+                    aria-hidden
                     style={{
                       fontSize: 17,
                       color: '#fff',
