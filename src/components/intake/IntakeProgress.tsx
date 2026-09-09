@@ -30,6 +30,9 @@
 
 import { M3, FONT, sheetPaddingBottom } from '@/lib/design/tokens'
 import { DismissX } from '@/components/ui/DismissX'
+// [BACK-CLOSES] The system back button closes this dialog, like every other overlay in the app —
+// otherwise "back" leaves the page behind the dialog, with the upload's outcome still to come.
+import { useCloseOnBack } from '@/lib/use-close-on-back'
 
 export type ProgressPhase = 'fitting' | 'uploading' | 'reading' | 'done' | 'failed'
 
@@ -53,6 +56,8 @@ export function IntakeProgress({ open, title, rows, closeLabel, footnote, onClos
   footnote: string
   onClose: () => void
 }) {
+  // Before the early return: a hook may not sit behind a condition.
+  useCloseOnBack(open && rows.length > 0, onClose)
   if (!open || rows.length === 0) return null
   return (
     <div

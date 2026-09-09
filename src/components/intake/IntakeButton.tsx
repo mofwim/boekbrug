@@ -96,7 +96,6 @@ export default function IntakeButton({
   // Visible only while something is in flight. Derived, not an effect that closes it: the moment
   // the last upload lands, its own feedback takes over (a toast and a move, or a dialog).
   const progressVisible = progressOpen && inFlight > 0
-  useCloseOnBack(progressVisible, () => setProgressOpen(false))
   // [DUP-MODAL] a duplicate is a decision, not a passing notice — show a modal
   // (stays until dismissed) with a link to the existing invoice, not a toast.
   // [DUP-ARCHIVED] `archived` = de bestaande factuur staat in Genegeerd. Dan is "bestaat al" waar
