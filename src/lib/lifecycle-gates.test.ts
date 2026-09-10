@@ -30051,6 +30051,55 @@ test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, an
 //   · 4000 is untouched. Adding accounts beside it makes an export more precise; renaming or
 //     renumbering it silently moves history.
 // And the third that makes it safe: it suggests, it never books.
+// ─── [REGELS] The lines give back the constraint a mixed-rate invoice loses ────────────────────
+//
+// btw-split.ts states the problem exactly: on a single-rate invoice two independent constraints
+// hold — the sum identity AND the fact that btw/excl must be exactly 9 % or 21 %. On a mixed-rate
+// invoice the second "does not fail — it stops existing, without saying so". Its answer was the
+// per-rate summary block, when the supplier prints one. 28 booked invoices have none.
+//
+// But a document without a block still prints its LINES, and every line states its own rate. Group
+// them, apply the rate, and the result has to reproduce what the paper says. That IS the second
+// constraint, rebuilt from the goods rather than from a block the supplier chose to print — and it
+// is the only way a receipt with 9 % groceries and 21 % office supplies can ever be read.
+test("[REGELS] the split from the lines is derived, then verified against BOTH anchors, and never repairs", () => {
+  const rule = code("src/lib/factuurregels.ts");
+  const reader = code("src/lib/ai.ts");
+  const route = code("src/app/api/readiness/route.ts");
+
+  // ── Both printed anchors are checked, and a mismatch is a REFUSAL, not a correction.
+  assert.match(rule, /reason: "base_mismatch"/);
+  assert.match(rule, /reason: "btw_mismatch"/);
+  assert.match(rule, /if \(Math\.abs\(summedBase - base\) > TOLERANCE\) return \{ ok: false, reason: "base_mismatch" \};/);
+  assert.doesNotMatch(rule, /parsed\.|totalExBtw =|btwAmount =/,
+    "this module may not write back a repaired figure — that is how a misread becomes invisible");
+  // All-or-nothing per document: one line without a rate makes the grouping a guess.
+  assert.match(rule, /return \{ ok: false, reason: "rate_missing" \};/);
+  assert.match(rule, /return \{ ok: false, reason: "amount_missing" \};/);
+  // Only the legal rates. A line at 6 % is a misread of the layout, not a rate.
+  assert.match(rule, /const LEGAL_RATES = new Set\(\[0, 9, 21\]\);/);
+  // Pure.
+  assert.doesNotMatch(rule, /supabase|createClient|fetch\(|await /);
+
+  // ── The reader asks for the lines AND the rate on each, and refuses to spread rates by guessing.
+  assert.match(reader, /"invoice_lines": \[\{ "description": string/);
+  assert.match(reader, /Do NOT spread the document's rates over the lines by guessing/);
+  assert.match(reader, /leave\s*\n?\s*"amount" null rather than dividing it yourself/,
+    "a computed line is not a read one");
+
+  // ── The derivation runs ONLY when the supplier printed no block, and never on a creditnota —
+  //    the same exclusion the printed block carries, for the same sign reason.
+  assert.match(reader, /if \(clean\.length === 0 && parsed\.is_credit_note !== true\) \{/);
+  // …and it lands under its OWN key. Merging it into _btw_rows would claim the supplier printed
+  // something they did not.
+  assert.match(reader, /_btw_rows_uit_regels: fromLines\.rows\.slice\(0, 6\),/);
+  assert.doesNotMatch(reader, /_btw_rows: fromLines/, "two kinds of evidence must not share one key");
+
+  // ── And it counts as a witness where it matters: an invoice whose lines reproduced both anchors
+  //    is no longer one that nothing has checked.
+  assert.match(route, /Array\.isArray\(marks\._btw_rows_uit_regels\) && marks\._btw_rows_uit_regels\.length > 0/);
+});
+
 // ─── [BTW-ONGECONTROLEERD] The one case no arithmetic gate can see ─────────────────────────────
 //
 // Every arithmetic check this app owns rests on one of two constraints: the identity
@@ -30098,8 +30147,12 @@ test("[BTW-ONGECONTROLEERD] the blend with no block is named where the owner ask
   // ── The route asks the shared rule, over the rows where the deduction was actually claimed.
   assert.match(route, /btwUncheckable\(\{/);
   assert.match(route, /\["received", "paid"\]\.includes\(String\(i\.status \?\? ""\)\)/);
-  assert.match(route, /hasRateBlock: Array\.isArray\(marks\._btw_rows\) && marks\._btw_rows\.length > 0,/,
+  // Both witnesses are allowed (the printed block, and the split rebuilt from the lines), and each
+  // one has to be non-empty to count.
+  assert.match(route, /Array\.isArray\(marks\._btw_rows\) && marks\._btw_rows\.length > 0/,
     "an empty block is no block — it proves nothing and must not silence the risk");
+  assert.match(route, /Array\.isArray\(marks\._btw_rows_uit_regels\) && marks\._btw_rows_uit_regels\.length > 0/,
+    "an empty line-split is no witness either");
   assert.match(route, /shifted: marks\._btw_verlegd != null,/);
   // [CENT] one rounding.
   assert.match(route, /const uncheckedVatAmount = round2\(/);

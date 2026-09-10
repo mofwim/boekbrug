@@ -204,6 +204,10 @@ export interface FieldConfidence {
   // all, because whoever produced the triplet can always satisfy it by moving the third figure.
   // See btw-split.ts for the invoice that proved it.
   _btw_rows?: { rate: number; base: number; btw: number }[]
+  // [REGELS] Een tariefverdeling die WIJ uit de factuurregels hebben opgebouwd, en alleen bewaard
+  // wanneer die beide gedrukte ankers reproduceerde — het excl. totaal én de btw. Ander bewijs dan
+  // _btw_rows: dat drukte de leverancier, dit volgt uit de goederen zelf.
+  _btw_rows_uit_regels?: { rate: number; base: number; btw: number }[]
   // [PRINTED-TOTAL] "Totaal te voldoen" exactly as printed, before any arithmetic of ours. Stored
   // separately from total_inc_btw precisely so the two can DISAGREE — the moment we let the reader
   // reconcile them, the disagreement (the whole signal) is gone.

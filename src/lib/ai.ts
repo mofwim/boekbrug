@@ -85,6 +85,8 @@ import { DEFAULT_CLAUDE_MODEL, resolveModel } from './ai-model';
 import { groundMoneyFields } from './amount-grounding';
 // [STATIEGELD-GAT] The deposit line the reader dropped, found back on the paper — see statiegeld.ts.
 import { detectDepositGap } from './statiegeld';
+// [REGELS] The lines, grouped per rate and checked against both printed anchors.
+import { splitFromLines } from './factuurregels';
 // [GEGROND-NAAM] The same independent witness, for the supplier NAME — the one field on an
 // incoming invoice that had no check at all. See the header of that file for the read that
 // showed why: a BALKIP invoice imported under a different company's name, amounts all correct.
@@ -615,6 +617,11 @@ export interface VerifyInvoiceResult {
   // (grondslag) column and `btw` the RIGHT one. On a mixed-rate invoice this is the only thing
   // that can verify the btw total, because the legal-rate constraint no longer applies to a blend.
   btw_breakdown?: { rate: number; base: number; btw: number }[] | null;
+  // [REGELS] The invoice's own lines, as printed. Read for one reason above all: on a MIXED-rate
+  // document without a summary block the lines are the ONLY thing left that can corroborate the
+  // btw — group them per rate, apply the rate, and the result has to reproduce the printed total.
+  // See factuurregels.ts. `amount` is the line total EXCLUDING btw.
+  invoice_lines?: { description?: string | null; quantity?: number | null; unit_price?: number | null; btw_rate?: number | null; amount?: number | null }[] | null;
   // [BRIDGE-EXTRACT] Per-field confidence (0–1) — lets the UI ask the user to
   // confirm ONLY the fields the AI is unsure about, instead of guessing silently.
   field_confidence?: {
@@ -652,6 +659,10 @@ export interface VerifyInvoiceResult {
     // [BTW-SPLIT] The per-rate block, carried through to storage so the checklist can verify a
     // mixed-rate btw instead of reporting it as checked when nothing checked it.
     _btw_rows?: { rate: number; base: number; btw: number }[];
+    // [REGELS] A per-rate split we built from the invoice's OWN LINES, and only when it reproduced
+    // both printed anchors. Different evidence from _btw_rows — that one the supplier printed,
+    // this one the goods imply — so it is kept apart and never merged into it.
+    _btw_rows_uit_regels?: { rate: number; base: number; btw: number }[];
     // [PRINTED-TOTAL] The printed final total, and — when it differs from what we stored — the
     // fact that WE produced one of the three amounts rather than reading it.
     _total_printed?: number | null;
@@ -1517,6 +1528,7 @@ Return only a JSON object with these exact keys:
   "total_inc_btw": number or null,
   "total_printed": number or null,
   "btw_breakdown": [{ "rate": 0 | 9 | 21, "base": number, "btw": number }] or null,
+  "invoice_lines": [{ "description": string, "quantity": number or null, "unit_price": number or null, "btw_rate": 0 | 9 | 21, "amount": number }] or null,
   "btw_rate": 0 | 9 | 21 or null,
   "field_confidence": {
     "vendor": number between 0 and 1,
@@ -1799,6 +1811,20 @@ STATIEGELD / EMBALLAGE / STORTGELD (crucial — a shop that sells drinks sees th
   (equal excl and incl means zero BTW). Trust the "Totaal incl."/"Reeds betaald"/paid total
   and the printed BTW, and set total_ex_btw = total_inc_btw − btw_amount. Never return
   total_ex_btw equal to total_inc_btw when btw_amount is non-zero.
+
+INVOICE LINES (invoice_lines) — read them, and read the RATE that stands on each one:
+- Copy each priced line as printed: its description, its amount EXCLUDING btw, and the btw rate
+  stated for THAT line (0, 9 or 21). Quantity and unit price when they are printed; null when not.
+- "amount" is the line total EXCLUDING btw. If a line prints only an inclusive price, leave
+  "amount" null rather than dividing it yourself — a computed line is not a read one.
+- If a line's rate is not stated or you are not sure which of the printed rates applies to it, set
+  "btw_rate": null for that line. Do NOT spread the document's rates over the lines by guessing:
+  a wrong rate on a line puts money in the wrong btw column, which is worse than no lines at all.
+- Return null for the whole field when the document prints no priced lines (a bank-style nota, a
+  one-line subscription invoice already covered by the totals).
+- WHY THIS MATTERS: on a document with TWO rates and no summary block, the lines are the only
+  thing that can corroborate the btw. We group them per rate and check that the result reproduces
+  the total you read. So the lines are not decoration — they are the check.
 
 MIXED-RATE BTW SUMMARY BLOCK (the most common mis-read on wholesale/horeca invoices):
 - Dutch invoices often close with a summary printing ONE ROW PER RATE, for example:
@@ -2724,6 +2750,35 @@ Return JSON only.`;
         .slice(0, 6);
       if (clean.length > 0) {
         parsed.field_confidence = { ...(parsed.field_confidence ?? {}), _btw_rows: clean };
+      }
+
+      // [REGELS] No printed block? Then the LINES are the only witness left, and on a mixed-rate
+      // document they are the constraint btw-split.ts describes as evaporating. Group them per
+      // rate, apply the rate, and require the result to reproduce BOTH printed anchors — the excl
+      // total and the btw. splitFromLines refuses on any mismatch rather than repairing anything,
+      // so what lands here has been CHECKED against the paper, never fitted to it.
+      //
+      // Kept under its own key. `_btw_rows` means the supplier printed a specification; this means
+      // we built one from the goods. The two are different evidence and the screens say so.
+      // Excluded on a creditnota for exactly the reason the block above is.
+      if (clean.length === 0 && parsed.is_credit_note !== true) {
+        const fromLines = splitFromLines({
+          lines: (parsed.invoice_lines ?? []).map((l) => ({
+            description: l?.description ?? null,
+            quantity: l?.quantity ?? null,
+            unitPrice: l?.unit_price ?? null,
+            btwRate: l?.btw_rate ?? null,
+            amount: l?.amount ?? null,
+          })),
+          totalExBtw: parsed.total_ex_btw,
+          btwAmount: parsed.btw_amount,
+        });
+        if (fromLines.ok) {
+          parsed.field_confidence = {
+            ...(parsed.field_confidence ?? {}),
+            _btw_rows_uit_regels: fromLines.rows.slice(0, 6),
+          };
+        }
       }
     }
 

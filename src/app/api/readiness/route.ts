@@ -412,7 +412,11 @@ export async function GET(req: NextRequest) {
       return btwUncheckable({
         totalExBtw: (i as { total_ex_btw: number | null }).total_ex_btw,
         btwAmount: (i as { btw_amount: number | null }).btw_amount,
-        hasRateBlock: Array.isArray(marks._btw_rows) && marks._btw_rows.length > 0,
+        // [REGELS] Either witness counts: the block the supplier printed, or the split built from
+        // the invoice's own lines — which is only ever stored after it reproduced both anchors.
+        hasRateBlock:
+          (Array.isArray(marks._btw_rows) && marks._btw_rows.length > 0) ||
+          (Array.isArray(marks._btw_rows_uit_regels) && marks._btw_rows_uit_regels.length > 0),
         shifted: marks._btw_verlegd != null,
       });
     })

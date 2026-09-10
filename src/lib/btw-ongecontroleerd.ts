@@ -36,7 +36,14 @@
 export interface BtwCheckInput {
   totalExBtw?: number | null;
   btwAmount?: number | null;
-  /** True when field_confidence carries a per-rate block (_btw_rows) — the only witness there is. */
+  /**
+   * A per-rate witness exists for this invoice. Two things can be one:
+   *   · _btw_rows — the specification the SUPPLIER printed; or
+   *   · [REGELS] _btw_rows_uit_regels — a split built from the invoice's own LINES, which is only
+   *     ever recorded when it reproduced both printed anchors (see factuurregels.ts).
+   * Either is a real check. Neither is a claim that the amount is right; both are a claim that
+   * something independent agreed with it.
+   */
   hasRateBlock?: boolean;
   /** [VERLEGD-NAAR-MIJ] A reverse charge carries no BTW of its own and is not this case. */
   shifted?: boolean;
