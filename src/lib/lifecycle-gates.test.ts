@@ -30052,6 +30052,58 @@ test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, an
 //   · 4000 is untouched. Adding accounts beside it makes an export more precise; renaming or
 //     renumbering it silently moves history.
 // And the third that makes it safe: it suggests, it never books.
+// ─── [BETAALD-GEEN-STUK] The observation beside the expectation ───────────────────────────────
+//
+// [RITME] (supplier-cadence.ts) already asks "which invoice did not arrive", from a supplier's own
+// rhythm. That answer is an EXPECTATION and is stated as one — the subscription may simply have
+// ended. This is the half that guesses nothing: the bank line exists, the counterparty is a
+// supplier this administration HAS invoices from, and nothing is linked to it. Money left and the
+// paperwork is not here.
+//
+// It lives behind the same endpoint on purpose. "What is missing" must have ONE door, or the owner
+// finds one list and never the other — which is the failure this session named four times over.
+test("[BETAALD-GEEN-STUK] a payment with no document is observed, narrowly, behind the one door", () => {
+  const rule = code("src/lib/betaling-zonder-stuk.ts");
+  const route = code("src/app/api/incoming/missing/route.ts");
+  const screen = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+
+  // ── Pure, and it invents no supplier key of its own: there is exactly one in this app.
+  assert.doesNotMatch(rule, /supabase|createClient|fetch\(|await /, "pure");
+  assert.match(rule, /keyOf: \(name: string\) => string;/,
+    "a second answer to 'is this the same company' is a second supplier registry");
+  assert.doesNotMatch(rule, /supplierNameKey|counterpartKey/, "…so it must not import one either");
+
+  // ── The four silences. Each one is a class of false alarm, and a false alarm here teaches the
+  //    owner to dismiss the true one — the lesson creditnota-signal.ts already paid for.
+  assert.match(rule, /if \(!\(line\.amount < 0\)\) continue;/, "money coming in is not a missing purchase invoice");
+  assert.match(rule, /if \(line\.invoiceId != null\) continue;/);
+  assert.match(rule, /if \(line\.status != null && ANSWERED\.has\(line\.status\)\) continue;/);
+  assert.match(rule, /const known = input\.knownSuppliers\.get\(input\.keyOf\(name\)\);\s*if \(!known\) continue;/,
+    "a shop we have never had an invoice from is the ordinary bon case, answered elsewhere");
+
+  // ── It reports positive euros: a screen must never have to flip a sign to show what left.
+  assert.match(rule, /amount: Math\.abs\(line\.amount\),/);
+
+  // ── And it claims only what it knows. The invoice may be unread in the mailbox.
+  assert.match(rule, /er is geen factuur aan gekoppeld/);
+  assert.doesNotMatch(rule, /factuur ontbreekt|bestaat niet/,
+    "we know nothing is linked — not that no invoice exists");
+
+  // ── One door for "what is missing", carrying both kinds of evidence.
+  assert.match(route, /paymentsWithoutDocument\(\{/);
+  assert.match(route, /assessSupplierCadence\(/, "the expectation stays where it was");
+  assert.match(route, /return NextResponse\.json\(\{ missing, unpaired/);
+
+  // ── A read that could not run is never rendered as "nothing is wrong". That confusion is the
+  //    entire reason this endpoint exists, and it must not reappear inside it.
+  assert.match(route, /unpairedUnavailable = true;/);
+  assert.match(route, /tag: "BETAALD-GEEN-STUK",/);
+
+  // ── The owner meets it where they already look for what is missing.
+  assert.match(screen, /ink\.betaaldGeenStuk\.regel/);
+  assert.match(screen, /unpaired\.length > 0/);
+});
+
 // ─── [JOURNAAL-BRON] One journal, two renderings — never two journals ─────────────────────────
 //
 // BoekBrug has had a complete double-entry journal since the auditfile was built: buildJournalEntries

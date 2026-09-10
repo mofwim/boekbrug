@@ -7630,6 +7630,24 @@ export const MESSAGES = {
     ar: 'يبدو أن ثمة فاتورة ناقصة',
     en: 'An invoice seems to be missing',
   },
+  // [BETAALD-GEEN-STUK] De waarneming: het geld is weg en er hangt geen factuur aan. De zin
+  // beweert NIET dat de factuur niet bestaat — hij kan ongelezen in de mailbox zitten. Wat we
+  // weten is dat er niets aan gekoppeld is, en dat is wat er staat.
+  'ink.betaaldGeenStuk.een': {
+    nl: 'Er is 1 betaling aan een bekende leverancier zonder factuur',
+    ar: 'هناك دفعة واحدة إلى مورّد معروف بلا فاتورة',
+    en: 'There is 1 payment to a known supplier with no invoice',
+  },
+  'ink.betaaldGeenStuk.meer': {
+    nl: 'Er zijn {n} betalingen aan bekende leveranciers zonder factuur',
+    ar: 'هناك {n} دفعات إلى موردين معروفين بلا فاتورة',
+    en: 'There are {n} payments to known suppliers with no invoice',
+  },
+  'ink.betaaldGeenStuk.regel': {
+    nl: '{bedrag} betaald aan {leverancier} — er is geen factuur aan gekoppeld',
+    ar: 'دُفع {bedrag} إلى {leverancier} — لا توجد فاتورة مرتبطة به',
+    en: '{bedrag} paid to {leverancier} — no invoice is linked to it',
+  },
   'ink.ontbreekt.meer': {
     nl: 'Er lijken {n} facturen te ontbreken',
     ar: 'يبدو أن ثمة {n} فاتورة ناقصة',
