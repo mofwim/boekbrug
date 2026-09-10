@@ -18443,7 +18443,16 @@ test("[UREN-EENMALIG] de factuurroute zet de uren vast, en draait terug als dat 
   //    Het venster loopt tot het EINDE van de tak, niet tot een aantal tekens: een grens op
   //    tekenafstand verschuift zodra iemand er een regel bij zet, en dan meet de gate iets anders
   //    dan hij beweert. Deze ging daar zelf al een keer op rood.
-  const rollback = stamp.slice(stamp.indexOf("!uitkomst.ok"), stamp.indexOf("[ARTIKEL-LEREN]"));
+  //    [RITTEN-EENMALIG] The end marker used to be "[ARTIKEL-LEREN]", which lives in a COMMENT —
+  //    and code() strips comments, so indexOf returned -1 and the window silently ran to the end
+  //    of the file. It was bounded by the 3000-character ceiling below and nothing else, which is
+  //    why adding the travel branch after this one turned it red. The window now ends at real
+  //    code: the travel stamping when it is there, the catalogue call otherwise.
+  const einde = [stamp.indexOf("ritIds.length > 0"), stamp.indexOf("learnFromLines")]
+    .filter((i) => i > 0)
+    .sort((a, b) => a - b)[0];
+  assert.ok(einde !== undefined, "the end of the hours rollback branch must be findable in real code");
+  const rollback = stamp.slice(stamp.indexOf("!uitkomst.ok"), einde);
   assert.ok(rollback.length > 0 && rollback.length < 3000, "de terugdraai-tak is af te bakenen");
   const volgorde = ["time_entries", "invoice_lines", "from('invoices')"].map((s2) => rollback.indexOf(s2));
   assert.ok(volgorde.every((i) => i >= 0), "alle drie de opruimstappen staan er");
@@ -29653,4 +29662,43 @@ test("[RITTEN] the rate follows the year, a billed trip is frozen, and a private
 
   // The log lives on the hours screen, not behind a door of its own ([KORTE-WEG]).
   assert.match(code("src/app/dashboard/uren/UrenClient.tsx"), /\{tab === 'km' && <RittenPanel clients=\{clients\} \/>\}/);
+});
+
+// ─── [RITTEN-EENMALIG] Travel onto an invoice — once, and only once ───────────────────────────
+//
+// The same invariant as the hours, on the same door: the amount on the invoice and the trip it
+// rests on are ONE claim. So the server builds the lines from the log (never from the browser)
+// and stamps the trips in the same request, and if one trip does not come back the whole invoice
+// is undone — a concept whose lines are not backed by the trips they name would leave those
+// kilometres in the billable pool, to go out a second time, and the customer finds that out.
+test("[RITTEN-EENMALIG] the server builds travel lines from the log, stamps them, and undoes the invoice if one is missing", () => {
+  const pure = code("src/lib/ritten.ts");
+  const route = code("src/app/api/invoice/draft/route.ts");
+  const panel = code("src/app/dashboard/uren/RittenPanel.tsx");
+
+  // Only the ids travel from the browser.
+  assert.match(panel, /mileage_entry_ids: ids,/);
+  assert.doesNotMatch(panel, /mileage_entry_ids: ids,[\s\S]{0,200}lines: \[\{/,
+    "the browser must not send travel lines of its own");
+  // The server reads its own rows, owner-filtered and unbilled-only ([RLS-UIT] and the race).
+  assert.match(route, /\.from\('mileage_entries'\)[\s\S]{0,400}?\.eq\('user_id', ownerId\)[\s\S]{0,80}?\.is\('invoice_id', null\)/);
+  assert.match(route, /const gebouwdeRitten = linesFromTrips\(gevonden, body\.ritten_btw_rate\)/);
+  // [TARIEF-STRIKT] The raw value: Number(null) is 0, a legal rate, and 0% reads as vrijgesteld.
+  assert.match(pure, /const rate = isValidBtwRate\(btwRate\) \? Number\(btwRate\) : DEFAULT_TRIP_BTW_RATE;/);
+  assert.match(pure, /export const DEFAULT_TRIP_BTW_RATE = 21;/);
+  // The stamp is the same UPDATE … WHERE invoice_id IS NULL, verified by count, not by trust.
+  assert.match(route, /verifyStamped\(ritIds, vastgezetteRitten\.map\(\(r\) => r\.id\)\)/);
+  // The undo releases BOTH tables: the hours were already stamped to this invoice above, and an
+  // hour pointing at a deleted invoice is the ghost the foreign key exists to prevent.
+  assert.match(route, /\.from\('mileage_entries'\)\.update\(\{ invoice_id: null \}\)\s*\.eq\('invoice_id', factuur\.id\)\.eq\('user_id', ownerId\)/);
+  assert.match(route, /code: 'ritten_not_linked'/);
+  // A trip with no rate, a private one, or one with no customer is never offered: a button that
+  // can only produce an empty invoice is worse than no button.
+  assert.match(pure, /if \(!entry\.client_id\) continue;/);
+  assert.match(pure, /if \(value === null\) continue;/);
+  // The line carries kilometres, so the e-factuur exports KMT rather than C62 ("piece").
+  assert.match(pure, /export const KM_UNIT = "km";/);
+  // This file imports no app module, so the unit is checked where it is DECLARED: units.ts maps
+  // 'km' to KMT, and without that row the e-factuur would call a kilometre a "piece".
+  assert.match(code("src/lib/units.ts"), /\{ name: "km", code: "KMT" \}/);
 });

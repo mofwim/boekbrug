@@ -14,6 +14,7 @@
 // [TAAL] No sentence lives in this file; every word comes from the catalogue.
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import { localeDir } from '@/lib/i18n/locale'
@@ -24,7 +25,8 @@ import { useToast } from '@/components/ui/Toast'
 import { useDialog } from '@/components/ui/Dialog'
 import DateFieldNL from '@/components/ui/DateFieldNL'
 import {
-  mileageYear, tripValue, isBusiness, isUninvoiced, SUGGESTED_KM_RATE, type MileageEntry,
+  mileageYear, tripValue, isBusiness, isUninvoiced, groupBillableTrips, SUGGESTED_KM_RATE,
+  type MileageEntry,
 } from '@/lib/ritten'
 
 const M3 = { primary: '#1A73E8', neutral: '#5F6368', outline: '#DADCE0', surfaceVariant: '#F1F3F4', warning: '#B26A00' }
@@ -69,6 +71,7 @@ export default function RittenPanel({
   const locale = useLocale()
   const t = translator(locale)
   const dir = localeDir(locale)
+  const router = useRouter()
   const toast = useToast()
   const dialog = useDialog()
 
@@ -101,6 +104,7 @@ export default function RittenPanel({
   }, [load, initialEntries])
 
   const stand = useMemo(() => mileageYear({ entries, year }), [entries, year])
+  const klaar = useMemo(() => groupBillableTrips(entries), [entries])
   const nameOf = useCallback(
     (id: string | null | undefined) => clients.find((c) => c.id === id)?.name ?? t('ritten.veld.geenKlant'),
     [clients, t],
@@ -152,6 +156,39 @@ export default function RittenPanel({
       await load()
     } catch {
       toast(t('ritten.fout.verwijderenMislukt'), { tone: 'error' })
+    } finally { setBusy(false) }
+  }
+
+  /**
+   * One customer's unbilled travel into a concept invoice.
+   *
+   * Only the ids travel. The SERVER builds the lines from the stored trips and stamps them in the
+   * same request, so the invoice and "these kilometres are billed" are one outcome instead of two
+   * — see the [RITTEN-EENMALIG] block in /api/invoice/draft.
+   */
+  async function invoice(clientId: string, ids: string[]) {
+    setBusy(true)
+    try {
+      const res = await fetch('/api/invoice/draft', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mileage_entry_ids: ids,
+          client_id: clientId,
+          client_name: nameOf(clientId),
+          invoice_date: amsterdamToday(),
+          lines: [],
+        }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.invoiceId) {
+        toast(failureText(res.status, json, t('ritten.fout.factuur')), { tone: 'error' })
+        await load()
+        return
+      }
+      router.push(`/dashboard/invoice/${json.invoiceId}/edit`)
+    } catch {
+      toast(t('ritten.fout.factuur'), { tone: 'error' })
     } finally { setBusy(false) }
   }
 
@@ -275,6 +312,30 @@ export default function RittenPanel({
           )}
         </section>
       )}
+
+      {/* Ready to invoice. Only what a customer can actually be billed for: not yet invoiced,
+          business, priced, and belonging to a customer. */}
+      {klaar.map((g) => (
+        <section key={g.clientId ?? 'geen'} style={{
+          background: '#fff', borderRadius: R.md, boxShadow: EL1, padding: 16, marginBottom: 12, textAlign: 'start',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'baseline' }}>
+            <div style={{ fontSize: 15, fontWeight: 600 }}>{nameOf(g.clientId)}</div>
+            <div style={{ fontFamily: FONT_NUM, fontSize: 16, fontWeight: 600, textAlign: 'end' }}>
+              {formatEuroNL(g.value)}
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: M3.neutral, marginTop: 2 }}>
+            {t('ritten.klaar')} · {g.kilometers.toLocaleString('nl-NL')} {t('ritten.kmKort')}
+          </div>
+          <button type="button" disabled={busy}
+            onClick={() => invoice(g.clientId as string, g.trips.map((r) => r.id ?? '').filter(Boolean))}
+            style={{
+              marginTop: 12, padding: '10px 16px', borderRadius: R.sm, border: 'none', background: M3.primary,
+              color: '#fff', fontFamily: FONT, fontSize: 14, fontWeight: 600, cursor: 'pointer',
+            }}>{t('ritten.maakFactuur')}</button>
+        </section>
+      ))}
 
       {loaded && !failed && entries.length === 0 && (
         <div style={{ background: '#fff', borderRadius: R.md, boxShadow: EL1, padding: 24, textAlign: 'start' }}>
