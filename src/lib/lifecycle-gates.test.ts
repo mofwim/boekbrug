@@ -29141,6 +29141,76 @@ test("[OPDRACHTGEVER] the year's clients are added up, and the app judges nothin
   assert.match(code("src/app/dashboard/jaar/JaarClient.tsx"), /\{!clientId && <OpdrachtgeversPanel year=\{year\} \/>\}/);
 });
 
+// ─── [DBA-DOSSIER] The three things a year's totals cannot say ─────────────────────────────────
+//
+// opdrachtgeverYear answers "how many, and how big is the biggest" INSIDE one year. An
+// opdrachtgever running unbroken for four years and one that billed twice and stopped are the
+// same row in that answer, and they are not the same fact about a working relationship. So the
+// dossier adds three, each from invoices this app already holds: since when, won this year, and
+// the rate the owner agreed.
+//
+// The rate is READ, never derived. Revenue ÷ hours folds in every product line and every unbilled
+// hour and would print a price nobody ever quoted, while looking like the price they did.
+//
+// Same refusal as the panel it extends: no threshold, no colour, no verdict.
+test("[DBA-DOSSIER] since, acquisition and the agreed rate — read, never derived, never judged", () => {
+  const pure = code("src/lib/opdrachtgevers.ts");
+  const lines = code("src/lib/dba-lines.ts");
+  const route = code("src/app/api/opdrachtgevers/route.ts");
+  const panel = code("src/components/dba/OpdrachtgeversPanel.tsx");
+
+  // ── The verdict ban covers the new surface too, or it only covers the old one.
+  assert.doesNotMatch(lines, /\b(70|0\.7|drie opdrachtgevers|schijnzelfstandig)\b/i,
+    "a threshold or a verdict reached the dossier's own copy");
+
+  // ── The history is read, so the query may no longer be cut at 1 January.
+  assert.doesNotMatch(route, /\.gte\("invoice_date", start\)/,
+    "a query cut at the year cannot answer 'since when' — that is the whole point of this batch");
+  assert.match(route, /opdrachtgeverDossier\(\{ year, invoices, hours, rates \}\)/);
+  // …and the YEAR'S own totals must be unchanged by that: the cut moves into the module, on the
+  // same rule the query used — an invoice with no readable date belongs to no year.
+  assert.match(pure, /const prefix = `\$\{args\.year\}-`;/);
+  assert.match(pure, /args\.invoices\.filter\(\(iv\) => \(iv\.invoice_date \?\? ""\)\.startsWith\(prefix\)\)/);
+  assert.match(pure, /opdrachtgeverYear\(\{ year: args\.year, invoices: ofYear, hours: args\.hours \}\)/,
+    "the year's figures must still come from the gated function, not from a second copy of it");
+
+  // ── The rate is read off the klant and nothing else.
+  assert.match(route, /\.select\("client_id:id, default_hourly_rate"\)/);
+  assert.doesNotMatch(pure + lines, /revenue \s*\/\s*(r\.)?hours/,
+    "an effective rate would answer a different question while looking like the same one");
+  // A rate that is not recorded is not a rate of zero — a claim about the owner's own pricing.
+  assert.match(pure, /if \(r\.default_hourly_rate === null \|\| r\.default_hourly_rate === undefined\) continue;/);
+  assert.match(pure, /if \(!Number\.isFinite\(value\) \|\| value <= 0\) continue;/);
+  // A spread over one figure is not a range.
+  assert.match(pure, /recorded\.length >= 2/);
+
+  // ── Nothing is invented for a row that does not know.
+  assert.match(pure, /wonThisYear: since !== null && since\.startsWith\(prefix\)/,
+    "an opdrachtgever with no dated invoice is not 'new' — we simply do not know");
+
+  // ── [TAAL] The choices live apart from the screen, and the screen renders keys it is handed.
+  //     The panel renders NOTHING until its read answers ([NO-SILENT-EMPTY]), so a render test can
+  //     never reach these branches — deciding here is what makes the empty cases testable at all.
+  assert.match(lines, /export function dossierRowPhrases/);
+  assert.match(lines, /export function dossierSummaryPhrases/);
+  assert.match(panel, /dossierRowPhrases\(r, formatEuroNL\)\.map\(\(p\) => t\(p\.key, p\.params\)\)/);
+  assert.match(panel, /dossierSummaryPhrases\(data, formatEuroNL\)/);
+  // No sentence may be assembled inside the component: one hard-coded branch there is how a
+  // translation stays permanently half-finished.
+  assert.doesNotMatch(panel, /t\('dba\.(sinds|nieuw|maanden|maandEen|tarief|gewonnen|gewonnenEen|tariefBereik|tariefGelijk)'/,
+    "the panel chose a word — that choice belongs in dba-lines.ts");
+
+  // ── Every key the module can emit exists and carries Dutch, the source language.
+  const copy = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  for (const key of ["dba.sinds", "dba.nieuw", "dba.maanden", "dba.maandEen", "dba.tarief",
+                     "dba.gewonnen", "dba.gewonnenEen", "dba.tariefBereik", "dba.tariefGelijk"]) {
+    assert.match(lines, new RegExp(`"${key.replace(".", "\\.")}"`), `${key} is declared but never emitted`);
+    const line = copy.split("\n").find((l) => l.includes(`'${key}':`));
+    assert.ok(line, `${key} is missing from the catalogue`);
+    assert.match(line as string, /nl: '[^']+'/, `${key} has no Dutch`);
+  }
+});
+
 // ── [VERLEGD-AFTREK] What of 2a returns in 5b is the owner's right of deduction, on every surface ──
 //
 // aangifte.ts now takes the deductible share (gate above). This pins the two callers that have to
