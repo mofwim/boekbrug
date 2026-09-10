@@ -175,6 +175,8 @@ export interface FieldConfidence {
   // amounts add up again, so every other axis goes quiet — which is exactly why this needs its
   // own reason: the figure is OUR arithmetic, and BTW is deductible money in the aangifte.
   _btw_derived?: { read?: number | null; used?: number | null }
+  // [EIGEN-CONTROLE-ONBEKEND] De eigen-verkoopfactuurcontrole kon niet draaien — zie ai.ts.
+  _own_check_unavailable?: boolean
   // [ASSURANTIE] Present when the document printed assurantiebelasting (insurance premium tax) and
   // a non-zero amount had been read into btw_amount. The guard (stripAssurantiebelastingBtw in
   // @/lib/ai) removed it from the deductible column and folded it into the cost. Says so out loud:
@@ -598,6 +600,19 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
       typeof used === 'number'
         ? `de BTW-uitsplitsing was niet leesbaar — de BTW is afgeleid uit excl. en totaal (${formatEuro(used)}); controleer dit bedrag`
         : 'de BTW-uitsplitsing was niet leesbaar — de BTW is afgeleid uit excl. en totaal; controleer dit bedrag'
+    )
+  }
+
+  // [EIGEN-CONTROLE-ONBEKEND] De controle die een EIGEN verkoopfactuur herkent kon niet draaien.
+  // Geen oordeel over dit document — het is waarschijnlijk gewoon een inkoopfactuur — maar de ene
+  // controle die de eigen factuur eruit haalt heeft niet geantwoord, en de stille afloop daarvan is
+  // eigen omzet die als kost wordt geboekt met de BTW die je moet AFDRAGEN als voorbelasting
+  // teruggevraagd. Zelfde register als [IBAN-CHECK-HONEST]: nooit beweren dat er iets gecontroleerd
+  // is wat niet gecontroleerd kon worden.
+  if (fc?._own_check_unavailable === true) {
+    flags.vendor = true
+    reasons.push(
+      'we konden niet nagaan of dit je eigen verkoopfactuur is — controleer de leverancier vóór je dit als kost boekt'
     )
   }
 

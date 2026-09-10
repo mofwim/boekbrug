@@ -5030,10 +5030,18 @@ test("[EIGEN-FACTUUR] every door that reads a document asks it", () => {
 test("[EIGEN-NUMMER] every door hands the reader the own-invoice lookup", () => {
   const ai = code("src/lib/ai.ts");
   assert.match(ai, /matchesOwnInvoiceNumber\(/, "the reader must ask the pure matcher");
-  assert.match(
-    ai, /lookupOwnInvoice\(parsed\.invoice_number\)\.catch\(\(\) => null\)/,
-    "a lookup failure answers null — it may never take a real supplier invoice down",
-  );
+  // [EIGEN-CONTROLE-ONBEKEND] This used to pin `.catch(() => null)` verbatim, for a rule that is
+  // still exactly right: a lookup failure may never take a real supplier invoice down. What the
+  // shape ALSO did was erase the failure — a hiccup and "not your own invoice" left here as the
+  // same answer, and the silent one at that. The rule is now asserted as what it means: the read
+  // continues past a failure, and the failure is recorded rather than forgotten.
+  assert.match(ai, /ownRow = await opts\.lookupOwnInvoice\(parsed\.invoice_number\);/,
+    "the lookup is awaited in its own try, so failure and absence are distinguishable");
+  assert.match(ai, /let ownLookupFailed = false;/);
+  assert.match(ai, /_own_check_unavailable: true,/,
+    "a failure that is not recorded is a check that reports itself clean");
+  assert.doesNotMatch(ai, /ownLookupFailed[\s\S]{0,200}?is_invoice: false/,
+    "it may never take a real supplier invoice down");
   for (const [door, call] of [
     ["src/app/api/intake/route.ts", /lookupOwnInvoice: makeOwnInvoiceLookup\(supabase, user\.id\)/],
     ["src/app/api/email/upload/route.ts", /lookupOwnInvoice: makeOwnInvoiceLookup\(supabase, user\.id\)/],
@@ -29804,4 +29812,40 @@ test("[AL-BETAALD-NUMMER] identity is the first handle, it comes from the one ma
   // The old three-argument signature still exists, so every caller that knows only the amount
   // keeps the guard it always had.
   assert.match(guard, /txText\?: Pick<GuardLine, "description"> & \{ reference\?: string \| null \}/);
+});
+
+// ─── [EIGEN-CONTROLE-ONBEKEND] A check that could not run never passes for a clean one ────────
+//
+// The reader has one guard that catches the owner's OWN sales invoice coming back through the
+// intake as a supplier bill. Getting that wrong costs twice over: the turnover is booked as a
+// cost, and the BTW the owner OWES on it is claimed back as voorbelasting. It has a measured
+// production instance (Kiwi, € 394,99).
+//
+// The lookup behind it was `.catch(() => null)`, which made a database hiccup and "no such own
+// invoice" the same answer — the silent one.
+//
+// The fix is NOT a refusal. This layer may only ADD recognition; rejecting on a hiccup would take
+// a real supplier invoice down with the database. So the failure is CARRIED, in the register the
+// app already uses for [IBAN-CHECK-HONEST] and [ONE-INVOICE-UNVERIFIED]: the row lands in the
+// human queue with a sentence that says the check could not run, and never claims it ran clean.
+test("[EIGEN-CONTROLE-ONBEKEND] a failed own-invoice lookup is carried, never swallowed and never a refusal", () => {
+  const reader = code("src/lib/ai.ts");
+  const health = code("src/lib/import-health.ts");
+
+  // The swallow is gone: failure and absence are told apart.
+  assert.doesNotMatch(reader, /lookupOwnInvoice\(parsed\.invoice_number\)\.catch\(\(\) => null\)/,
+    "a database hiccup and 'not your own invoice' must not be the same answer");
+  assert.match(reader, /let ownLookupFailed = false;/);
+  assert.match(reader, /ownRow = await opts\.lookupOwnInvoice\(parsed\.invoice_number\);/);
+  assert.match(reader, /_own_check_unavailable: true,/);
+
+  // Still not a refusal — the reading continues and the row is only flagged.
+  assert.doesNotMatch(reader, /ownLookupFailed[\s\S]{0,200}?is_invoice: false/,
+    "a failed lookup must never reject a genuine purchase invoice");
+
+  // The flag reaches the owner as a sentence, and it lands the row in the human queue.
+  assert.match(health, /if \(fc\?\._own_check_unavailable === true\) \{/,
+    "only an explicit true speaks — an absent flag is not an admission");
+  assert.match(health, /konden niet nagaan of dit je eigen verkoopfactuur is/);
+  assert.match(health, /flags\.vendor = true/);
 });

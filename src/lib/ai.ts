@@ -630,6 +630,11 @@ export interface VerifyInvoiceResult {
     // Carries both figures so the owner sees exactly what changed; its presence keeps the
     // invoice in the verify queue (a derived BTW is never auto-booked).
     _btw_derived?: { read: number | null; used: number | null };
+    // [EIGEN-CONTROLE-ONBEKEND] Set when the own-sales-invoice lookup could not run. Not a verdict
+    // — the document may well be a real supplier bill — but the one check that would have caught
+    // the owner's OWN invoice coming back as a cost did not answer, so a human looks. Never a
+    // refusal: a database hiccup must not reject a genuine purchase invoice.
+    _own_check_unavailable?: boolean;
     // [ASSURANTIE] Set when assurantiebelasting was stripped from the deductible BTW. Keeps the
     // document in the verify queue (never auto-booked) and drives the owner-facing reason.
     _assurantiebelasting?: { read: number | null };
@@ -2375,7 +2380,30 @@ Return JSON only.`;
     // were. A lookup failure answers null and the reading continues: this layer may only ADD
     // recognition, never take a real supplier invoice down with a database hiccup.
     if (!eigenStuk.isOwn && parsed.invoice_number && opts?.lookupOwnInvoice) {
-      const ownRow = await opts.lookupOwnInvoice(parsed.invoice_number).catch(() => null);
+      // [EIGEN-CONTROLE-ONBEKEND] A lookup that FAILED and a lookup that found nothing are not the
+      // same answer, and this is one of the few checks where the difference costs real money: the
+      // silent outcome of a database hiccup here is the owner's own turnover booked as a cost,
+      // with the BTW they OWE claimed as voorbelasting. The catch below used to make those two
+      // outcomes identical.
+      //
+      // The layer still may not REFUSE on a hiccup — that would take a real supplier invoice down
+      // with the database. So the failure is carried instead, exactly the way [IBAN-CHECK-HONEST]
+      // and [ONE-INVOICE-UNVERIFIED] carry theirs: the row lands in the human queue with a
+      // sentence that says the check could not run, and never claims it ran clean.
+      let ownRow: Awaited<ReturnType<NonNullable<typeof opts.lookupOwnInvoice>>> | null = null;
+      let ownLookupFailed = false;
+      try {
+        ownRow = await opts.lookupOwnInvoice(parsed.invoice_number);
+      } catch (e) {
+        ownLookupFailed = true;
+        console.error('[EIGEN-CONTROLE-ONBEKEND] own-invoice lookup failed — the read continues, flagged', e);
+      }
+      if (ownLookupFailed) {
+        parsed.field_confidence = {
+          ...(parsed.field_confidence ?? {}),
+          _own_check_unavailable: true,
+        };
+      }
       if (ownRow) {
         const byNumber = matchesOwnInvoiceNumber(
           {

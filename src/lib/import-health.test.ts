@@ -131,6 +131,27 @@ console.log('\n— [BTW-SUM-FIX] a DERIVED BTW is never presented as clean (it i
   check('note without an amount still warns', noAmount.level === 'needs-review' && noAmount.reasons.some((r) => /afgeleid uit excl\. en totaal/.test(r)))
 }
 
+console.log('\n— [EIGEN-CONTROLE-ONBEKEND] een controle die niet kon draaien zwijgt nooit —')
+{
+  // The silent outcome this closes: a database hiccup during the own-sales-invoice lookup used to
+  // be indistinguishable from "checked, and it is a supplier bill". The measured cost of getting
+  // that wrong is the owner's own turnover booked as a cost, with the BTW they OWE claimed back as
+  // voorbelasting — the Kiwi € 394,99 shape.
+  const unchecked = classifyImportHealth(inv({ field_confidence: { _own_check_unavailable: true } }))
+  check('own-invoice check unavailable → needs-review', unchecked.level === 'needs-review')
+  check('…and the vendor axis carries it', unchecked.flags.vendor === true)
+  check('the sentence says the check could not run, never that it ran clean',
+    unchecked.reasons.some((r) => /konden niet nagaan of dit je eigen verkoopfactuur is/.test(r)))
+  // The flag is the cause: the same invoice without it stays clean.
+  check('without the flag the same invoice is clean',
+    classifyImportHealth(inv({})).level === classifyImportHealth(inv({})).level
+      && !classifyImportHealth(inv({})).reasons.some((r) => /eigen verkoopfactuur/.test(r)))
+  // false is not "unavailable" — only an explicit true speaks.
+  check('an explicit false says nothing',
+    !classifyImportHealth(inv({ field_confidence: { _own_check_unavailable: false } })).reasons
+      .some((r) => /eigen verkoopfactuur/.test(r)))
+}
+
 console.log('\n— [EX-INCL-FIX] een herschreven grondslag boekt nooit zonder mens —')
 {
   // Na de reparatie klopt 333.06 + 69.94 = 403 per constructie — elke andere as zwijgt.
