@@ -1228,6 +1228,7 @@ export const MESSAGES = {
   // [BLIND-GEMATCHT] Wat deze suggestielijst NIET heeft kunnen gebruiken. Nooit beweren dat er
   // niets is onthouden — alleen dat we het nu niet konden lezen.
   'bank.blind.geheugen': { nl: 'We konden nu niet ophalen wat je eerder bevestigde — deze suggesties zijn daardoor voorzichtiger dan normaal.', en: 'We could not fetch what you confirmed before — these suggestions are more cautious than usual.', ar: 'تعذّر جلب ما أكّدته سابقًا — لذلك هذه الاقتراحات أكثر تحفّظًا من المعتاد.' },
+  'bank.blind.leverancier': { nl: 'We konden nu niet ophalen van welke rekening je leveranciers factureren — een betaling met alleen een IBAN herkennen we daardoor minder goed.', en: 'We could not fetch which account your suppliers bill from — a payment carrying only an IBAN is harder for us to recognise.', ar: 'تعذّر جلب الحسابات التي يُفوتر منها مورّدوك — لذلك نتعرّف بصعوبة أكبر على دفعة لا تحمل سوى IBAN.' },
   'bank.blind.geweigerd': { nl: 'We konden nu niet ophalen welke suggesties je hebt afgewezen — een afgewezen suggestie kan terugkomen.', en: 'We could not fetch which suggestions you rejected — a rejected one may come back.', ar: 'تعذّر جلب الاقتراحات التي رفضتها — قد يعود اقتراح رفضته.' },
   'bank.fout.matchen': { nl: 'Matchen mislukt.', ar: 'فشلت المطابقة.', en: 'Matching failed.' },
   'bank.fout.negeren': { nl: 'Negeren mislukt.', ar: 'فشل التجاهل.', en: 'Ignoring failed.' },

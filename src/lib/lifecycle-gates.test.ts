@@ -29872,7 +29872,11 @@ test("[BLIND-GEMATCHT] a lost match memory or refusal list reaches the owner, an
   assert.match(route, /memoryUnavailable = true;/);
   // …and carries them ONLY when there is something to admit: no key on the ordinary day, so the
   // screen has nothing to render and says nothing.
-  assert.match(route, /\.\.\.\(memoryUnavailable \|\| refusalsUnavailable\s*\?\s*\{ degraded: \{ memory: memoryUnavailable, refusals: refusalsUnavailable \} \}\s*: \{\}\),/,
+  // The rule, not the literal: the key is SPREAD in behind a condition, so it is absent on the
+  // ordinary day. [BLIND-LEVERANCIER] later added a third loss to the same object, which is exactly
+  // what this channel is for — pinning the two-key literal would have made growing it look like
+  // breaking it.
+  assert.match(route, /\.\.\.\(memoryUnavailable \|\| refusalsUnavailable[^?]*\?\s*\{ degraded: \{[^}]*memory: memoryUnavailable[^}]*refusals: refusalsUnavailable[^}]*\} \}\s*: \{\}\),/,
     "an admission that is always present is a banner, not an admission");
 
   // The screen renders one sentence, chosen by which signal was lost.
@@ -29891,6 +29895,74 @@ test("[BLIND-GEMATCHT] a lost match memory or refusal list reaches the owner, an
     assert.match(line as string, /konden nu niet ophalen/,
       `${key} must say the read failed, never that nothing was remembered`);
   }
+});
+
+// ─── [BLIND-LEVERANCIER] A matching signal that could not be read must not read as absent ──────
+//
+// The registry has known which account a supplier bills from since it first resolved that vendor,
+// and the matcher's IBAN tier needs it: `invoices.vendor_iban` is null far more often than the
+// supplier is unknown. Without it, an MT940 line carrying a counterpart IBAN, no invoice number
+// and no counterparty name is unbookable by construction.
+//
+// The lookup was best-effort and returned an empty map on failure. Safe for the MONEY — it removes
+// evidence, never invents it — and silent for the OWNER, which is a different question: an empty
+// map has two causes that look identical from outside, and under the wrong one "Probeer alles
+// opnieuw" reports that it examined everything and found nothing new. That reads as a fact about
+// the administratie when it is a fact about a database.
+//
+// Same channel and same rule as [BLIND-GEMATCHT]: carried with the answer, present only when there
+// is something to admit.
+test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, and both screens say so", () => {
+  const lookup = code("src/lib/supplier-known-iban.ts");
+  const match = code("src/app/api/bank/match/route.ts");
+  const rematch = code("src/app/api/bank/rematch/route.ts");
+  const auto = code("src/lib/bank-auto-confirm.ts");
+  const screen = code("src/app/dashboard/bank/BankClient.tsx");
+
+  // ── The lookup answers with the map AND whether it got one.
+  assert.match(lookup, /export interface SupplierIbanLookup/);
+  assert.match(lookup, /Promise<SupplierIbanLookup>/);
+  assert.match(lookup, /unavailable = true;/, "the catch must record the loss, not only log it");
+  assert.match(lookup, /return \{ ibans: out, unavailable \};/);
+  // An ordinary empty result is NOT a failure — a caller that renders this must be able to trust
+  // that `true` means something went wrong, or the warning becomes wallpaper.
+  assert.match(lookup, /if \(ids\.length === 0\) return \{ ibans: out, unavailable: false \};/,
+    "nothing to ask about must never be reported as a lost read");
+  // And it still degrades the same way: no map, no signal, never an invented one.
+  assert.doesNotMatch(lookup, /throw (new )?[A-Za-z]/, "a failed read must not become a failed request");
+
+  // ── Both owner-facing entry points read the new shape…
+  for (const [name, route] of [["match", match], ["rematch", rematch]] as const) {
+    assert.match(route, /fetchSupplierIbans\(pipeline, user\.id, rawInvoices\)/, `${name} still asks`);
+    assert.match(route, /supplierIbans\.ibans/, `${name} passes the map, not the wrapper`);
+  }
+  // …and each carries the loss, only when there is one.
+  assert.match(match, /supplierIbans: supplierIbansUnavailable \}/);
+  assert.match(match, /memoryUnavailable \|\| refusalsUnavailable \|\| supplierIbansUnavailable/,
+    "the third loss joins the same admission — a second channel would drift from the first");
+  assert.match(rematch, /\.\.\.\(supplierIbans\.unavailable \? \{ supplierIbansUnavailable: true \} : \{\}\),/,
+    "absent on the ordinary run, so the sweep's report stays as short as it was");
+
+  // ── The automatic pass needs no screen, and must not gain a refusal it never had: a missing
+  //     signal can only LOWER a score, so this pass confirms less, never wrongly.
+  assert.match(auto, /\(await fetchSupplierIbans\(pipeline, userId, rawInvoices\)\)\.ibans/);
+  assert.doesNotMatch(auto, /supplierIbansUnavailable/,
+    "an automatic pass has no owner watching it — inventing a refusal there stalls booking");
+
+  // ── One sentence, in the family the owner already reads on this screen.
+  assert.match(screen, /degraded\?: \{ memory\?: boolean; refusals\?: boolean; supplierIbans\?: boolean \}/);
+  assert.match(screen, /\{data\.degraded\.supplierIbans && t\('bank\.blind\.leverancier'\)\}/);
+  // The rematch report says it BESIDE the count, never instead of it: the number is still true.
+  assert.match(screen, /\{rematchInfo\.supplierIbansUnavailable && \(/);
+  assert.match(screen, /t\('bank\.rematch\.alles', \{ count: rematchInfo\.examined \}\)/,
+    "the examined count must survive — the admission adds to it, it does not replace it");
+
+  // The sentence may not claim the app has no such knowledge — only that it could not look now.
+  const copy = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  const line = copy.split("\n").find((l) => l.includes("'bank.blind.leverancier'"));
+  assert.ok(line, "bank.blind.leverancier is missing from the catalogue");
+  assert.match(line as string, /konden nu niet ophalen/,
+    "it must say the read failed, never that the accounts are unknown");
 });
 
 // ─── [NUL-BTW-STIL] A zero BTW that the document does not explain must not book in silence ─────

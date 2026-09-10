@@ -170,11 +170,12 @@ export async function GET() {
 
   // [SUPPLIER-IBAN] The account each supplier is known to bill from, for the invoices whose own
   // document never named one. Best-effort: an empty map leaves the matcher exactly as it was.
+  // [BLIND-LEVERANCIER] …and when that map is empty because the READ failed, it joins the two
+  // losses already carried below: same channel, same rule — only when there is something to admit.
   const rawInvoices = (invRows ?? []) as (InvoiceForMatching & { supplier_id?: string | null })[];
-  const invoices: InvoiceForMatching[] = withSupplierIbans(
-    rawInvoices,
-    await fetchSupplierIbans(pipeline, user.id, rawInvoices),
-  );
+  const supplierIbans = await fetchSupplierIbans(pipeline, user.id, rawInvoices);
+  const supplierIbansUnavailable = supplierIbans.unavailable;
+  const invoices: InvoiceForMatching[] = withSupplierIbans(rawInvoices, supplierIbans.ibans);
 
   // [GEHEUGEN] What the owner has already confirmed, read back. Derived from the link rows a
   // confirmation writes anyway — there is no memory table, so there is nothing to migrate and
@@ -889,8 +890,8 @@ export async function GET() {
     suggestions: allSuggestions,
     // [BLIND-GEMATCHT] What this answer could NOT use. Absent when everything was read, so the
     // screen says nothing on the ordinary day; present is an admission the owner can act on.
-    ...(memoryUnavailable || refusalsUnavailable
-      ? { degraded: { memory: memoryUnavailable, refusals: refusalsUnavailable } }
+    ...(memoryUnavailable || refusalsUnavailable || supplierIbansUnavailable
+      ? { degraded: { memory: memoryUnavailable, refusals: refusalsUnavailable, supplierIbans: supplierIbansUnavailable } }
       : {}),
   });
 }

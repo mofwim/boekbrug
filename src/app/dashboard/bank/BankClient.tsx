@@ -244,7 +244,7 @@ interface MatchResponse {
    * [BLIND-GEMATCHT] What this answer could not use. Absent on the ordinary day; present means the
    * suggestions below are worse than yesterday's for a reason the owner cannot otherwise see.
    */
-  degraded?: { memory?: boolean; refusals?: boolean }
+  degraded?: { memory?: boolean; refusals?: boolean; supplierIbans?: boolean }
 }
 
 // [MOVE-PAYMENT] Shapes returned by GET /api/invoice/payment/move.
@@ -291,7 +291,7 @@ export default function BankClient() {
   // instead of only in a toast, because the interesting answer ("gevonden, maar niet aangeraakt")
   // is exactly the one the owner needs to still be readable after the toast has gone.
   const [rematching, setRematching] = useState(false)
-  const [rematchInfo, setRematchInfo] = useState<{ restored: number; booked: number; ambiguous: number; examined: number } | null>(null)
+  const [rematchInfo, setRematchInfo] = useState<{ restored: number; booked: number; ambiguous: number; examined: number; supplierIbansUnavailable?: boolean } | null>(null)
   // [BANK-STATEMENT-DELETE] The statement pending deletion (shown in a confirm
   // dialog) and the id currently being deleted (to disable its row button).
   const [statementToDelete, setStatementToDelete] = useState<{ id: string; name: string } | null>(null)
@@ -1109,7 +1109,7 @@ export default function BankClient() {
         showToast(t('bank.fout.opnieuw'))
         return
       }
-      setRematchInfo({ restored: json.restored ?? 0, booked: json.booked ?? 0, ambiguous: json.ambiguous ?? 0, examined: json.examined ?? 0 })
+      setRematchInfo({ restored: json.restored ?? 0, booked: json.booked ?? 0, ambiguous: json.ambiguous ?? 0, examined: json.examined ?? 0, supplierIbansUnavailable: json.supplierIbansUnavailable === true })
       const parts: string[] = []
       if (json.restored > 0) parts.push(json.restored === 1 ? t('bank.rematch.terugEen') : t('bank.rematch.terug', { count: json.restored }))
       if (json.booked > 0) parts.push(t('bank.rematch.gekoppeld', { count: json.booked }))
@@ -1932,6 +1932,11 @@ export default function BankClient() {
           {data.degraded.memory && t('bank.blind.geheugen')}
           {data.degraded.memory && data.degraded.refusals && ' '}
           {data.degraded.refusals && t('bank.blind.geweigerd')}
+          {/* [BLIND-LEVERANCIER] The third loss in the same family: the account each supplier is
+              known to bill from. Without it a payment carrying only an IBAN has nothing to be
+              recognised by, and goes back to the manual pile as if it never could be. */}
+          {(data.degraded.memory || data.degraded.refusals) && data.degraded.supplierIbans && ' '}
+          {data.degraded.supplierIbans && t('bank.blind.leverancier')}
         </p>
       )}
 
@@ -2222,6 +2227,13 @@ export default function BankClient() {
               to escape — so it has to say where to look instead of quietly doing nothing. */}
           {rematchInfo && (
             <div style={{ padding: '10px 14px', borderBottom: '1px solid #F0F0F0', background: '#F8F9FA', fontSize: 12.5, color: '#3c4043', lineHeight: 1.5 }}>
+              {/* [BLIND-LEVERANCIER] "Niets nieuws te koppelen" is a claim about the administratie.
+                  When a matching signal could not be read it is a claim about a database, and the
+                  owner must be able to tell the two apart before they conclude there is nothing
+                  there. Said beside the count, never instead of it. */}
+              {rematchInfo.supplierIbansUnavailable && (
+                <div style={{ color: '#B26A00', marginBottom: 4 }}>{t('bank.blind.leverancier')}</div>
+              )}
               {rematchInfo.restored === 0 && rematchInfo.booked === 0 && rematchInfo.ambiguous === 0 ? (
                 <>{t('bank.rematch.alles', { count: rematchInfo.examined })}</>
               ) : (
