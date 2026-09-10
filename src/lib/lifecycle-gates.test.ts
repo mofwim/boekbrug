@@ -25960,6 +25960,18 @@ test("[LEVERANCIER-SAMENVOEGEN] a name is never evidence, and the vetoes are ask
   // (an archived invoice must still move, and is not on the screen's list).
   assert.match(deur, /plan\.survivorId !== askedSurvivor && plan\.mergedAwayId !== askedSurvivor/,
     "the asked pair must be the pair the plan approved");
+
+  // [SAMENVOEGEN-EIGENAAR] The owner may name a pair the app cannot prove — and ONLY that. The
+  // two vetoes are facts, and a door that let byOwner past one of them would be the BALKIP merge
+  // with a checkbox in front of it.
+  const beslissingEigenaar = code("src/lib/supplier-merge.ts");
+  assert.match(beslissingEigenaar, /if \(!proven\.ok && proven\.reason !== 'no-evidence'\) return proven/,
+    "planOwnerMerge no longer forwards a veto — a KVK or account refusal must survive the owner's word");
+  assert.match(beslissingEigenaar, /const proven = planSupplierMerge\(survivor, mergedAway\)/,
+    "…and it asks the proven planner first rather than re-implementing the vetoes beside it");
+  assert.match(deur, /if \(!\(byOwner && plan\.reason === 'no-evidence'\)\) \{/,
+    "the route overrules exactly one refusal, and only for a pair the owner named");
+  assert.match(deur, /by_owner: byOwner/, "the trail records that this merge rested on the owner's word");
   assert.match(deur, /const survivor = found\.find\(\(s\) => s\.id === askedSurvivor\)!/,
     "…and the name that survives is the one the owner read, not one re-picked after they confirmed");
   const planAt = deur.indexOf("const plan = planSupplierMerge");
