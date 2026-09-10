@@ -216,6 +216,8 @@ const SENTENCE_KEYS: readonly MessageKey[] = [
   // vorige maand.
   "log.supplier.merged",
   "log.supplier.updated",
+  "log.supplier.created",
+  "log.supplier.deleted",
   // Level 3 — Files
   "log.document.uploaded", "log.document.duplicate_blocked", "log.document.deleted",
   "log.document.bulk_deleted", "log.document.restored", "log.document.reminder_filed",

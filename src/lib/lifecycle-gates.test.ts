@@ -26005,7 +26005,12 @@ test("[LEVERANCIER-BEWERKEN] the edit route keeps the old IBAN first, renames by
 
   // 2. Invoices follow by supplier_id, and only their display name moves.
   assert.match(deur, /\.eq\('supplier_id', current\.id\)/, "siblings are found by id, never by name");
-  const rename = deur.slice(deur.indexOf(".from('invoices')"), deur.indexOf(".select('id')", deur.indexOf(".from('invoices')")));
+  // [POORT-GRENS] Cut on real code, and prove both markers were found: a -1 here would widen the
+  // window to the end of the file and let the assertion below pass on the wrong text.
+  const renameFrom = deur.indexOf(".from('invoices')");
+  const renameTo = deur.indexOf(".select('id')", renameFrom);
+  assert.ok(renameFrom > 0 && renameTo > renameFrom, "the invoice rename block is where the gate expects it");
+  const rename = deur.slice(renameFrom, renameTo);
   assert.match(rename, /update\(\{ client_name: plan\.changes\.name \}\)/, "only client_name is written on the invoices");
   assert.doesNotMatch(rename, /vendor_iban|client_btw_number/, "the document's own printed identifiers are never touched");
 
@@ -26030,6 +26035,42 @@ test("[LEVERANCIER-BEWERKEN] the edit route keeps the old IBAN first, renames by
   assert.doesNotMatch(pin, /error: '/, "supplier-pin.ts answers with codes, not Dutch");
   for (const key of ["lev.fout.naamLeeg", "lev.fout.iban", "lev.fout.kvk", "lev.fout.btw"]) {
     assert.ok(pin.includes(`'${key}'`), `${key} is mapped as a literal`);
+    assert.ok(key in MESSAGES, `${key} exists in messages.ts`);
+  }
+});
+
+// ── [LEVERANCIER-NIEUW] / [LEVERANCIER-VERWIJDEREN] ─────────────────────────────────────────
+//
+// Adding a supplier by hand, adopting the loose invoices under a printed name, and removing a
+// row. What must hold: adoption takes only invoices that have NO supplier and writes only the
+// link; removal counts what comes loose BEFORE the row goes; neither route writes a sentence of
+// its own; and the sheet never offers removal on a row it is still making.
+test("[LEVERANCIER-NIEUW] adoption links loose invoices only, by id only; removal counts first; no language", () => {
+  const maak = code("src/app/api/supplier/route.ts");
+  assert.match(maak, /\.is\('supplier_id', null\)[\s\S]{0,200}\.range\(from, to\)/, "only invoices with no supplier are read for adoption");
+  // [POORT-GRENS] Both markers are real code, and both must be found before the window is cut.
+  const adoptFrom = maak.indexOf(".update({ supplier_id: made.id })");
+  const adoptTo = maak.indexOf(".select('id')", adoptFrom);
+  assert.ok(adoptFrom > 0 && adoptTo > adoptFrom, "adoption writes the link, and the gate can see where that write ends");
+  const adopt = maak.slice(adoptFrom, adoptTo);
+  assert.match(adopt, /\.is\('supplier_id', null\)/, "…and re-checks on the write that nothing was linked meanwhile");
+  assert.doesNotMatch(maak, /update\(\{[^}]*client_name/, "the printed name on those invoices is never rewritten");
+  assert.match(maak, /\.eq\('name_key', v\.nameKey\)/, "the same company under another spelling is found before a second row is made");
+  for (const deur of [maak, code("src/app/api/supplier/[id]/route.ts")]) {
+    const zinnen = [...deur.matchAll(/error: ['"]([^'"]+ [^'"]+)['"]/g)].map((m) => m[1]);
+    assert.deepEqual(zinnen, [], `a route writes its own sentences: ${zinnen.join(" | ")}`);
+  }
+
+  const wis = code("src/app/api/supplier/[id]/route.ts");
+  const countAt = wis.indexOf("count: linked");
+  const deleteAt = wis.indexOf(".delete()");
+  assert.ok(countAt > 0 && deleteAt > countAt, "the detached count is read BEFORE the delete");
+  assert.match(wis, /action: 'supplier\.deleted'/, "removal lands in the audit trail with the old values");
+
+  const blad = code("src/components/supplier/SupplierEditSheet.tsx");
+  assert.match(blad, /\{!creating && \([\s\S]{0,1200}lev\.verwijder\.knop/, "removal is offered on an existing row only");
+  assert.match(blad, /setConfirmingDelete\(true\)/, "…and takes two taps");
+  for (const key of ["lev.nieuw.knop", "lev.nieuw.vanRegel", "lev.verwijder.knop", "lev.verwijder.bevestig", "lev.fout.bestaatAl"]) {
     assert.ok(key in MESSAGES, `${key} exists in messages.ts`);
   }
 });
