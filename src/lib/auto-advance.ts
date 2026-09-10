@@ -153,6 +153,14 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
     return { advance: false, reason: "foreign_currency" };
   }
 
+  // [ZELFFACTUUR] The document says the CUSTOMER drew it up. If the owner is the seller, this is
+  // their own turnover and auto-booking it as a cost doubles the sale and claims back btw they
+  // OWE. If the owner is the buyer it is a genuine purchase invoice. Nothing on the paper says
+  // which, so nothing here decides — it waits for the one person who knows.
+  if (s.health?.field_confidence?._zelffactuur === true) {
+    return { advance: false, reason: "self_billed" };
+  }
+
   if (zeroBtwUnexplained({
     totalIncBtw: s.totalIncBtw,
     btwAmount: s.health?.btw_amount,

@@ -64,6 +64,7 @@ const SENTENCES: Readonly<Record<string, MessageKey>> = {
   btw_contradicts_printed_split: "wacht.btwAnders",
   zero_btw_not_explicit_zero_rate: "wacht.btwNul",
   foreign_currency: "wacht.vreemdeValuta",
+  self_billed: "wacht.zelffactuur",
   e_invoice_contradicts_read: "wacht.eFactuurAnders",
   amount_confidence_below_high_bar: "wacht.bedragOnzeker",
   no_amount_confidence_and_overall_not_very_high: "wacht.bedragOnzeker",

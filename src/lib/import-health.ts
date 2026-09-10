@@ -192,6 +192,10 @@ export interface FieldConfidence {
   // date and this app has none. So every figure on this row is in `code`, not in euros, and the
   // owner is the only one who can supply what their bank actually took.
   _valuta?: { code?: string | null }
+  // [ZELFFACTUUR] Het document zegt zelf dat de AFNEMER hem heeft opgemaakt (zelffacturering).
+  // Aan welke kant de eigenaar staat bepaalt of dit eigen omzet is of een echte inkoop, en dat
+  // staat nergens op het papier — dus één blik van een mens, nooit een gok.
+  _zelffactuur?: boolean
   // [ASSURANTIE] Present when the document printed assurantiebelasting (insurance premium tax) and
   // a non-zero amount had been read into btw_amount. The guard (stripAssurantiebelastingBtw in
   // @/lib/ai) removed it from the deductible column and folded it into the cost. Says so out loud:
@@ -641,6 +645,15 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   // zin staat er nergens iets over. Het is voorbelasting die de eigenaar anders nooit terugziet.
   // [VREEMDE-VALUTA] Niets aan de rekensom valt op: een dollarfactuur klopt intern perfect — in
   // dollars. Alleen deze zin zegt dat de bedragen op deze regel geen euro's zijn.
+  // [ZELFFACTUUR] Geen enkel bedrag valt op: een zelffactuur telt precies zo op als elke andere.
+  // Alleen deze zin vraagt de vraag die telt — is dit jouw verkoop of jouw inkoop?
+  if (fc?._zelffactuur === true) {
+    flags.vendor = true
+    reasons.push(
+      'op dit document staat dat de afnemer hem heeft opgemaakt (zelffacturering) — controleer of dit jouw eigen verkoop is en geen inkoop'
+    )
+  }
+
   if (typeof fc?._valuta?.code === 'string' && fc._valuta.code.length > 0) {
     flags.arithmetic = true
     reasons.push(

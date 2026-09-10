@@ -105,6 +105,8 @@ import { verifyDocument } from './document-verify';
 // [EIGEN-FACTUUR] Is this "purchase invoice" the owner's OWN sales invoice? Asked inside the
 // reader, one line before the receiver-identity backstop erases the evidence — see there.
 import { looksLikeOwnDocument, matchesOwnInvoiceNumber, ownDocumentNotice } from './own-document';
+// [ZELFFACTUUR] The printed word for "the customer issued this", independent of the model.
+import { selfBilledWordInDocument } from './zelffacturering';
 import { round2 } from './invoice-totals';
 // [MIN-REGEL] What a reading means by a quantity and a price — a negative quantity is a credit
 // line, not an unreadable one, and the minus may never sit in the price. See read-line.ts.
@@ -665,6 +667,11 @@ export interface VerifyInvoiceResult {
     // [BTW-SPLIT] The per-rate block, carried through to storage so the checklist can verify a
     // mixed-rate btw instead of reporting it as checked when nothing checked it.
     _btw_rows?: { rate: number; base: number; btw: number }[];
+    // [ZELFFACTUUR] Set when the document says, in its own characters, that the CUSTOMER drew it
+    // up (zelffacturering, art. 35 Wet OB). Which side the owner is on decides whether this is
+    // their own turnover or a real purchase, and nothing on the paper answers that — so it is
+    // recorded and a human looks. See zelffacturering.ts.
+    _zelffactuur?: boolean;
     // [VREEMDE-VALUTA] Set when the document named a currency that is not the euro. The amounts
     // stored are the amounts PRINTED — unconverted, because nothing here has a rate — so this key
     // is what stops them being treated as euros, and what names the currency on screen.
@@ -2420,6 +2427,29 @@ Return JSON only.`;
         confidence: 0,
         reason: ownDocumentNotice(eigenStuk) ?? 'Dit lijkt je eigen verkoopfactuur.',
       };
+    }
+
+    // ── [ZELFFACTUUR] The word on the paper, which no reading can contradict ──
+    //
+    // A self-billed invoice is drawn up by the BUYER on the seller's behalf. When the owner is the
+    // seller, that document is their own turnover arriving in the incoming pile, and booking it as
+    // a cost is the [EIGEN-FACTUUR] damage exactly: the sale stands again as an expense and the
+    // btw OWED is claimed back as voorbelasting.
+    //
+    // The identity guard directly above catches that whenever the paper carries the owner's KVK,
+    // btw number or IBAN — which it legally must. The number guard directly below cannot: a
+    // self-billed invoice carries the CUSTOMER's number series, from a run this app has never
+    // issued. So on this one document class the second line of defence is structurally absent, and
+    // an owner with a half-filled profile has nothing left. The printed word is a third handle,
+    // and it depends on neither the model naming the parties right nor the profile being complete.
+    //
+    // It decides NOTHING. We do not know which side the owner is on, and we must not guess: this
+    // is recorded, the document waits for one look, and the owner says. That look repeats per
+    // document, which is the cost — the right trade at zero instances, and if it ever becomes
+    // routine with one counterparty the answer is a per-supplier acknowledgement, never a weaker
+    // check.
+    if (selfBilledWordInDocument(statementText)) {
+      parsed.field_confidence = { ...(parsed.field_confidence ?? {}), _zelffactuur: true };
     }
 
     // ── [EIGEN-NUMMER] Recognised by the number the app itself issued ──

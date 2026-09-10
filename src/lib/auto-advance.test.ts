@@ -363,5 +363,15 @@ console.log("\n— [ONGEGROND-AFGELEID] a gross the app derived never books unat
     shouldAutoAdvanceInvoice(clean()).reason !== "foreign_currency");
 }
 
+// [ZELFFACTUUR] Het woord op het papier houdt het document tegen; het beslist niets.
+{
+  const fc = () => ({ ...clean().health.field_confidence });
+  const zelf = shouldAutoAdvanceInvoice(clean({
+    health: { ...clean().health, field_confidence: { ...fc(), _zelffactuur: true } },
+  }));
+  check("een zelffactuur boekt nooit vanzelf", zelf.advance === false && zelf.reason === "self_billed");
+  check("zonder dat woord verandert er niets", shouldAutoAdvanceInvoice(clean()).reason !== "self_billed");
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

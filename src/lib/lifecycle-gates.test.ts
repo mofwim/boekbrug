@@ -30051,6 +30051,62 @@ test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, an
 //   · 4000 is untouched. Adding accounts beside it makes an export more precise; renaming or
 //     renumbering it silently moves history.
 // And the third that makes it safe: it suggests, it never books.
+// ─── [ZELFFACTUUR] The one document class where the second line of defence cannot fire ─────────
+//
+// Self-billing inverts who wrote the invoice: the BUYER draws it up for the seller. When the owner
+// is the seller, that document is their own turnover arriving in the incoming pile — the
+// [EIGEN-FACTUUR] damage exactly, counted twice and in opposite directions.
+//
+// own-document.ts catches it whenever the paper carries the owner's KVK, btw number or IBAN. What
+// CANNOT catch it is [EIGEN-NUMMER], and not by accident: a self-billed invoice carries the
+// customer's number series, from a run this app has never issued. So on precisely this class the
+// fallback for "the reader named the wrong party" is structurally absent, and an owner with a
+// half-filled profile has nothing left.
+//
+// The printed word is the third handle. It decides nothing — which side the owner is on is not on
+// the paper — and it holds the document for one look.
+test("[ZELFFACTUUR] the printed word holds the document, names nothing, and reaches every door", () => {
+  const rule = code("src/lib/zelffacturering.ts");
+  const reader = code("src/lib/ai.ts");
+  const queue = code("src/lib/auto-advance.ts");
+  const health = code("src/lib/import-health.ts");
+
+  // ── Pure, and it never concludes which side the owner is on.
+  assert.doesNotMatch(rule, /supabase|createClient|fetch\(|await /, "pure");
+  assert.doesNotMatch(rule, /is_invoice|isOwn|direction|omzet|revenue/,
+    "this module reports a word; it must not decide whose document it is");
+  // A denial is not an announcement — the same rule [CREDIT-WOORD] carries.
+  assert.match(rule, /const DENIED = /);
+  assert.match(rule, /if \(DENIED\.test\(text\)\) return false;/);
+  // No text layer is not evidence of the opposite.
+  assert.match(rule, /if \(!text\) return false;/);
+
+  // ── It reads the WHOLE document, unlike creditWordInHeader, which is capped at a header window.
+  //    That difference is the point: the legal formula is normally a footer line, and these words
+  //    have no innocent second life in payment terms the way "creditnota" does.
+  assert.doesNotMatch(rule, /slice\(0, *[0-9]+\)/,
+    "the legal statement is usually printed at the bottom — a header window would miss it");
+  assert.match(code("src/lib/creditnota-signal.ts"), /const kop = text\.slice\(0, KOPLENGTE\);/,
+    "…while the credit word stays capped, for the opposite reason");
+
+  // ── It lives in the READER, not at one door. Five doors call the reader; a check at one door is
+  //    a check the other four do not have — the lesson own-document.ts already paid for.
+  assert.match(reader, /if \(selfBilledWordInDocument\(statementText\)\) \{/);
+  assert.match(reader, /_zelffactuur: true \}/);
+
+  // ── And it refuses to auto-book, under its own reason, with its sentence in both lists.
+  assert.match(queue, /if \(s\.health\?\.field_confidence\?\._zelffactuur === true\) \{/);
+  assert.match(queue, /return \{ advance: false, reason: "self_billed" \};/);
+  assert.match(code("src/lib/hold-reasons.ts"), /self_billed: "/);
+  assert.match(code("src/lib/why-waiting.ts"), /self_billed: "wacht\.zelffactuur",/);
+
+  // ── The row asks the question rather than answering it. A sentence that claimed "this is your
+  //    own sale" would be wrong every time the owner is the buyer, which is the other half of the
+  //    cases and the half where the invoice is a perfectly ordinary cost.
+  assert.match(health, /_zelffactuur\?: boolean/);
+  assert.match(health, /controleer of dit jouw eigen verkoop is en geen inkoop/);
+});
+
 // ─── [VREEMDE-VALUTA] Every amount in this administration is a euro amount ─────────────────────
 //
 // Nothing in the pipeline states that assumption, which is exactly why it is dangerous: it is
