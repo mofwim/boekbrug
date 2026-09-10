@@ -324,8 +324,15 @@ export async function GET(req: NextRequest) {
     { exemptRegime: exemption.active },
   );
   const invoices: ResultInvoice[] = invRaw.map((i) => ({
+    id: i.id,
     direction: effDir(i),
     status: i.status, invoice_type: i.invoice_type, total_ex_btw: i.total_ex_btw, btw_amount: i.btw_amount,
+    // [AANSLAG] Both handles for the tax-letter test, which the engine now asks on both schemes:
+    // the stored kind and the sender's name. Selected all along and dropped here, so a
+    // Belastingdienst letter booked as an ordinary purchase — its "btw" (a misread: no letter of
+    // the Belastingdienst carries any) landing in 5b as voorbelasting.
+    tax_kind: i.tax_kind ?? null,
+    client_name: i.client_name ?? null,
     rate_lines: i.id ? rateSharesByInvoice.get(i.id as string) ?? null : null,
     exempt_ex: i.id ? exemptExByInvoice.get(i.id as string) ?? null : null,
     vat_deduction: i.id ? exemption.deductionByInvoice.get(i.id as string) ?? null : null,

@@ -28550,6 +28550,77 @@ test("[HAND-DUBBEL] every screen that can book a payment asks, and none of them 
 // This gate holds the mechanics together: the register reaches the engine under BOTH btw
 // schemes, a failed read is said rather than silently zero, the migration keeps the ordinary
 // rule, the boekhouder reads and never writes, and the auditfile books the same split.
+// ─── [KAS-VOORBELASTING] The kasstelsel moves what you OWE, never what you DEDUCT ──────────────
+//
+// Under the kasstelsel the BTW on your sales is due in the quarter your customer PAYS you (art. 26
+// Wet OB). The deduction does not move with it: voorbelasting is deducted in the period of the
+// purchase invoice on both schemes — "De factuurdatum bepaalt in welk tijdvak u de btw aftrekt",
+// says the Belastingdienst, without qualifying it by regime.
+//
+// The engine booked the deduction off the SETTLEMENT, so a kas owner's 5b was the btw on the bills
+// they happened to pay that quarter. A March bill paid in April was deducted a quarter late (one
+// aangifte too high, the next too low, belastingrente on the first), and at a switch of scheme the
+// same bill was deducted twice. Nobody is on the kasstelsel today, which is exactly when a rule
+// like this is worth correcting: the first owner who switches inherits it in silence.
+test("[KAS-VOORBELASTING] the deduction is dated by the purchase invoice, on both schemes", () => {
+  const engine = code("src/lib/financial-result.ts");
+
+  // 1. The cash leg books the COST from the settlement and no longer the btw with it.
+  assert.doesNotMatch(engine, /bookVoorbelasting\(s\.btw/,
+    "the kas branch deducts off a payment again — that is the defect this gate exists for");
+  assert.match(engine, /if \(assetIds\.has\(s\.invoiceId\)\) investeringen \+= s\.ex; else kosten \+= s\.ex;/,
+    "…while the cost itself stays on the payment date: which quarter owns a cost is an income-tax " +
+      "question, and the kasstelsel is a btw regime");
+
+  // 2. …and the kas branch walks the invoices DATED in the period for the deduction.
+  assert.match(engine, /for \(const inv of invoices\) \{[\s\S]{0,260}?if \(inv\.direction !== "incoming" \|\| !INCOMING_OK\.has\(inv\.status \?\? ""\)\) continue;\s*\n\s*bookPurchaseVat\(inv\);/,
+    "the cash branch must deduct from the purchase invoices of the period, like the accrual one");
+
+  // 3. ONE booking site, so the two schemes cannot drift apart again — and so the refusals
+  //    ([AANSLAG], [TEGENTEKEN]) are asked once instead of once per branch.
+  assert.equal((engine.match(/bookPurchaseVat\(inv\);/g) ?? []).length, 2,
+    "both legs must book through the shared site, and nothing else may");
+  assert.match(engine, /const bookPurchaseVat = \(inv: ResultInvoice\): void => \{/);
+
+  // 4. The three callers that map no id and no tax-letter handle would have let a Belastingdienst
+  //    letter into 5b the moment the cash leg started reading rows instead of slices.
+  for (const f of ["src/app/api/aangifte/route.ts", "src/app/api/readiness/route.ts", "src/lib/closing-package.ts"]) {
+    const src = code(f);
+    assert.match(src, /tax_kind: /, `${f} drops the tax kind on the way to the engine`);
+    assert.match(src, /client_name: /, `${f} drops the sender name, the second handle`);
+  }
+
+  // 5. Art. 29 lid 7 follows the deduction: a kas owner deducts on an unpaid purchase, so an old
+  //    unpaid purchase becomes repayable for them too. The SALES side (lid 1) stays factuur-only —
+  //    under kas you never declared BTW on money that never came in.
+  const rule = code("src/lib/bad-debt.ts");
+  assert.doesNotMatch(rule, /if \(args\.scheme === "kas" \|\| args\.korActive === true\) return EMPTY_CLAWBACK;/,
+    "the clawback still excuses the kasstelsel, on a premise the engine no longer holds");
+  assert.match(rule, /if \(args\.korActive === true\) return EMPTY_CLAWBACK;/,
+    "…the KOR short-circuit stays: there is no deduction to give back");
+  assert.match(rule, /if \(args\.scheme === "kas"\) \{\s*\n\s*return \{ eligible: \[\], totalReclaimableBtw: 0, usedInvoiceDateFallback: false \};/,
+    "the sales side of art. 29 must still return nothing under kas");
+  assert.match(code("src/lib/bad-debt-collect.ts"), /if \(korActive\) return \{ \.\.\.EMPTY_CLAWBACK, readFailed: false \};/,
+    "the collector must let a kas owner reach the detector");
+
+  // 6. What the owner reads. The concept may not tell a kas owner that 5b waits for payment, and
+  //    the count under the sentence must be the set the figure was built from.
+  const concept = code("src/lib/aangifte.ts");
+  assert.doesNotMatch(concept, /hebt BETAALD \(kasstelsel\)/,
+    "the note still describes a deduction rule the Belastingdienst does not have");
+  assert.match(concept, /alleen de BTW over je omzet naar de betaaldatum/,
+    "…and the kas owner is told which half of their aangifte actually moved");
+  const route = code("src/app/api/aangifte/route.ts");
+  assert.match(route, /incomingInvoiceCount: invRaw\.filter\(\(i\) => effDir\(i\) === "incoming" && IN_OK\.has\(i\.status \?\? ""\)\)\.length,/,
+    "5b counts the DATED purchase invoices on both schemes now — the settled count describes nothing");
+  assert.match(route, /outgoingInvoiceCount: onCash\s*\n\s*\? settledInvoiceCount\("outgoing"\)/,
+    "…while the omzet count stays on the settled set, which is what 5a is built from under kas");
+  for (const [f, zin] of [["src/app/api/aangifte/route.ts", /De voorbelasting \(5b\) volgt wél de datum van je inkoopfacturen\./],
+                          ["src/lib/closing-package.ts", /De voorbelasting \(5b\) volgt de datum van de inkoopfacturen\./]] as const) {
+    assert.match(code(f), zin, `${f} still says the whole aangifte is on the payment date`);
+  }
+});
+
 // ─── [AANSLAG] A letter from the Belastingdienst is never a cost ───
 //
 // A voorlopige aanslag has every mark the reader is told to look for in an invoice, and every
@@ -28589,15 +28660,19 @@ test("[AANSLAG] every path that writes an incoming invoice carries the tax kind,
 
 test("[AANSLAG] both cost legs withhold a tax letter, and the auditfile books it where it belongs", () => {
   const engine = code("src/lib/financial-result.ts");
-  assert.match(engine, /if \(taxLetterWithheldFromCosts\(inv\)\) \{ aanslagen \+= ex \+ btw; continue; \}/,
+  assert.match(engine, /const taxKind = taxKindOfRow\(inv\);\s*\n\s*if \(taxKind && taxLetterBooking\(taxKind\) !== "kosten"\) \{ aanslagen \+= ex \+ btw; continue; \}/,
     "the accrual branch must withhold before the asset/cost split");
+  // [AANSLAG] Both handles, in one question, for both legs: three of the four callers map no
+  // tax_kind column at all, so a branch that reads only the row let a letter through as a purchase.
+  assert.match(engine, /const taxKindOfRow = \(inv: ResultInvoice\): TaxKind \| null =>\s*\n\s*effectiveTaxKind\(inv\) \?\? \(inv\.id \? taxKindOf\.get\(inv\.id\) \?\? null : null\);/,
+    "the row's own columns OR the id-keyed map the kas fetch builds");
   assert.match(engine, /if \(taxKind && taxLetterBooking\(taxKind\) !== "kosten"\) \{ aanslagen \+= s\.ex \+ s\.btw; continue; \}/,
     "the kasstelsel branch must withhold the settlement slice");
   assert.match(engine, /aanslagen: round2\(aanslagen\),/, "the withheld money reaches the result by name");
   // No letter of the Belastingdienst carries btw: the one kind that IS a cost (MRB) books gross and
   // never reaches bookVoorbelasting — in both legs, and in the auditfile.
   assert.match(engine, /if \(taxKind\) \{ kosten \+= s\.ex \+ s\.btw; continue; \}/, "kas: MRB gross to kosten, no voorbelasting");
-  assert.match(engine, /if \(effectiveTaxKind\(inv\)\) \{ kosten \+= ex \+ btw; continue; \}/, "accrual: the same");
+  assert.match(engine, /if \(taxKind\) \{ kosten \+= ex \+ btw; continue; \}/, "accrual: the same");
   assert.match(code("src/lib/xaf-export.ts"), /if \(booking === "kosten"\) \{[\s\S]{0,600}accID: ACC\.kosten, debitC: exC \+ btwC/, "auditfile: MRB gross on kosten");
   // The kind can only come from the tax office, and the owner can correct it.
   assert.match(code("src/lib/ai.ts"), /parsed\.tax_kind = isTaxKind\(parsed\.tax_kind\) && isTaxOfficeName\(/, "the reader may not name a kind for any other sender");
