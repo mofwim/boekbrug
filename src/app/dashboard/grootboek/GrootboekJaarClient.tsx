@@ -6,10 +6,17 @@
 // The year lives here rather than in the panel because the panel is what the render test drives,
 // and a component that picks its own year is one the test cannot pin.
 
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import GrootboekKaart from '@/components/grootboek/GrootboekKaart'
 
-export default function GrootboekJaarClient() {
+function GrootboekJaar() {
+  // [BOEKHOUDER-DOET] Dezelfde dubbelpad-route als JaarClient: een gemachtigde boekhouder opent
+  // het grootboek van een KLANT met ?clientId=…, en zonder die parameter is het het eigen
+  // grootboek van de ondernemer. De autorisatie zit in de route (resolveQuarterOwner); dit scherm
+  // geeft de parameter alleen door en beslist niets.
+  const clientId = useSearchParams().get('clientId')
+
   // The current year from the BROWSER's clock: the administration belongs to the owner's calendar,
   // not to the server's timezone ([EEN-KLOK]).
   const [year, setYear] = useState<number>(() => new Date().getFullYear())
@@ -25,7 +32,19 @@ export default function GrootboekJaarClient() {
           })}
         </select>
       </label>
-      <GrootboekKaart year={year} />
+      <GrootboekKaart year={year} clientId={clientId} />
     </main>
+  )
+}
+
+/**
+ * useSearchParams needs a Suspense boundary in the app router; without one the whole route opts
+ * out of static rendering with a build-time warning and the screen renders empty on first paint.
+ */
+export default function GrootboekJaarClient() {
+  return (
+    <Suspense fallback={null}>
+      <GrootboekJaar />
+    </Suspense>
   )
 }

@@ -14817,6 +14817,9 @@ export const MESSAGES = {
   'bh.werk.meer': { nl: '+{n} meer', ar: '+{n} أخرى', en: '+{n} more' },
   'bh.werk.pakket': { nl: 'Pakket', ar: 'الحزمة', en: 'Package' },
   'bh.werk.jaarKnop': { nl: 'Jaar', ar: 'السنة', en: 'Year' },
+  // [JOURNAAL-BRON] Grootboek blijft Grootboek in elke taal — het is het woord van het vak,
+  // dezelfde regel die btw en kvk volgen.
+  'bh.werk.grootboekKnop': { nl: 'Grootboek', ar: 'دفتر الأستاذ (Grootboek)', en: 'Grootboek' },
   'bh.werk.verstuurHerinnering': { nl: 'Verstuur herinnering', ar: 'أرسل التذكير', en: 'Send reminder' },
   'bh.werk.annuleren': { nl: 'Annuleren', ar: 'إلغاء', en: 'Cancel' },
   'bh.werk.melding': { nl: 'De klant krijgt dit als melding in de app (geen e-mail).', ar: 'يصل هذا إلى العميل كإشعار داخل التطبيق (وليس بريدًا إلكترونيًا).', en: 'The client receives this as an in-app notification (no e-mail).' },
