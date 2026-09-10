@@ -35,6 +35,7 @@ Verified absent from this repository at the time of writing, each for a stated r
 | Currency conversion | no exchange-rate code anywhere | A conversion needs the rate on the invoice date, which this app does not have. A foreign invoice is HELD and named instead ([VREEMDE-VALUTA]) — a converted figure, once stored, is indistinguishable from a read one. |
 | Peppol transport (sending over the network) | no access-point client | The UBL the network requires is built and gated ([SI-UBL]). What is missing is a commercial access-point contract, not code. This is a decision for the owner, not an engineering gap. |
 | Owner-written rules ("always book X to 4300") | no rule engine | Five learning loops already exist (bottom section) and are measured working. A rule language would be a sixth way to say the same things, with the owner maintaining it. |
+| A firm-level rule an accountant sets across clients | no such scope on any rule or memory | Every memory in this app is scoped to ONE administration, and that is not an oversight: an accountant with 43 clients genuinely needs "our office books Google Ireland this way", and equally, a rule of theirs may never book in a client's administration without the client — [ZELF-EERST] and [VOORSTEL] both say the owner decides. So the buildable version is a default for the accountant's own PROPOSALS, not an auto-booking. The trigger to build it: **the first accountant who corrects the same thing across three or more clients** — until then it is a rule language with nobody's habits in it. |
 | Inventory, payroll | no such modules | Out of scope by product decision. |
 
 ## The table
@@ -92,12 +93,16 @@ removed. Column 5 is the seventh column: what the owner sees, in the Dutch they 
 | A reversed incasso puts the invoice back to open | `bank-storno.ts` | `[STORNO]` | De melding noemt de betaling die is teruggedraaid. |
 | Is this invoice already settled? | `double-pay-check.ts` | `[AL-GEBOEKT]` | Het scherm zegt het in plaats van een keuzelijst te tonen. |
 | Is this document already in the books? | `archived-duplicate.ts` | `[DUBBEL-ZICHTBAAR]` | De rij noemt de factuur waar hij op lijkt. |
+| Did money leave with no document behind it? | `betaling-zonder-stuk.ts` | `[BETAALD-GEEN-STUK]` | Een blok in de wachtrij: bedrag, leverancier, en dat er niets aan gekoppeld is. |
+| Which invoice did NOT arrive, on the supplier's rhythm? | `supplier-cadence.ts` | `[RITME]` | Hetzelfde blok in de wachtrij, als verwachting geformuleerd. |
 
 ### E. Where does it book?
 
 | Decision | Decided in | Held by | How the owner learns it applies to them |
 |---|---|---|---|
 | Which cost account (grootboek)? | `grootboek.ts` | `[GROOTBOEK]` | Een lijst per leverancier op het jaarscherm, met een voorstel per groep. |
+| The journal entry itself, per source document | `xaf-export.ts` | `[JOURNAAL-BRON]` | Het journaal op /dashboard/grootboek, met per boeking de regels die eronder zitten. |
+| The saldibalans and the grootboekkaart | `grootboekkaart.ts` | `[JOURNAAL-BRON]` | Saldibalans op /dashboard/grootboek; één tik opent de kaart van die rekening. |
 | Is this a cost or an asset to depreciate? | `asset-candidates.ts` | `[BEDRIJFSMIDDEL]` | Het jaarscherm noemt de kandidaten met bedrag. |
 | Depreciation over the asset's years | `depreciation.ts` | `[BEDRIJFSMIDDEL]` | Het resultaat toont de afschrijving als aparte post. |
 | Cash basis or accrual (kasstelsel) | `aangifte.ts` | `[XAF-STELSEL]` | Het stelsel staat in de instellingen en op het aangiftescherm. |
@@ -147,4 +152,4 @@ removed. Column 5 is the seventh column: what the owner sees, in the Dutch they 
   a rename either updates this row or goes red — the one thing a census must not do is quietly
   describe a repository that no longer exists.
 
-Rows: 53 decisions across 8 stages, each citing a module and a gate that exist.
+Rows: 57 decisions across 8 stages, each citing a module and a gate that exist.

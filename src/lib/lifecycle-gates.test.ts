@@ -30052,6 +30052,43 @@ test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, an
 //   · 4000 is untouched. Adding accounts beside it makes an export more precise; renaming or
 //     renumbering it silently moves history.
 // And the third that makes it safe: it suggests, it never books.
+// ─── [RITME] The expectation half, and the four ways it stays quiet ───────────────────────────
+//
+// supplier-cadence.ts answers "which invoice did NOT arrive". It has had unit tests since it was
+// written; what it has not had is a gate, and it is the module in this repo where that matters
+// most — because everything it does is DECIDE NOT TO SPEAK. A regression here does not produce a
+// wrong number; it produces a banner on half the suppliers in the administration, and an alarm
+// that is wrong often enough teaches the owner to dismiss the one that is right.
+//
+// Its own header names the three silences and the window. This pins them, and pins that the
+// endpoint stays honest about a read it could not perform.
+test("[RITME] the missing-invoice signal keeps its four silences and never invents a rhythm", () => {
+  const rule = code("src/lib/supplier-cadence.ts");
+  const route = code("src/app/api/incoming/missing/route.ts");
+
+  // ── Enough history. Two invoices are a coincidence, not a habit.
+  assert.match(rule, /const MIN_INVOICES = 4/);
+  // ── A REAL rhythm: every gap close to the median, not merely an average that looks monthly.
+  assert.match(rule, /const GAP_TOLERANCE = 0\.4/);
+  // ── A recognised cadence, or nothing. A median in no bucket is not a rhythm.
+  assert.match(rule, /const BUCKETS: \{ cadence: Cadence; min: number; max: number \}\[\]/);
+  for (const c of ["wekelijks", "maandelijks", "per kwartaal", "jaarlijks"]) {
+    assert.ok(rule.includes(`cadence: '${c}'`), `the ${c} bucket is gone`);
+  }
+
+  // ── Pure, and never its own clock: today is passed in, or the same administration would answer
+  //    differently in Amsterdam and in the region the server happens to run in.
+  assert.match(rule, /todayIso: string/);
+  assert.doesNotMatch(rule, /new Date\(\)|Date\.now\(\)/,
+    "a module that clocks itself cannot be tested and answers differently per timezone");
+  assert.doesNotMatch(rule, /supabase|createClient|fetch\(/, "pure");
+
+  // ── The route uses the owner's day, and a truncated read is never rendered as "nothing missing".
+  assert.match(route, /amsterdamToday\(\)/);
+  assert.match(route, /fetchAllRows</, "[RITME-AFKAP] a capped read goes quiet on exactly the longest histories");
+  assert.match(route, /tag: "RITME",/, "'we could not look' and 'nothing is missing' render identically");
+});
+
 // ─── [BETAALD-GEEN-STUK] The observation beside the expectation ───────────────────────────────
 //
 // [RITME] (supplier-cadence.ts) already asks "which invoice did not arrive", from a supplier's own
