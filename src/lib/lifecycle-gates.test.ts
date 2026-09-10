@@ -21097,6 +21097,7 @@ test("[DEUR] every dashboard screen resolves a name, so the bar has something to
     ["/dashboard/verkoop", "the medewerker board: the dashboard layout hides all chrome for a sales member on purpose"],
     ["/dashboard/beheer", "operator-only, behind a notFound() gate"],
     ["/dashboard/resultaat", "redirect to /dashboard/waarheid — never renders"],
+    ["/dashboard/journaal", "redirect to /dashboard/grootboek — the word an accountant types, never renders"],
     ["/dashboard/documents", "redirect to bestanden/brug — never renders"],
     ["/dashboard/accountant/status", "redirect to the agenda — never renders"],
     ["/dashboard/accountant/werkplek", "redirect to the accountant home — never renders"],
@@ -30051,6 +30052,69 @@ test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, an
 //   · 4000 is untouched. Adding accounts beside it makes an export more precise; renaming or
 //     renumbering it silently moves history.
 // And the third that makes it safe: it suggests, it never books.
+// ─── [JOURNAAL-BRON] One journal, two renderings — never two journals ─────────────────────────
+//
+// BoekBrug has had a complete double-entry journal since the auditfile was built: buildJournalEntries
+// turns every sales invoice, purchase invoice, bank line, cash row, day turnover and depreciation
+// step into a balanced entry, and REFUSES one that does not balance. What it never had was a
+// screen — the journal existed only as XML addressed to the Belastingdienst, so an accountant
+// opening this app found no grootboek and no journaalposten at all, and concluded the obvious
+// thing about a bookkeeping package that appears to have neither.
+//
+// The dangerous fix is the natural one: give the ledger screen its own computation over the same
+// rows. That is how an administration acquires two sets of books — the screen and the auditfile
+// drift on the first rule changed in one and not the other, nothing anywhere compares them, and
+// the accountant ends up reconciling BoekBrug against BoekBrug.
+//
+// So: exactly one builder, and both renderings downstream of it.
+test("[JOURNAAL-BRON] the ledger and the auditfile are two renderings of ONE journal", () => {
+  const xaf = code("src/lib/xaf-export.ts");
+  const kaart = code("src/lib/grootboekkaart.ts");
+  const route = code("src/app/api/grootboek/kaart/route.ts");
+
+  // ── The builder is exported, and the XML writer CONSUMES it rather than repeating it.
+  assert.match(xaf, /export function buildJournalEntries\(input: XafInput\): JournalResult \{/);
+  assert.match(xaf, /buildJournalEntries\(input\);/,
+    "buildXafFile must call the one builder, not keep a copy of the loop");
+  // The entry-building loops must appear ONCE in the file. Two copies is the failure this gate is
+  // named for, and it would look like a harmless duplication until the day one of them is edited.
+  for (const loop of ["for (const inv of input.sales)", "for (const inv of input.purchases)", "for (const tx of input.bank)"]) {
+    const first = xaf.indexOf(loop);
+    assert.ok(first >= 0, `the journal no longer builds ${loop} — has it moved?`);
+    assert.equal(xaf.indexOf(loop, first + 1), -1, `${loop} appears twice: two journals, one administration`);
+  }
+
+  // ── The ledger DERIVES. It may read the journal; it may not compute money from documents.
+  assert.match(kaart, /import \{ XAF_ACCOUNTS, type Entry, type Line \} from ".\/xaf-export";/);
+  assert.doesNotMatch(kaart, /total_ex_btw|btw_amount|total_inc_btw|invoices|bank_transactions/,
+    "a grootboek that computes its own amounts from documents is a second set of books");
+  assert.doesNotMatch(kaart, /supabase|createClient|fetch\(|await /, "pure");
+
+  // ── The screen's route uses the SAME reads as the auditfile, for the same reason.
+  assert.match(route, /import \{ buildJournalEntries \} from "@\/lib\/xaf-export";/);
+  assert.match(route, /import \{ buildXafInputForOwner \} from "@\/lib\/xaf-fetch";/);
+  assert.match(route, /resolveQuarterOwner\(/, "an accountant opens a client's ledger through the same door as their auditfile");
+
+  // ── An entry that does not balance is refused, and the balance is STATED rather than trusted.
+  assert.match(xaf, /if \(!balanced\(built\.lines\)\) \{ skipped\.push/);
+  assert.match(kaart, /balanced: totalDebitC === totalCreditC,/);
+  // …and a document the journal refused must reach the screen, because a short ledger looks
+  // exactly like a complete one — the argument the auditfile already makes in its own header.
+  assert.match(route, /skipped: journal\.skipped,/);
+  assert.match(code("src/lib/grootboek-kaart-lines.ts"), /staat niet in dit overzicht|staan niet in dit overzicht/);
+
+  // ── The column carries the sign. A ledger prints an amount in one of two columns and never a
+  //    minus; the render test asserts the rendered page, this asserts the rule it comes from.
+  assert.match(code("src/lib/grootboek-kaart-lines.ts"), /return debitC >= 0 \? \{ debet: euro, credit: "" \} : \{ debet: "", credit: euro \};/);
+
+  // ── And the door exists. Three features in a row were built, gated and reached nobody because
+  //    the capability existed and the LIST did not; a grootboek nobody can navigate to is the
+  //    same failure with a bigger surface.
+  assert.match(code("src/lib/nav-destinations.ts"), /href: "\/dashboard\/grootboek"/);
+  assert.match(code("src/app/dashboard/zzp/ZzpDashboard.tsx"), /router\.push\('\/dashboard\/grootboek'\)/);
+  assert.match(code("src/components/nav/DashboardChrome.tsx"), /\["\/dashboard\/grootboek", "chrome\.grootboek"\]/);
+});
+
 // ─── [BESLISMATRIX] The census is checked against the repository, not written about it ─────────
 //
 // docs/BoekBrug_Accounting_Decision_Matrix.md names every decision the pipeline makes on a real

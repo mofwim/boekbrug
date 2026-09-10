@@ -279,7 +279,7 @@ function eur(c: number): string {
   return `${c < 0 ? "-" : ""}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, "0")}`;
 }
 
-interface Line {
+export interface Line {
   accID: string;
   /** Signed cents on the DEBIT side: positive books debit, negative books credit. */
   debitC: number;
@@ -291,7 +291,7 @@ interface Line {
   vat?: { rate: number; amountDebitC: number };
 }
 
-interface Entry {
+export interface Entry {
   nr: number;
   desc: string;
   date: string; // ISO
@@ -676,13 +676,43 @@ const JOURNALS: Record<Entry["journal"], { desc: string; jrnTp: string }> = {
   MEM: { desc: "Memoriaal (afschrijvingen)", jrnTp: "M" },
 };
 
+/** What the one journal builder returns: the entries, and everything the XML envelope also needs. */
+export interface JournalResult {
+  entries: Entry[];
+  skipped: XafSkipped[];
+  turnoverWitnessCount: number;
+  custId: Map<string, string>;
+  supId: Map<string, string>;
+  totalDebitC: number;
+  totalCreditC: number;
+  lineCount: number;
+}
+
 /**
- * Build the complete auditfile. Sequencing, journal membership and the customer/supplier
- * sub-administration all happen here so the route stays a fetch-adapt-refuse pipeline.
+ * [JOURNAAL-BRON] The journal itself — one balanced entry per source document.
+ *
+ * This is not a new engine. It is the engine that has always been here, lifted out of
+ * `buildXafFile` unchanged so that it can be READ as well as serialized.
+ *
+ * ── WHY THIS EXTRACTION AND NOT A SECOND BUILDER ──
+ *
+ * BoekBrug has had a complete double-entry journal since the auditfile was built: every sales
+ * invoice, purchase invoice, bank line, cash row, day turnover and depreciation step becomes a
+ * balanced entry here, and an entry that does not balance is REFUSED rather than posted. What it
+ * has never had is a screen — the journal existed only as XML, addressed to the Belastingdienst,
+ * and an accountant opening this app therefore found no grootboek and no journaalposten at all.
+ *
+ * The tempting fix is to write a ledger view that computes its own entries from the same rows.
+ * That is how an administration acquires two sets of books: the screen and the auditfile drift on
+ * the first rule that is changed in one and not the other, and nothing anywhere compares them. The
+ * accountant would then be reconciling BoekBrug against BoekBrug.
+ *
+ * So there is exactly one builder, and both renderings are downstream of it: XML for the
+ * Belastingdienst, a grootboekkaart for the human. A gate holds that shape — see [JOURNAAL-BRON].
+ *
+ * Pure. Same refusals, same order, same numbering as before the extraction.
  */
-export function buildXafFile(input: XafInput, options: XafBuildOptions = {}): XafBuildResult {
-  const version: XafVersion = options.version ?? "3.2";
-  const v4 = version === "4.0";
+export function buildJournalEntries(input: XafInput): JournalResult {
   const skipped: XafSkipped[] = [];
   let turnoverWitnessCount = 0;
 
@@ -738,6 +768,19 @@ export function buildXafFile(input: XafInput, options: XafBuildOptions = {}): Xa
     // leave the building pretending to be an administration.
     throw new Error(`auditfile out of balance: D ${totalDebitC} C ${totalCreditC}`);
   }
+
+  return { entries, skipped, turnoverWitnessCount, custId, supId, totalDebitC, totalCreditC, lineCount };
+}
+
+/**
+ * Build the complete auditfile. Sequencing, journal membership and the customer/supplier
+ * sub-administration all happen here so the route stays a fetch-adapt-refuse pipeline.
+ */
+export function buildXafFile(input: XafInput, options: XafBuildOptions = {}): XafBuildResult {
+  const version: XafVersion = options.version ?? "3.2";
+  const v4 = version === "4.0";
+  const { entries, skipped, turnoverWitnessCount, custId, supId, totalDebitC, totalCreditC, lineCount } =
+    buildJournalEntries(input);
 
   // ── Serialize, element order per the XSD ──
   const year = input.year;

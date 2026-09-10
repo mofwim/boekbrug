@@ -91,6 +91,7 @@ export const MESSAGES = {
   'chrome.uploaden': { nl: 'Uploaden', ar: 'رفع ملف', en: 'Upload' },
   'chrome.artikelen': { nl: 'Artikelen', ar: 'المنتجات', en: 'Items' },
   'chrome.jaaroverzicht': { nl: 'Jaaroverzicht', ar: 'ملخّص السنة', en: 'Year overview' },
+  'chrome.grootboek': { nl: 'Grootboek', ar: 'دفتر الأستاذ (Grootboek)', en: 'Grootboek' },
   // [DEUR] Kassa, Voertuigen, Team en Uren staan óók in deze balk — maar met hun eigen
   // schermtitel (kassa.titel, vtg.titel, team.titel, uren.titel) en niet met een tweede
   // chrome.*-sleutel ernaast. Eén scherm, één naam: twee sleutels met hetzelfde woord erin is
@@ -449,6 +450,14 @@ export const MESSAGES = {
   // allebei de dingen die het scherm oplevert — een label alleen zegt niet waarom je er heen zou
   // gaan, en "jaaroverzicht" kan alles betekenen.
   'start.jaar': { nl: 'Jaaroverzicht', ar: 'ملخّص السنة', en: 'Year overview' },
+  // [GROOTBOEK-KAART] Grootboek is the accountant's own word, in every language — the same rule
+  // btw and kvk follow. A translation would send them looking for a screen that is not there.
+  'start.grootboek': { nl: 'Grootboek', ar: 'دفتر الأستاذ (Grootboek)', en: 'Grootboek' },
+  'start.grootboek.sub': {
+    nl: 'Saldibalans, grootboekkaart en journaalposten',
+    ar: 'ميزان المراجعة وبطاقة الحساب والقيود',
+    en: 'Trial balance, ledger card and journal entries',
+  },
   'start.jaar.sub': {
     nl: 'Cijfers voor je IB-aangifte en je auditfile',
     ar: 'أرقام إقرار الدخل وملف التدقيق',
