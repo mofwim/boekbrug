@@ -144,3 +144,20 @@ database — the components take their data as props. **Hand it rows that exerci
 the same bug is invisible against an empty list, because `[].filter(cb)` never calls `cb`.
 
 When you add a screen to this line, add it there.
+
+# A lifecycle gate must not mark its own bounds with a comment
+
+Many gates in `src/lib/lifecycle-gates.test.ts` read a file through `code()` and then cut a window
+out of it — "the rollback branch is between HERE and THERE" — before asserting over that window.
+
+`code()` strips comments. So a marker that lives in a comment is not in the string being cut, and
+`indexOf` returns `-1`. The window then runs to the END of the file, and the gate quietly measures
+something far larger than it claims.
+
+That happened to `[UREN-EENMALIG]`, whose window ended at `"[ARTIKEL-LEREN]"` — a comment. For
+months the only thing bounding it was a 3000-character ceiling meant as a sanity check, and the
+gate went red the moment a second branch was added after the one it was watching. Nothing was
+wrong with the code it guarded; the gate had stopped being able to see where it ended.
+
+**Cut on real code, and assert the marker was found.** A `slice` whose second argument may be `-1`
+is a gate that passes for the wrong reason on the day it matters.
