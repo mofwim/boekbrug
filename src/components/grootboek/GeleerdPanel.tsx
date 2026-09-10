@@ -31,6 +31,52 @@ interface Item {
   gained: ReaderCapability['key'][]
 }
 
+/**
+ * The offered invoices, as a pure function of what was read.
+ *
+ * Exported and separated from the fetching for the reason AGENTS.md gives: the wrapper renders
+ * NOTHING until its read answers, so a server render of the wrapper never reaches a row — and a
+ * row is where the whole class of render bug lives. `[].map(cb)` never calls cb.
+ */
+export function GeleerdList({ items, busy, onPutBack }: {
+  items: Item[]
+  busy: string | null
+  onPutBack: (id: string) => void
+}) {
+  const t = translator(useLocale())
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      {items.map((inv) => (
+        <div key={inv.id} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '9px 0', borderTop: '1px solid #FFE0A3' }}>
+          <span style={{ flex: '1 1 150px', minWidth: 0 }}>
+            <span style={{ display: 'block', fontSize: 14, color: '#202124', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {inv.vendor || '—'}
+            </span>
+            <span style={{ display: 'block', fontSize: 12, color: '#80868B', marginTop: 1 }}>
+              {[inv.invoiceDate, inv.invoiceNumber].filter(Boolean).join(' · ')}
+              {inv.gained.length > 0 && ' — '}
+              {learnedPhrases(inv.gained).map((p) => t(p.key, p.params)).join(', ')}
+            </span>
+          </span>
+          {inv.totalIncBtw !== null && (
+            <span style={{ fontFamily: "'Roboto Mono', monospace", fontSize: 13.5, color: '#202124', minWidth: 88, textAlign: 'end' }}>
+              {formatEuroNL(inv.totalIncBtw)}
+            </span>
+          )}
+          <button
+            type="button"
+            disabled={busy === inv.id}
+            onClick={() => onPutBack(inv.id)}
+            style={{ background: '#fff', border: '1px solid #DADCE0', borderRadius: 999, padding: '5px 12px', fontSize: 12.5, fontWeight: 600, color: '#1A73E8', cursor: busy === inv.id ? 'default' : 'pointer', fontFamily: 'inherit', opacity: busy === inv.id ? 0.6 : 1 }}
+          >
+            {t('gl.terug')}
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function GeleerdPanel({ onRestored }: { onRestored?: () => void }) {
   const t = translator(useLocale())
   const [items, setItems] = useState<Item[] | null>(null)
@@ -87,35 +133,7 @@ export default function GeleerdPanel({ onRestored }: { onRestored?: () => void }
           <p style={{ fontSize: 13.5, color: '#202124', fontWeight: 600, margin: '0 0 10px' }}>
             {t(summary.key, summary.params)}
           </p>
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {items.map((inv) => (
-              <div key={inv.id} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '9px 0', borderTop: '1px solid #FFE0A3' }}>
-                <span style={{ flex: '1 1 150px', minWidth: 0 }}>
-                  <span style={{ display: 'block', fontSize: 14, color: '#202124', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {inv.vendor || '—'}
-                  </span>
-                  <span style={{ display: 'block', fontSize: 12, color: '#80868B', marginTop: 1 }}>
-                    {[inv.invoiceDate, inv.invoiceNumber].filter(Boolean).join(' · ')}
-                    {inv.gained.length > 0 && ' — '}
-                    {learnedPhrases(inv.gained).map((p) => t(p.key, p.params)).join(', ')}
-                  </span>
-                </span>
-                {inv.totalIncBtw !== null && (
-                  <span style={{ fontFamily: "'Roboto Mono', monospace", fontSize: 13.5, color: '#202124', minWidth: 88, textAlign: 'end' }}>
-                    {formatEuroNL(inv.totalIncBtw)}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  disabled={busy === inv.id}
-                  onClick={() => void putBack(inv.id)}
-                  style={{ background: '#fff', border: '1px solid #DADCE0', borderRadius: 999, padding: '5px 12px', fontSize: 12.5, fontWeight: 600, color: '#1A73E8', cursor: busy === inv.id ? 'default' : 'pointer', fontFamily: 'inherit', opacity: busy === inv.id ? 0.6 : 1 }}
-                >
-                  {t('gl.terug')}
-                </button>
-              </div>
-            ))}
-          </div>
+          <GeleerdList items={items} busy={busy} onPutBack={(id) => void putBack(id)} />
           {/* Where it went, said once — a row that vanishes with no destination reads as deleted. */}
           {done && <p style={{ fontSize: 12.5, color: '#5F6368', margin: '10px 0 0' }}>{t('gl.daarna')}</p>}
           {error && <p style={{ fontSize: 13, color: '#B3261E', margin: '10px 0 0' }}>{t('gl.terugFout')}</p>}

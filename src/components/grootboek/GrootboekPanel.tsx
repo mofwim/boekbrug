@@ -44,6 +44,57 @@ interface Payload {
 // wall; a handful with the count above it is a task.
 const PAGE = 8
 
+/**
+ * The populated panel, as a pure function of what was read.
+ *
+ * Exported and separated from the fetching for one reason: the wrapper renders NOTHING until its
+ * read answers ([NO-SILENT-EMPTY]), so a server render of the wrapper can never reach the rows —
+ * and rows are exactly where the class of bug this repo's render gate exists for lives. AGENTS.md:
+ * hand it rows that exercise the branches, because `[].map(cb)` never calls cb.
+ */
+export function GrootboekList({ data, saving, onAssign }: {
+  data: Payload
+  saving: string | null
+  onAssign: (group: OpenGroup, account: string) => void
+}) {
+  const t = translator(useLocale())
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      {data.open.map((g) => {
+        const why = suggestionReason(g.suggestion)
+        const size = groupSizePhrase(g.count, formatEuroNL(g.gross))
+        return (
+          <div key={g.key} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 0', borderTop: '1px solid #F1F3F4' }}>
+            <span style={{ flex: '1 1 160px', minWidth: 0 }}>
+              <span style={{ display: 'block', fontSize: 14, color: '#202124', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {g.vendor || '—'}
+              </span>
+              <span style={{ display: 'block', fontSize: 12, color: '#80868B', marginTop: 1 }}>
+                {t(size.key, size.params)} — {t(why.key, why.params)}
+              </span>
+            </span>
+            {/* The suggestion is PRE-SELECTED, never pre-saved. Changing it here IS the answer, for
+                every open invoice of this supplier at once; there is no separate confirm, because a
+                two-tap answer on a hundred suppliers is a list nobody finishes. What it covers is
+                on the line above it. */}
+            <select
+              aria-label={t('gb.kop')}
+              defaultValue={g.suggestion.accountId}
+              disabled={saving === g.key}
+              onChange={(e) => onAssign(g, e.target.value)}
+              style={{ fontSize: 13, padding: '6px 8px', borderRadius: 8, border: '1px solid #DADCE0', background: '#fff', color: '#202124', maxWidth: 240 }}
+            >
+              {data.accounts.map((a) => (
+                <option key={a.id} value={a.id}>{a.id} · {a.name}</option>
+              ))}
+            </select>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function GrootboekPanel() {
   const t = translator(useLocale())
   const [data, setData] = useState<Payload | null>(null)
@@ -105,39 +156,11 @@ export default function GrootboekPanel() {
         <>
           <p style={{ fontSize: 13.5, color: '#5F6368', margin: '0 0 10px' }}>{t(count.key, count.params)}</p>
           {data.open.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              {data.open.slice(0, shown).map((g) => {
-                const why = suggestionReason(g.suggestion)
-                const size = groupSizePhrase(g.count, formatEuroNL(g.gross))
-                return (
-                  <div key={g.key} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 0', borderTop: '1px solid #F1F3F4' }}>
-                    <span style={{ flex: '1 1 160px', minWidth: 0 }}>
-                      <span style={{ display: 'block', fontSize: 14, color: '#202124', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {g.vendor || '—'}
-                      </span>
-                      <span style={{ display: 'block', fontSize: 12, color: '#80868B', marginTop: 1 }}>
-                        {t(size.key, size.params)} — {t(why.key, why.params)}
-                      </span>
-                    </span>
-                    {/* The suggestion is PRE-SELECTED, never pre-saved. Changing it here IS the
-                        answer, for every open invoice of this supplier at once; there is no
-                        separate confirm, because a two-tap answer on a hundred suppliers is a list
-                        nobody finishes. What it covers is on the line above it. */}
-                    <select
-                      aria-label={t('gb.kop')}
-                      defaultValue={g.suggestion.accountId}
-                      disabled={saving === g.key}
-                      onChange={(e) => void assign(g, e.target.value)}
-                      style={{ fontSize: 13, padding: '6px 8px', borderRadius: 8, border: '1px solid #DADCE0', background: '#fff', color: '#202124', maxWidth: 240 }}
-                    >
-                      {data.accounts.map((a) => (
-                        <option key={a.id} value={a.id}>{a.id} · {a.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                )
-              })}
-            </div>
+            <GrootboekList
+              data={{ ...data, open: data.open.slice(0, shown) }}
+              saving={saving}
+              onAssign={(g, account) => void assign(g, account)}
+            />
           )}
           {saveError && <p style={{ fontSize: 13, color: '#B3261E', margin: '10px 0 0' }}>{t('gb.opslaanFout')}</p>}
           {data.open.length > shown && (
