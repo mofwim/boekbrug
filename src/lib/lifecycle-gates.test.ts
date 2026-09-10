@@ -30051,6 +30051,69 @@ test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, an
 //   · 4000 is untouched. Adding accounts beside it makes an export more precise; renaming or
 //     renumbering it silently moves history.
 // And the third that makes it safe: it suggests, it never books.
+// ─── [GELEERD-SINDSDIEN] The app improving in silence is the app failing in silence ────────────
+//
+// Measured: 58 incoming invoices sit at Genegeerd and 45 were held on the same arithmetic flag,
+// stamped 8–24 July 2026. The reader learned to read a mixed-rate BTW summary block on 18 August
+// and to find a dropped statiegeld line on 26 August. Forty of them were held before that and
+// still have their file: € 44.749,74 of purchase invoices the owner threw away, correctly, on the
+// evidence they had — and nobody ever told them the evidence changed.
+//
+// What this gate holds is the honesty of the offer, because the failure mode is not a crash:
+//   · Only invoices held BEFORE the capability landed. Five of the 45 were held after, which means
+//     the reader already knew and still could not do it; offering those promises what we cannot do.
+//   · A hold with no date claims nothing — the same rule this app keeps about checks that could
+//     not run.
+//   · It never un-archives by itself. The owner set these aside on purpose, and putting one back
+//     goes through the restore door that already exists.
+test("[GELEERD-SINDSDIEN] only what the reader was blind for, and the owner still decides", () => {
+  const rule = code("src/lib/geleerd-sindsdien.ts");
+  const route = code("src/app/api/geleerd/route.ts");
+  const panel = code("src/components/grootboek/GeleerdPanel.tsx");
+  const words = code("src/lib/geleerd-lines.ts");
+
+  // ── The capability table is dated, and the comparison is strictly BEFORE.
+  assert.match(rule, /\{ key: "btw_split", since: "2026-08-18", explains: \["sum_mismatch"\] \}/);
+  assert.match(rule, /\{ key: "statiegeld", since: "2026-08-26", explains: \["sum_mismatch"\] \}/);
+  assert.match(rule, /heldDay < c\.since/,
+    "an invoice held AFTER the reader learned must not be offered a second read");
+
+  // ── Every conservative refusal is present. Each of these being wrong sends the owner back to an
+  //    invoice that will fail exactly as it did, which is worse than never being asked.
+  assert.match(rule, /if \(\(invoice\.status \?\? ""\) !== "archived"\) return NOTHING;/);
+  assert.match(rule, /if \(\(invoice\.direction \?\? ""\) !== "incoming"\) return NOTHING;/);
+  assert.match(rule, /if \(invoice\.hasFile !== true\) return NOTHING;/);
+  assert.match(rule, /if \(!\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\/\.test\(held\)\) return NOTHING;/,
+    "a hold with no date must claim nothing");
+
+  // ── It decides nothing and writes nothing: read-only route, restore through the existing door.
+  assert.doesNotMatch(route, /\.update\(|\.insert\(|\.delete\(/,
+    "this route may not un-archive — the owner set these aside on purpose");
+  assert.match(panel, /fetch\(`\/api\/email\/confirm\/\$\{id\}`, \{ method: 'PATCH' \}\)/,
+    "putting an invoice back goes through the restore door that already exists");
+  // …and it does not run an AI re-read behind the owner's back.
+  assert.doesNotMatch(panel, /\/api\/email\/reimport/,
+    "the re-read is the next tap, where it already lives");
+
+  // ── [NO-SILENT-EMPTY] on both sides, and no nagging when there is nothing to offer.
+  assert.match(route, /status: 503/);
+  assert.match(panel, /if \(!failed && \(!items \|\| items\.length === 0\)\) return null/);
+
+  // ── [TAAL] The words name what CHANGED, which is the difference between an offer and an
+  //    accusation — and never a generic "we improved", which the owner cannot check.
+  assert.match(words, /btw_split: "gl\.leerBtw"/);
+  assert.match(words, /statiegeld: "gl\.leerStatiegeld"/);
+  assert.match(words, /if \(!key \|\| seen\.has\(key\)\) continue;/,
+    "an unknown capability must be skipped, not rendered as its own key");
+  const copy = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  for (const key of ["gl.kop", "gl.uitleg", "gl.samen", "gl.samenEen", "gl.leerBtw",
+                     "gl.leerStatiegeld", "gl.terug", "gl.daarna"]) {
+    const line = copy.split("\n").find((l) => l.includes(`'${key}':`));
+    assert.ok(line, `${key} is missing from the catalogue`);
+    assert.match(line as string, /nl: '[^']+'/, `${key} has no Dutch`);
+  }
+});
+
 // ─── [GROOTBOEK-OPSLAG] The account is stored, exported, and only ever what a human said ───────
 //
 // The chart is only worth having if a decision on it survives into the auditfile. Three rules hold

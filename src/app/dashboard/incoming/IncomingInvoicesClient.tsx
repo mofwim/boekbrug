@@ -136,6 +136,8 @@ import { useCloseOnBack } from '@/lib/use-close-on-back'
 import DateFieldNL from '@/components/ui/DateFieldNL'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
+// [GELEERD-SINDSDIEN] De genegeerde facturen die de lezer inmiddels wél kan lezen.
+import GeleerdPanel from '@/components/grootboek/GeleerdPanel'
 // [PAGINA-VOLGORDE] The order of the pages of one paper invoice, decided in one place and shown
 // in one tray — the same on Uploaden. See src/lib/page-order.ts for why a plain sort is wrong.
 import { usePageTray } from '@/lib/use-page-tray'
@@ -4893,6 +4895,13 @@ export default function IncomingInvoicesClient({
             </div>
           </div>
         )}
+
+        {/* [GELEERD-SINDSDIEN] Bovenaan Genegeerd, want dat is precies de plek waar je kijkt als
+            je iets mist. Deze facturen zette de eigenaar opzij toen de lezer ze niet kon lezen; de
+            lezer heeft dat sindsdien geleerd, en niemand had hem dat verteld. Het paneel toont
+            zichzelf alleen als er iets te bieden is — de genegeerd-lijst is geen plek om gezeurd
+            te worden. */}
+        {tab === "ignored" && <GeleerdPanel onRestored={() => router.refresh()} />}
 
         {/* [AFZENDERREGEL] De regels van de eigenaar staan bij Genegeerd, want dat is de plek waar
             je kijkt als je iets mist. Elke regel met het adres erbij en één knop om hem op te

@@ -107,6 +107,15 @@ test("[RENDER-GATE] none of the three renders a raw message key", async () => {
   }
 });
 
+// ── [GELEERD-SINDSDIEN] The ignored invoices the reader has since learned to read ─────────────
+test("[GELEERD-SINDSDIEN] the panel is absent until it has something to offer", async () => {
+  const { default: GeleerdPanel } = await import("../../src/components/grootboek/GeleerdPanel");
+  // The ignored list is not a place to be nagged: a heading with nothing under it is a nag, and
+  // before the read answers it would also be a claim nobody has checked.
+  const html = renderToStaticMarkup(React.createElement(GeleerdPanel as never));
+  assert.equal(html, "", "nothing to offer is nothing to show");
+});
+
 // ── [GROOTBOEK] The purchase invoices that still need a cost account ──────────────────────────
 test("[GROOTBOEK] the panel is absent until its read answers — never an empty 'all done'", async () => {
   const { default: GrootboekPanel } = await import("../../src/components/grootboek/GrootboekPanel");
