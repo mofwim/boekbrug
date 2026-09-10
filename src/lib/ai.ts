@@ -644,6 +644,11 @@ export interface VerifyInvoiceResult {
     _btw_verlegd?: { grondslag: number | null };
     // [EX-INCL-FIX] Set when the base was recovered from incl − btw (a mislabelled "Subtotaal").
     _ex_corrected?: { read: number | null; used: number | null };
+    // [NUL-BTW-STIL] Set by an ingestion door that BOOKED a zero BTW the document does not explain
+    // — no 0 %-tarief, no verlegging, a material total. Never written by the reader itself: it is a
+    // statement about what was stored, not about what was read. Its presence keeps the row visible
+    // for a human, because the identity holds by construction and nothing else would mention it.
+    _btw_zero_unexplained?: boolean;
     // [BTW-SPLIT] The per-rate block, carried through to storage so the checklist can verify a
     // mixed-rate btw instead of reporting it as checked when nothing checked it.
     _btw_rows?: { rate: number; base: number; btw: number }[];

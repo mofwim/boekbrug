@@ -295,6 +295,23 @@ console.log("\n— [E-FACTUUR-BESLECHT] de leverancier stuurde zijn eigen cijfer
   }));
   check("nul btw zonder expliciet 0%-tarief wacht nog steeds", nulBtw.advance === false && nulBtw.reason === "zero_btw_not_explicit_zero_rate");
 
+  // [NUL-BTW-STIL] Een VERLEGDE factuur draagt geen BTW en geen tarief omdat dat correct is; die
+  // werd hier vastgehouden onder een leesfout die niet bestond. Rubriek 2a doet er een laag verder
+  // wel iets mee — het document zelf is compleet.
+  const verlegd = shouldAutoAdvanceInvoice(clean({
+    btwRate: null,
+    health: {
+      ...clean().health,
+      btw_amount: 0,
+      field_confidence: {
+        vendor: 0.98, invoice_number: 0.97, invoice_date: 0.99, amount: 0.96,
+        _einvoice: efact({ btwAmount: 0 }),
+        _btw_verlegd: { grondslag: 100 },
+      },
+    },
+  }));
+  check("een verlegde factuur wordt niet vastgehouden op een nul-BTW", verlegd.reason !== "zero_btw_not_explicit_zero_rate");
+
   // Rommel in _einvoice is geen e-factuur. eInvoiceOf valideert; een half object leest als niets,
   // en "niets" mag nooit als "beslecht" gelden — anders is dit een poort die je kunt omzeilen door
   // onzin op te slaan.

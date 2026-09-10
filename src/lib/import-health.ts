@@ -177,6 +177,16 @@ export interface FieldConfidence {
   _btw_derived?: { read?: number | null; used?: number | null }
   // [EIGEN-CONTROLE-ONBEKEND] De eigen-verkoopfactuurcontrole kon niet draaien — zie ai.ts.
   _own_check_unavailable?: boolean
+  // [VERLEGD-NAAR-MIJ] De leverancier heeft de BTW naar deze eigenaar verlegd: geen BTW en geen
+  // tarief op het document is dan juist. Alleen vastgelegd; de aangifte doet er iets mee
+  // (rubriek 2a, dezelfde euro's terug in 5b). Hier staat hij omdat een nul-BTW die door de
+  // verlegging verklaard wordt geen leesfout is — zie zero-btw.ts.
+  _btw_verlegd?: { grondslag?: number | null }
+  // [NUL-BTW-STIL] An ingestion door booked a zero BTW that the document does not explain — see
+  // zero-btw.ts. Written by the door, never by the reader: it describes what was STORED. The row
+  // needs its own reason because the gross-as-net fallback makes ex equal incl, so the arithmetic
+  // is silent by construction and the voorbelasting sits at 0 behind a clean-looking row.
+  _btw_zero_unexplained?: boolean
   // [ASSURANTIE] Present when the document printed assurantiebelasting (insurance premium tax) and
   // a non-zero amount had been read into btw_amount. The guard (stripAssurantiebelastingBtw in
   // @/lib/ai) removed it from the deductible column and folded it into the cost. Says so out loud:
@@ -613,6 +623,17 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
     flags.vendor = true
     reasons.push(
       'we konden niet nagaan of dit je eigen verkoopfactuur is — controleer de leverancier vóór je dit als kost boekt'
+    )
+  }
+
+  // [NUL-BTW-STIL] Er is € 0 BTW geboekt terwijl het document daar geen reden voor geeft: geen
+  // 0 %-tarief, geen verlegging. De rekenkundige controle hierboven zwijgt hier per definitie —
+  // het terugvalbedrag maakt excl. gelijk aan het totaal, dus de identiteit klopt — en zonder deze
+  // zin staat er nergens iets over. Het is voorbelasting die de eigenaar anders nooit terugziet.
+  if (fc?._btw_zero_unexplained === true) {
+    flags.arithmetic = true
+    reasons.push(
+      'we lazen geen BTW op dit document en boekten € 0 voorbelasting — controleer of je BTW mag terugvragen'
     )
   }
 

@@ -152,6 +152,23 @@ console.log('\n— [EIGEN-CONTROLE-ONBEKEND] een controle die niet kon draaien z
       .some((r) => /eigen verkoopfactuur/.test(r)))
 }
 
+console.log('\n— [NUL-BTW-STIL] een nul-BTW zonder uitleg is voorbelasting die niemand ziet —')
+{
+  // De terugval maakt excl. gelijk aan het totaal, dus 121 + 0 = 121 klopt per constructie: zonder
+  // deze notitie is de rij op elke as schoon terwijl de voorbelasting op 0 staat.
+  const stil = classifyImportHealth(inv({
+    total_ex_btw: 121, btw_amount: 0, total_inc_btw: 121,
+    field_confidence: { _btw_zero_unexplained: true },
+  }))
+  check('een onverklaarde nul-BTW → needs-review', stil.level === 'needs-review' && stil.flags.arithmetic === true)
+  check('de reden noemt de voorbelasting', stil.reasons.some((r) => /voorbelasting/.test(r) && /terugvragen/.test(r)))
+  check('dezelfde bedragen zonder de notitie blijven clean',
+    classifyImportHealth(inv({ total_ex_btw: 121, btw_amount: 0, total_inc_btw: 121 })).level === 'clean')
+  check('een expliciete false zegt niets',
+    !classifyImportHealth(inv({ total_ex_btw: 121, btw_amount: 0, total_inc_btw: 121, field_confidence: { _btw_zero_unexplained: false } }))
+      .reasons.some((r) => /voorbelasting/.test(r)))
+}
+
 console.log('\n— [EX-INCL-FIX] een herschreven grondslag boekt nooit zonder mens —')
 {
   // Na de reparatie klopt 333.06 + 69.94 = 403 per constructie — elke andere as zwijgt.

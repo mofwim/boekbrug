@@ -29892,3 +29892,72 @@ test("[BLIND-GEMATCHT] a lost match memory or refusal list reaches the owner, an
       `${key} must say the read failed, never that nothing was remembered`);
   }
 });
+
+// ─── [NUL-BTW-STIL] A zero BTW that the document does not explain must not book in silence ─────
+//
+// One rule, asked in one place. `btw_amount = 0` on a vrijgestelde or verlegde factuur is the
+// truth; `btw_amount = 0` because the split was never read is voorbelasting the owner is entitled
+// to and will never see again. The two are indistinguishable in the stored row, and the second one
+// is INVISIBLE by construction: the gross-as-net fallback every ingestion door uses makes ex equal
+// incl, so the arithmetic identity holds, import health reads clean, and nothing anywhere mentions
+// it. On a € 121 supplier bill that is € 21.
+//
+// The verify queue already refused this shape ([BTW-GATE] in auto-advance.ts). The attach-invoice
+// door does not pass through that queue — it books straight to 'paid' — so it never got the
+// benefit. The question therefore moved out of auto-advance into zero-btw.ts, where both can ask
+// it, and the door CARRIES the answer instead of refusing on it: the payment happened and the cost
+// is real, so the conservative number still books; it just no longer books silently.
+test("[NUL-BTW-STIL] one zero-BTW rule, and the paid-straight-away door carries its answer", () => {
+  const rule = code("src/lib/zero-btw.ts");
+  const queue = code("src/lib/auto-advance.ts");
+  const door = code("src/app/api/bank/attach-invoice/route.ts");
+  const health = code("src/lib/import-health.ts");
+
+  // ── The rule is one function, and every escape from it is an EXPLANATION the document gives.
+  assert.match(rule, /export function zeroBtwUnexplained/);
+  // An immaterial total has nothing to lose.
+  assert.match(rule, /Math\.abs\(gross\) < 0\.005\) return false/);
+  // A BTW that is actually there is not a hole.
+  assert.match(rule, /Math\.abs\(btw\) >= 0\.005\) return false/);
+  // An explicit 0 %-tarief, and a reverse charge, each explain the zero. An ABSENT rate does not —
+  // that is the misread the rule exists for, so it must never be treated as 0 %.
+  assert.match(rule, /input\.btwRate === 0\) return false/);
+  assert.match(rule, /input\.shifted === true\) return false/);
+  assert.doesNotMatch(rule, /btwRate\s*!==\s*0/,
+    "the rate must be tested for BEING zero, never for differing from it — absent is not 0 %");
+
+  // ── The verify queue asks the shared question instead of restating it.
+  assert.match(queue, /import \{ zeroBtwUnexplained \} from "\.\/zero-btw"/);
+  assert.match(queue, /if \(zeroBtwUnexplained\(\{/);
+  assert.match(queue, /reason: "zero_btw_not_explicit_zero_rate"/,
+    "the machine tag is read by why-waiting.ts and must not drift");
+  assert.doesNotMatch(queue, /Math\.abs\(btw\) < 0\.005 && s\.btwRate !== 0/,
+    "the inline copy is gone — two copies of a money rule drift apart");
+
+  // ── The door that skips the queue asks the same question…
+  assert.match(door, /import \{ zeroBtwUnexplained \} from "@\/lib\/zero-btw"/);
+  assert.match(door, /const btwZeroUnexplained =/);
+  // …on the number it is about to BOOK, not on the raw read (btwAmount is reassigned by the
+  // [ATTACH-REKENT] fallback above it, and it is that final figure the owner loses).
+  assert.match(door, /zeroBtwUnexplained\(\{\s*totalIncBtw,\s*btwAmount,/,
+    "the question must be asked of the amounts being written to the row");
+  // …and CARRIES it. Never a refusal: the bank payment is real and the cost must still book.
+  assert.doesNotMatch(door, /btwZeroUnexplained[\s\S]{0,300}?status: 422/,
+    "an unreadable BTW must not reject a payment that actually happened");
+  assert.match(door, /\.\.\.\(btwZeroUnexplained \? \{ _btw_zero_unexplained: true \} : \{\}\),/,
+    "the key is present only when there is something to admit");
+
+  // ── And it reaches the owner as one Dutch sentence that names the money.
+  assert.match(health, /if \(fc\?\._btw_zero_unexplained === true\) \{/,
+    "only an explicit true speaks — an absent flag is not an admission");
+  // [POORT-GRENS] Both cut marks are real CODE, and both are proven found before the slice —
+  // an indexOf of -1 silently widens the window to the rest of the file.
+  const from = health.indexOf("fc?._btw_zero_unexplained === true");
+  const to = health.indexOf("if (fc?._ex_corrected)");
+  assert.ok(from > 0, "the zero-BTW branch was not found");
+  assert.ok(to > from, "the branch that bounds it was not found after it");
+  const window = health.slice(from, to);
+  assert.match(window, /voorbelasting/, "the sentence must name what is lost");
+  assert.match(window, /terugvragen/, "…and what the owner can still do about it");
+  assert.match(window, /flags\.arithmetic = true/, "the row lands in the human queue");
+});

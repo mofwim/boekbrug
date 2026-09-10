@@ -31,6 +31,8 @@ import { verdictBlocksAutoBooking } from "./amount-grounding";
 import { placementBlocksAutoBooking } from "./document-verify";
 // [E-FACTUUR-BESLECHT] The one witness that is not a reading. See the gate below.
 import { eInvoiceSettlesAmounts } from "./e-invoice";
+// [NUL-BTW-STIL] The zero-BTW question, shared with the doors that never reach this queue.
+import { zeroBtwUnexplained } from "./zero-btw";
 
 // Auto-booking bar — stricter than import-health's 0.7 review line. A present per-field score
 // below this keeps the invoice in the queue for a human, even if it isn't otherwise "flagged".
@@ -135,8 +137,16 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
   // silently zeroed, the one number this app exists to protect, behind an "automatisch geverifieerd"
   // tag that reduces scrutiny. Fail-closed to human review; a genuine 0%/vrijgesteld invoice
   // (btwRate === 0) still auto-advances. Strictly stricter — this can only HOLD, never wrongly book.
-  const btw = s.health?.btw_amount;
-  if (typeof btw === "number" && Math.abs(btw) < 0.005 && s.btwRate !== 0) {
+  // [NUL-BTW-STIL] The question itself now lives in zero-btw.ts, because the doors that do NOT
+  // pass through this queue must ask exactly the same one — and it gained the reverse-charge
+  // answer on the way: a verlegde factuur carries no BTW and no rate BY DESIGN (see the note on
+  // _btw_verlegd in ai.ts), so holding it here named a reading failure that never happened.
+  if (zeroBtwUnexplained({
+    totalIncBtw: s.totalIncBtw,
+    btwAmount: s.health?.btw_amount,
+    btwRate: s.btwRate,
+    shifted: s.health?.field_confidence?._btw_verlegd != null,
+  })) {
     return { advance: false, reason: "zero_btw_not_explicit_zero_rate" };
   }
 
