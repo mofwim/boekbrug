@@ -26034,6 +26034,39 @@ test("[LEVERANCIER-BEWERKEN] the edit route keeps the old IBAN first, renames by
   }
 });
 
+// ── [LEVERANCIER-NIEUW] / [LEVERANCIER-VERWIJDEREN] ─────────────────────────────────────────
+//
+// Adding a supplier by hand, adopting the loose invoices under a printed name, and removing a
+// row. What must hold: adoption takes only invoices that have NO supplier and writes only the
+// link; removal counts what comes loose BEFORE the row goes; neither route writes a sentence of
+// its own; and the sheet never offers removal on a row it is still making.
+test("[LEVERANCIER-NIEUW] adoption links loose invoices only, by id only; removal counts first; no language", () => {
+  const maak = code("src/app/api/supplier/route.ts");
+  assert.match(maak, /\.is\('supplier_id', null\)[\s\S]{0,200}\.range\(from, to\)/, "only invoices with no supplier are read for adoption");
+  const adopt = maak.slice(maak.indexOf(".update({ supplier_id: made.id })"), maak.indexOf(".select('id')", maak.indexOf(".update({ supplier_id: made.id })")));
+  assert.ok(adopt.length > 0, "adoption writes the link");
+  assert.match(adopt, /\.is\('supplier_id', null\)/, "…and re-checks on the write that nothing was linked meanwhile");
+  assert.doesNotMatch(maak, /update\(\{[^}]*client_name/, "the printed name on those invoices is never rewritten");
+  assert.match(maak, /\.eq\('name_key', v\.nameKey\)/, "the same company under another spelling is found before a second row is made");
+  for (const deur of [maak, code("src/app/api/supplier/[id]/route.ts")]) {
+    const zinnen = [...deur.matchAll(/error: ['"]([^'"]+ [^'"]+)['"]/g)].map((m) => m[1]);
+    assert.deepEqual(zinnen, [], `a route writes its own sentences: ${zinnen.join(" | ")}`);
+  }
+
+  const wis = code("src/app/api/supplier/[id]/route.ts");
+  const countAt = wis.indexOf("count: linked");
+  const deleteAt = wis.indexOf(".delete()");
+  assert.ok(countAt > 0 && deleteAt > countAt, "the detached count is read BEFORE the delete");
+  assert.match(wis, /action: 'supplier\.deleted'/, "removal lands in the audit trail with the old values");
+
+  const blad = code("src/components/supplier/SupplierEditSheet.tsx");
+  assert.match(blad, /\{!creating && \([\s\S]{0,1200}lev\.verwijder\.knop/, "removal is offered on an existing row only");
+  assert.match(blad, /setConfirmingDelete\(true\)/, "…and takes two taps");
+  for (const key of ["lev.nieuw.knop", "lev.nieuw.vanRegel", "lev.verwijder.knop", "lev.verwijder.bevestig", "lev.fout.bestaatAl"]) {
+    assert.ok(key in MESSAGES, `${key} exists in messages.ts`);
+  }
+});
+
 // ── [MOVE-CREDITNOTA] ─────────────────────────────────────────────────────────────────────────
 //
 // A creditnota is money the business OWES back. It is settled by paying out or by offsetting, and

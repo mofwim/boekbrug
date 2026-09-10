@@ -782,6 +782,69 @@ export const MESSAGES = {
   'bankcat.prive': { nl: 'Privé', en: 'Private', ar: 'خاص' },
   'bankcat.transfer': { nl: 'Overboeking', en: 'Transfer', ar: 'تحويل' },
   'bankcat.tax': { nl: 'Belasting', en: 'Tax', ar: 'ضريبة' },
+  // [LEVERANCIER-NIEUW] Adding a supplier by hand, or adopting one the balance already shows.
+  'lev.nieuw.knop': { nl: 'Nieuwe leverancier', en: 'New supplier', ar: 'مورّد جديد' },
+  'lev.nieuw.vanRegel': { nl: 'Voeg toe als leverancier', en: 'Add as supplier', ar: 'أضِف كمورّد' },
+  'lev.nieuw.titel': { nl: 'Nieuwe leverancier', en: 'New supplier', ar: 'مورّد جديد' },
+  'lev.nieuw.uitleg': {
+    nl: 'Vanaf nu herkent de app facturen van dit bedrijf op deze gegevens.',
+    en: 'From now on the app recognises invoices from this company on these details.',
+    ar: 'من الآن يتعرّف التطبيق على فواتير هذه الشركة بهذه البيانات.',
+  },
+  'lev.nieuw.uitlegRegel': {
+    nl: 'De facturen die nu onder deze naam staan, komen onder dit bedrijf te hangen.',
+    en: 'The invoices now under this name will be linked to this company.',
+    ar: 'الفواتير المسجّلة الآن تحت هذا الاسم ستُربط بهذه الشركة.',
+  },
+  'lev.nieuw.opslaan': { nl: 'Toevoegen', en: 'Add', ar: 'إضافة' },
+  'lev.nieuw.toegevoegd': {
+    nl: '{naam} is toegevoegd als leverancier.',
+    en: '{naam} has been added as a supplier.',
+    ar: 'أُضيف {naam} كمورّد.',
+  },
+  'lev.nieuw.gekoppeld': {
+    nl: '{n} facturen zijn eraan gekoppeld.',
+    en: '{n} invoices have been linked to it.',
+    ar: 'رُبطت به {n} فاتورة.',
+  },
+  'lev.fout.bestaatAl': {
+    nl: 'Deze leverancier bestaat al als {ander}. Pas die aan in plaats van een tweede te maken.',
+    en: 'This supplier already exists as {ander}. Edit that one instead of making a second.',
+    ar: 'هذا المورّد موجود بالفعل باسم {ander}. عدّله بدل إنشاء نسخة ثانية.',
+  },
+  'lev.fout.aanmaken': {
+    nl: 'De leverancier kon niet worden toegevoegd. Probeer het zo meteen opnieuw.',
+    en: 'The supplier could not be added. Try again in a moment.',
+    ar: 'تعذّرت إضافة المورّد. أعد المحاولة بعد قليل.',
+  },
+  // [LEVERANCIER-VERWIJDEREN] The row goes; the invoices stay and lose only the link.
+  'lev.verwijder.knop': { nl: 'Leverancier verwijderen', en: 'Remove supplier', ar: 'حذف المورّد' },
+  'lev.verwijder.vraag': {
+    nl: 'Weet je het zeker? De facturen blijven staan en raken alleen de koppeling kwijt.',
+    en: 'Are you sure? The invoices stay and only lose the link.',
+    ar: 'هل أنت متأكد؟ الفواتير تبقى وتفقد الربط فقط.',
+  },
+  'lev.verwijder.aantal': {
+    nl: 'Het gaat om {n} facturen.',
+    en: 'That concerns {n} invoices.',
+    ar: 'يتعلق الأمر بـ {n} فاتورة.',
+  },
+  'lev.verwijder.dubbel': {
+    nl: 'Is dit een dubbele rij van hetzelfde bedrijf? Voeg dan samen in plaats van te verwijderen.',
+    en: 'Is this a duplicate row of the same company? Then merge instead of removing.',
+    ar: 'هل هذا صف مكرر للشركة نفسها؟ إذاً ادمج بدل الحذف.',
+  },
+  'lev.verwijder.bevestig': { nl: 'Ja, verwijderen', en: 'Yes, remove', ar: 'نعم، احذف' },
+  'lev.verwijder.klaar': {
+    nl: '{naam} is verwijderd.',
+    en: '{naam} has been removed.',
+    ar: 'حُذف {naam}.',
+  },
+  'lev.fout.verwijderen': {
+    nl: 'De leverancier kon niet worden verwijderd. Probeer het zo meteen opnieuw.',
+    en: 'The supplier could not be removed. Try again in a moment.',
+    ar: 'تعذّر حذف المورّد. أعد المحاولة بعد قليل.',
+  },
   'lev.fout.opslaan': {
     nl: 'De leverancier kon niet worden opgeslagen. Probeer het zo meteen opnieuw.',
     ar: 'تعذّر حفظ المورّد. حاول مرة أخرى بعد قليل.',
@@ -13213,6 +13276,8 @@ export const MESSAGES = {
   'log.accountant.export_downloaded': { nl: 'Je boekhouder heeft een export gedownload', en: 'Your bookkeeper downloaded an export', ar: 'نزّل محاسبك تصديراً' },
   'log.supplier.auto_incasso_on': { nl: 'Leverancier gemarkeerd als automatische incasso', en: 'Supplier marked as direct debit', ar: 'وُسم مورّد بالاستقطاع التلقائي' },
   'log.supplier.auto_incasso_off': { nl: 'Automatische incasso bij een leverancier uitgezet', en: 'Direct debit switched off for a supplier', ar: 'أُوقف الاستقطاع التلقائي لمورّد' },
+  'log.supplier.created': { nl: 'Leverancier toegevoegd', en: 'Supplier added', ar: 'أُضيف مورّد' },
+  'log.supplier.deleted': { nl: 'Leverancier verwijderd', en: 'Supplier removed', ar: 'حُذف مورّد' },
   'log.supplier.updated': { nl: 'Gegevens van een leverancier aangepast', en: 'Supplier details changed', ar: 'عُدّلت بيانات مورّد' },
   'log.supplier.merged': { nl: 'Twee leveranciers samengevoegd tot één', en: 'Two suppliers merged into one', ar: 'دُمج مورّدان في واحد' },
   'log.document.uploaded': { nl: 'Bestand geüpload', en: 'File uploaded', ar: 'رُفع ملف' },

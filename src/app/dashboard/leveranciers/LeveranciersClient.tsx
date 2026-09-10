@@ -30,7 +30,7 @@ import { mergeDoneText, mergeRefusalText } from '@/lib/supplier-merge-copy'
 import { failureText } from '@/lib/server-message'
 // [LEVERANCIER-BEWERKEN] The master record, editable. The sheet shows and warns; the server
 // decides (supplier-edit.ts) and keeps the old account number.
-import SupplierEditSheet, { type SupplierEditCard } from '@/components/supplier/SupplierEditSheet'
+import SupplierEditSheet, { type SupplierEditCard, type SupplierCreateIntent } from '@/components/supplier/SupplierEditSheet'
 import { dateShort } from '@/lib/i18n/format-date'
 import { BANK_CATEGORY_KEY } from '@/lib/bank-category-text'
 import type { BankCategory } from '@/lib/bank-categories'
@@ -49,6 +49,7 @@ export default function LeveranciersClient({
   corroboration,
   merge = null,
   suppliers = null,
+  lineSupplier = {},
   asOf,
   today,
 }: {
@@ -68,6 +69,12 @@ export default function LeveranciersClient({
    * out loud ("storing"), never drawn as an empty list.
    */
   suppliers?: SupplierListCard[] | null
+  /**
+   * [LEVERANCIER-NIEUW] Balance key → the supplier the invoices under it are LINKED to. The
+   * printed name and the registry name can differ ("TRIMEX INTERNATIONAL B.V." on the paper, a
+   * row founded as "Trimex"), so the link is asked first and the name key only as a fallback.
+   */
+  lineSupplier?: Record<string, string>
   asOf: string
   today: string
 }) {
@@ -79,6 +86,26 @@ export default function LeveranciersClient({
   const [editing, setEditing] = useState<SupplierListCard | null>(null)
   const [editAnswer, setEditAnswer] = useState<string | null>(null)
   const supplierByKey = new Map((suppliers ?? []).map((s) => [s.balanceKey, s]))
+  const supplierById = new Map((suppliers ?? []).map((s) => [s.id, s]))
+  const cardForLine = (key: string): SupplierListCard | null => {
+    const linked = lineSupplier?.[key]
+    return (linked ? supplierById.get(linked) : undefined) ?? supplierByKey.get(key) ?? null
+  }
+  // [LEVERANCIER-NIEUW] What the sheet should MAKE, when it is not editing.
+  const [creating, setCreating] = useState<SupplierCreateIntent | null>(null)
+  const addButton = (name: string, adoptInvoices: boolean, label: string) => (
+    <button
+      type="button"
+      onClick={() => { setEditAnswer(null); setEditing(null); setCreating({ name, adoptInvoices }) }}
+      style={{
+        padding: '6px 12px', borderRadius: R.full, border: 'none',
+        background: M3.primary, color: '#fff', fontSize: 12.5, fontWeight: 600,
+        fontFamily: FONT, cursor: 'pointer', whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+    </button>
+  )
 
   const editButton = (card: SupplierListCard) => (
     <button
@@ -279,7 +306,14 @@ export default function LeveranciersClient({
             )}
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexShrink: 0 }}>
-            {supplierByKey.has(l.key) && editButton(supplierByKey.get(l.key) as SupplierListCard)}
+            {(() => {
+              const card = cardForLine(l.key)
+              if (card) return editButton(card)
+              // No row for a company the books already show. Only when the registry was READ:
+              // against a failed read every line would look unregistered, and the button would
+              // make a second row for each of them.
+              return suppliers !== null ? addButton(l.name, true, t('lev.nieuw.vanRegel')) : null
+            })()}
             <strong style={{ fontSize: 16, fontFamily: FONT_NUM, color: M3.onSurface, whiteSpace: 'nowrap' }}>
               {l.bedrag}
             </strong>
@@ -321,9 +355,12 @@ export default function LeveranciersClient({
           waar de eigenaar die waarheid voor de TOEKOMST bijstelt. Wat er al in de boeken staat
           verandert hier niet. */}
       <section style={{ marginTop: 28 }}>
-        <h2 style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, margin: '0 0 4px' }}>
-          {t('leveranciers.lijst.kop')}
-        </h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, marginBottom: 4 }}>
+          <h2 style={{ fontSize: 15, fontWeight: 600, color: M3.onSurface, margin: 0 }}>
+            {t('leveranciers.lijst.kop')}
+          </h2>
+          {suppliers !== null && addButton('', false, t('lev.nieuw.knop'))}
+        </div>
         <p style={{ fontSize: 12.5, color: M3.neutral, lineHeight: 1.55, margin: '0 0 10px' }}>
           {t('leveranciers.lijst.uitleg')}
         </p>
@@ -375,15 +412,24 @@ export default function LeveranciersClient({
         ))}
       </section>
 
-      {editing && (
+      {(editing || creating) && (
         <SupplierEditSheet
           supplier={editing}
-          onClose={() => setEditing(null)}
+          create={creating ?? undefined}
+          onClose={() => { setEditing(null); setCreating(null) }}
           onSaved={(result) => {
             setEditing(null)
+            setCreating(null)
             setEditAnswer(
-              [t('lev.bewerk.opgeslagen', { naam: result.name }), result.ibanReplaced ? t('lev.bewerk.opgeslagenIban') : null]
-                .filter(Boolean).join(' '),
+              result.deleted
+                ? t('lev.verwijder.klaar', { naam: result.name })
+                : result.created
+                ? [
+                  t('lev.nieuw.toegevoegd', { naam: result.name }),
+                  (result.invoicesAdopted ?? 0) > 0 ? t('lev.nieuw.gekoppeld', { n: result.invoicesAdopted ?? 0 }) : null,
+                ].filter(Boolean).join(' ')
+                : [t('lev.bewerk.opgeslagen', { naam: result.name }), result.ibanReplaced ? t('lev.bewerk.opgeslagenIban') : null]
+                  .filter(Boolean).join(' '),
             )
             router.refresh()
           }}
