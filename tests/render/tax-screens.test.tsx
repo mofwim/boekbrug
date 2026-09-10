@@ -107,6 +107,15 @@ test("[RENDER-GATE] none of the three renders a raw message key", async () => {
   }
 });
 
+// ── [GROOTBOEK] The purchase invoices that still need a cost account ──────────────────────────
+test("[GROOTBOEK] the panel is absent until its read answers — never an empty 'all done'", async () => {
+  const { default: GrootboekPanel } = await import("../../src/components/grootboek/GrootboekPanel");
+  // "Every invoice is on an account" and "we could not look" are opposite answers, and the first
+  // is the dangerous one: it tells the owner their administratie is finished.
+  const html = renderToStaticMarkup(React.createElement(GrootboekPanel as never));
+  assert.equal(html, "", "a heading with a count of zero under it would read as finished");
+});
+
 // ── [OPDRACHTGEVER] Who this year's money came from ───────────────────────────────────────────
 test("[OPDRACHTGEVER] the panel states the facts and no verdict, and a failed read says so", async () => {
   const { default: OpdrachtgeversPanel } = await import("../../src/components/dba/OpdrachtgeversPanel");

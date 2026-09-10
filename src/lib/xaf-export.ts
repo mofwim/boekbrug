@@ -40,6 +40,8 @@
 import { round2 } from "./invoice-totals";
 import { taxLetterBooking, type TaxKind } from "./tax-letter";
 import { telWoord, vervoeg } from "./nl-plural";
+// [GROOTBOEK] The cost accounts and their verified RGS references — one chart, two readers.
+import { LEDGER_ACCOUNTS, isLedgerAccount } from "./grootboek";
 
 // ── The rekeningschema ───────────────────────────────────────────────────────────────────────────
 
@@ -71,6 +73,13 @@ export const XAF_ACCOUNTS: readonly XafAccount[] = [
   { accID: "0100", accDesc: "Inventaris (aanschafwaarde)",          accTp: "B", rgs: null },
   { accID: "0110", accDesc: "Cumulatieve afschrijving inventaris",  accTp: "B", rgs: "BMvaBeiCae" },
   { accID: "4000", accDesc: "Kosten", accTp: "P", rgs: "WBed" },
+  // [GROOTBOEK] The cost accounts a purchase invoice can be put on. Names and RGS references come
+  // from LEDGER_ACCOUNTS so the schema and the bookings can never disagree about what 4100 is; the
+  // codes there were verified against the public registry under the rule at the top of this table.
+  // Listing an account with no transactions in it is normal in an auditfile and costs nothing.
+  ...LEDGER_ACCOUNTS.filter((a) => a.id !== "4000").map(
+    (a) => ({ accID: a.id, accDesc: a.name, accTp: "P" as const, rgs: a.rgs }),
+  ),
   { accID: "4900", accDesc: "Afschrijvingskosten",                  accTp: "P", rgs: null },
   { accID: "8000", accDesc: "Omzet 21%", accTp: "P", rgs: "WOmz" },
   { accID: "8010", accDesc: "Omzet 9%", accTp: "P", rgs: "WOmz" },
@@ -141,6 +150,17 @@ export interface XafPurchaseInvoice {
   vendorBtwNumber?: string | null;
   /** Idem voor het KVK-nummer — commerceNr in het schema. */
   vendorKvkNumber?: string | null;
+  /**
+   * [GROOTBOEK] The cost account the owner (or their boekhouder) put this invoice on. Absent means
+   * nobody has said yet, and the export then writes 4000 exactly as it always did — the two are
+   * kept apart on purpose, because "not decided" and "decided to be 4000" are different facts and
+   * a screen that asks has to be able to tell them apart.
+   *
+   * Only ever a cost account. An invoice registered as an asset books to 0100 and a Belastingdienst
+   * letter to the account its kind names; both are decided above this and neither may be overruled
+   * by a stored account.
+   */
+  ledgerAccount?: string | null;
 }
 
 export interface XafBankLine {
@@ -394,7 +414,14 @@ function buildPurchase(inv: XafPurchaseInvoice, custSupID: string): { lines: Lin
   }
   const lines: Line[] = inv.asset
     ? [{ accID: ACC.activa, debitC: exC, desc: `Bedrijfsmiddel ${inv.vendorName ?? ""}`.trim(), docRef, invRef }]
-    : [{ accID: ACC.kosten, debitC: exC, desc: inv.vendorName ?? "Kosten", docRef, invRef }];
+    // [GROOTBOEK] The account the owner put it on, or the 4000 this export has always written.
+    // isLedgerAccount is what stands between a stored value and the schema: an accID that is not in
+    // the rekeningschema makes the whole auditfile invalid, so an unknown one falls back rather
+    // than travelling into the XML.
+    : [{
+        accID: isLedgerAccount(inv.ledgerAccount) ? (inv.ledgerAccount as string).trim() : ACC.kosten,
+        desc: inv.vendorName ?? "Kosten", debitC: exC, docRef, invRef,
+      }];
   if (btwC !== 0) lines.push({ accID: ACC.voorbelasting, debitC: btwC, desc: "Voorbelasting", docRef, invRef });
   lines.push({ accID: ACC.crediteuren, debitC: -(exC + btwC), desc: inv.vendorName ?? "Crediteur", docRef, custSupID, invRef });
   return { lines };

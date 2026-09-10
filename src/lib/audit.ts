@@ -36,6 +36,9 @@ export type AuditAction =
   | 'invoice.created'
   | 'invoice.updated'
   // [VOORSTEL] The accountant's correction proposal and the client's answer to it.
+  // [GROOTBOEK] The cost account an invoice was put on. It decides where the money lands in the
+  // auditfile, so changing it belongs in the trail like any other booking decision.
+  | 'invoice.ledger_account_set'
   | 'invoice.correction_proposed'
   | 'invoice.correction_accepted'
   | 'invoice.correction_declined'

@@ -28755,7 +28755,9 @@ test("[AANSLAG] both cost legs withhold a tax letter, and the auditfile books it
   assert.match(code("src/lib/export.ts"), /effectiveTaxKind\(inv\) \? `aanslag \$\{effectiveTaxKind\(inv\)\}`/);
   // The selects carry the column, and the assembler hands both handles to the engine.
   assert.match(code("src/lib/compute-result-range.ts"), /client_name, tax_kind"\)/);
-  assert.match(code("src/lib/xaf-fetch.ts"), /supplier_id, tax_kind"\)/);
+  // The column has to be SELECTED, which is the rule; being the last one in the list is not.
+  // [GROOTBOEK] appended ledger_account after it and broke a gate that was pinning punctuation.
+  assert.match(code("src/lib/xaf-fetch.ts"), /supplier_id, tax_kind[,"]/);
   assert.match(code("src/lib/result-range-assemble.ts"), /tax_kind: i\.tax_kind \?\? null,\s*client_name: i\.client_name \?\? null,/);
   assert.match(code("src/lib/result-range-assemble.ts"), /taxKindByInvoice: new Map\(/);
   // The auditfile: the whole gross to the kind's account, nothing to 1400.
@@ -30049,6 +30051,72 @@ test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, an
 //   · 4000 is untouched. Adding accounts beside it makes an export more precise; renaming or
 //     renumbering it silently moves history.
 // And the third that makes it safe: it suggests, it never books.
+// ─── [GROOTBOEK-OPSLAG] The account is stored, exported, and only ever what a human said ───────
+//
+// The chart is only worth having if a decision on it survives into the auditfile. Three rules hold
+// that together, and each has a way of going wrong that this pins:
+//
+//   · NULL is not 4000. "Nobody has said yet" and "decided on 4000" are different facts, and a
+//     screen that asks the owner what is left cannot tell them apart if the migration backfills or
+//     the column defaults. There is no backfill: it would be a migration deciding somebody's
+//     bookkeeping, silently, for every invoice they ever imported.
+//   · A stored value never reaches the XML unchecked. An accID that is not in the rekeningschema
+//     makes the whole auditfile invalid — so the export falls back rather than exporting it.
+//   · The asset and tax-letter branches outrank it. An invoice registered as a bedrijfsmiddel books
+//     to 0100 and a Belastingdienst letter to the account its kind names; a cost account stored on
+//     either may not overrule that.
+test("[GROOTBOEK-OPSLAG] null is not 4000, an unknown account never reaches the XML, and only a human writes it", () => {
+  // [POORT-GRENS] Read the SQL, not the prose around it. The first draft of this gate matched the
+  // word "default" in the migration's own comment explaining that NULL is the honest default —
+  // exactly the mistake AGENTS.md warns about, one file over.
+  const migrationSql = readFileSync("supabase/migrations/invoices_ledger_account.sql", "utf8")
+    .split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+  const migration = migrationSql;
+  const xaf = code("src/lib/xaf-export.ts");
+  const fetchSrc = code("src/lib/xaf-fetch.ts");
+  const route = code("src/app/api/grootboek/route.ts");
+  const panel = code("src/components/grootboek/GrootboekPanel.tsx");
+
+  // ── The column is additive, nullable, shape-checked, and NOT backfilled.
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS ledger_account text/);
+  assert.match(migration, /ledger_account ~ '\^\[0-9\]\{4\}\$'/, "any string could reach the auditfile");
+  assert.doesNotMatch(migration, /\bDEFAULT\b/i, "a default would make every old invoice claim a decision");
+  assert.doesNotMatch(migration, /\bUPDATE\b/i, "a backfill decides somebody's bookkeeping for them");
+  assert.doesNotMatch(migration, /NOT NULL/, "null is the honest state of an invoice nobody has answered");
+
+  // ── The export uses it, and refuses what it does not recognise.
+  assert.match(xaf, /accID: isLedgerAccount\(inv\.ledgerAccount\) \? \(inv\.ledgerAccount as string\)\.trim\(\) : ACC\.kosten,/,
+    "an unknown account must fall back, not travel into the XML");
+  // Every account a booking can name is in the schema, or the auditfile does not validate.
+  assert.match(xaf, /\.\.\.LEDGER_ACCOUNTS\.filter\(\(a\) => a\.id !== "4000"\)\.map\(/);
+  // …and the asset / tax-letter branches still decide first: both return before this line.
+  const from = xaf.indexOf("const lines: Line[] = inv.asset");
+  const to = xaf.indexOf("isLedgerAccount(inv.ledgerAccount)");
+  assert.ok(from > 0 && to > from, "the cost branch moved — check it still sits under asset and taxKind");
+  assert.match(xaf, /accID: ACC\.activa, debitC: exC, desc: `Bedrijfsmiddel/,
+    "a bedrijfsmiddel books to 0100 whatever cost account is stored on it");
+
+  // ── It travels null as null, so the export keeps writing 4000 for the undecided.
+  assert.match(fetchSrc, /ledgerAccount: \(r as \{ ledger_account\?: string \| null \}\)\.ledger_account \?\? null,/);
+
+  // ── The route accepts only a real account, and refuses at the door.
+  assert.match(route, /if \(raw !== null && !isLedgerAccount\(raw\)\)/);
+  assert.match(route, /code: "unknown_account"/);
+  // Guarded on BOTH the owner and the direction: the column means nothing on a sales invoice.
+  assert.match(route, /\.eq\("receiver_id", user\.id\)\s*\n\s*\.eq\("direction", "incoming"\)/);
+  // Clearing an answer is allowed — a wrong pick must be undoable without picking a second one.
+  assert.match(route, /body\?\.account === null \? null :/);
+  // The suggestion is computed and never written: only PATCH writes, and it writes what it is told.
+  assert.match(route, /suggestLedgerAccount\(\{/);
+  assert.doesNotMatch(route, /ledger_account: suggestion|ledger_account: [a-z]+\.accountId/,
+    "a suggestion that writes itself is a booking, which this module is not allowed to be");
+  // [NO-SILENT-EMPTY] A failed read is said, never rendered as a finished administration.
+  assert.match(route, /status: 503/);
+  assert.match(panel, /failed \|\| !data \? \(/);
+  assert.match(panel, /if \(!failed && !data\) return null/,
+    "a heading with a zero count under it reads as finished before the answer arrives");
+});
+
 test("[GROOTBOEK] a verified chart, an untouched 4000, and a suggestion that never books", () => {
   const chart = code("src/lib/grootboek.ts");
 
