@@ -1,7 +1,7 @@
 // npx tsx --test src/lib/grootboek-lines.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { suggestionReason, openCountPhrase } from "./grootboek-lines";
+import { suggestionReason, openCountPhrase, groupSizePhrase } from "./grootboek-lines";
 import { MESSAGES } from "./i18n/messages";
 import type { LedgerSuggestion } from "./grootboek";
 
@@ -29,10 +29,18 @@ test("[GROOTBOEK] a keyword basis with no word names none rather than inventing 
 });
 
 test("[GROOTBOEK] the count line, singular, plural and finished", () => {
-  assert.deepEqual(openCountPhrase(0), { key: "gb.klaar" });
-  assert.deepEqual(openCountPhrase(-1), { key: "gb.klaar" }, "a negative count is not a backlog");
-  assert.deepEqual(openCountPhrase(1), { key: "gb.openEen" });
-  assert.deepEqual(openCountPhrase(608), { key: "gb.open", params: { n: 608 } });
+  assert.deepEqual(openCountPhrase(0, 0), { key: "gb.klaar" });
+  assert.deepEqual(openCountPhrase(-1, 3), { key: "gb.klaar" }, "a negative count is not a backlog");
+  assert.deepEqual(openCountPhrase(1, 1), { key: "gb.openEen" });
+  // The production shape: the second number is the actual amount of work.
+  assert.deepEqual(openCountPhrase(550, 101), { key: "gb.open", params: { n: 550, lev: 101 } });
+});
+
+test("[GROOTBOEK] a group never hides how many invoices one answer covers", () => {
+  assert.deepEqual(groupSizePhrase(1, "€ 121,00"), { key: "gb.groepEen", params: { bedrag: "€ 121,00" } });
+  assert.deepEqual(groupSizePhrase(102, "€ 20.079,28"), {
+    key: "gb.groep", params: { n: 102, bedrag: "€ 20.079,28" },
+  });
 });
 
 test("[TAAL] every key this module can emit exists and carries Dutch", () => {
@@ -40,8 +48,9 @@ test("[TAAL] every key this module can emit exists and carries Dutch", () => {
   for (const sg of [s(), s({ basis: "keywords", matched: "huur" }), s({ basis: "keywords" }), s({ basis: "default" })]) {
     emitted.add(suggestionReason(sg).key);
   }
-  for (const n of [0, 1, 2]) emitted.add(openCountPhrase(n).key);
-  assert.equal(emitted.size, 6, "every branch above must have produced its key");
+  for (const n of [0, 1, 2]) emitted.add(openCountPhrase(n, n).key);
+  for (const n of [1, 2]) emitted.add(groupSizePhrase(n, "x").key);
+  assert.equal(emitted.size, 8, "every branch above must have produced its key");
   for (const key of emitted) {
     const entry = (MESSAGES as Record<string, { nl?: string }>)[key];
     assert.ok(entry, `${key} is missing from the catalogue`);

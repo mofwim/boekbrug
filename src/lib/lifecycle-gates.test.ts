@@ -30169,6 +30169,28 @@ test("[GROOTBOEK-OPSLAG] null is not 4000, an unknown account never reaches the 
   assert.match(route, /\.eq\("receiver_id", user\.id\)\s*\n\s*\.eq\("direction", "incoming"\)/);
   // Clearing an answer is allowed — a wrong pick must be undoable without picking a second one.
   assert.match(route, /body\?\.account === null \? null :/);
+
+  // ── [GROOTBOEK-PER-LEVERANCIER] The unit is the SUPPLIER, and that is a measurement: 550 open
+  //    invoices across 101 suppliers, 511 of them in the 62 suppliers with more than one, the
+  //    largest 102 on its own. Per invoice that is 550 decisions about the same few questions —
+  //    a list nobody finishes, and an unfinished list means the auditfile keeps writing 4000.
+  assert.match(route, /const groups = new Map<string, \{/);
+  assert.match(route, /\.sort\(\(a, b\) => b\.count - a\.count/, "the biggest group is the tap worth most");
+  // One answer covers a set, and the set is written in chunks: the id list travels in the URL and
+  // a 414 halfway would leave the supplier half-decided.
+  assert.match(route, /for \(const chunk of chunkIds\(ids\)\)/);
+  assert.match(route, /\.in\("id", chunk\)/);
+  // A partial write says how much landed, or the owner re-answers what is already answered.
+  assert.match(route, /changed: changed\.length/);
+  // A ceiling on the REQUEST, never on the feature.
+  assert.match(route, /if \(ids\.length > MAX_PER_CALL\)/);
+  // The screen may never hide the size of the decision it is asking for.
+  assert.match(panel, /groupSizePhrase\(g\.count, formatEuroNL\(g\.gross\)\)/);
+  assert.match(code("src/lib/grootboek-lines.ts"), /export function groupSizePhrase/);
+  // …and the count line names both numbers, because the second one is the actual work.
+  assert.match(code("src/lib/grootboek-lines.ts"),
+    /key: "gb\.open", params: \{ n: openInvoices, lev: suppliers \}/,
+    "an owner told only the invoice count reads a backlog they will never start");
   // The suggestion is computed and never written: only PATCH writes, and it writes what it is told.
   assert.match(route, /suggestLedgerAccount\(\{/);
   assert.doesNotMatch(route, /ledger_account: suggestion|ledger_account: [a-z]+\.accountId/,

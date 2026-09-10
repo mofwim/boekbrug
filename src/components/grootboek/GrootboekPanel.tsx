@@ -17,28 +17,31 @@ import { useEffect, useState } from 'react'
 import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import { formatEuroNL } from '@/lib/format-nl'
-import { suggestionReason, openCountPhrase } from '@/lib/grootboek-lines'
+import { suggestionReason, openCountPhrase, groupSizePhrase } from '@/lib/grootboek-lines'
 import type { LedgerAccount, LedgerSuggestion } from '@/lib/grootboek'
 
-interface OpenInvoice {
-  id: string
-  invoiceNumber: string | null
-  invoiceDate: string | null
+/** One supplier's open invoices: the unit the owner actually decides in. */
+interface OpenGroup {
+  key: string
   vendor: string | null
-  totalIncBtw: number | null
+  ids: string[]
+  count: number
+  gross: number
+  newest: string | null
   suggestion: LedgerSuggestion
 }
 
 interface Payload {
   ok: true
   accounts: LedgerAccount[]
-  open: OpenInvoice[]
+  open: OpenGroup[]
+  openInvoices: number
   decided: number
   total: number
 }
 
-// The list is answered a few at a time, on a phone, between other things. Showing all 608 at once
-// is a wall; showing a handful with a count above it is a task.
+// Answered a few at a time, on a phone, between other things. A hundred suppliers at once is a
+// wall; a handful with the count above it is a task.
 const PAGE = 8
 
 export default function GrootboekPanel() {
@@ -67,24 +70,31 @@ export default function GrootboekPanel() {
     return () => { cancelled = true }
   }, [])
 
-  const assign = async (id: string, account: string) => {
-    setSaving(id); setSaveError(false)
+  // One answer covers the supplier's whole open set. The count sits next to the name, so the size
+  // of the decision is on screen before it is made.
+  const assign = async (group: OpenGroup, account: string) => {
+    setSaving(group.key); setSaveError(false)
     try {
       const res = await fetch('/api/grootboek', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, account }),
+        body: JSON.stringify({ ids: group.ids, account }),
       })
       if (!res.ok) { setSaveError(true); return }
-      // Drop the answered row locally rather than re-reading the whole list: the owner is working
-      // through it and a re-fetch would move the ground under the next tap.
-      setData((d) => (d ? { ...d, open: d.open.filter((o) => o.id !== id), decided: d.decided + 1 } : d))
+      // Drop the answered group locally rather than re-reading the whole list: the owner is
+      // working through it and a re-fetch would move the ground under the next tap.
+      setData((d) => (d ? {
+        ...d,
+        open: d.open.filter((o) => o.key !== group.key),
+        openInvoices: d.openInvoices - group.count,
+        decided: d.decided + group.count,
+      } : d))
     } catch { setSaveError(true) } finally { setSaving(null) }
   }
 
   if (!failed && !data) return null
 
-  const count = openCountPhrase(data?.open.length ?? 0)
+  const count = openCountPhrase(data?.openInvoices ?? 0, data?.open.length ?? 0)
 
   return (
     <section data-testid="grootboek" style={{ background: '#fff', borderRadius: 14, border: '1px solid #E0E0E0', padding: 16 }}>
@@ -96,32 +106,29 @@ export default function GrootboekPanel() {
           <p style={{ fontSize: 13.5, color: '#5F6368', margin: '0 0 10px' }}>{t(count.key, count.params)}</p>
           {data.open.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column' }}>
-              {data.open.slice(0, shown).map((inv) => {
-                const why = suggestionReason(inv.suggestion)
+              {data.open.slice(0, shown).map((g) => {
+                const why = suggestionReason(g.suggestion)
+                const size = groupSizePhrase(g.count, formatEuroNL(g.gross))
                 return (
-                  <div key={inv.id} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 0', borderTop: '1px solid #F1F3F4' }}>
+                  <div key={g.key} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 0', borderTop: '1px solid #F1F3F4' }}>
                     <span style={{ flex: '1 1 160px', minWidth: 0 }}>
                       <span style={{ display: 'block', fontSize: 14, color: '#202124', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {inv.vendor || '—'}
+                        {g.vendor || '—'}
                       </span>
                       <span style={{ display: 'block', fontSize: 12, color: '#80868B', marginTop: 1 }}>
-                        {[inv.invoiceDate, inv.invoiceNumber].filter(Boolean).join(' · ')} — {t(why.key, why.params)}
+                        {t(size.key, size.params)} — {t(why.key, why.params)}
                       </span>
                     </span>
-                    {inv.totalIncBtw !== null && (
-                      <span style={{ fontFamily: "'Roboto Mono', monospace", fontSize: 13.5, color: '#202124', minWidth: 88, textAlign: 'end' }}>
-                        {formatEuroNL(inv.totalIncBtw)}
-                      </span>
-                    )}
-                    {/* The suggestion is PRE-SELECTED, never pre-saved. Changing it here is the
-                        answer; there is no separate confirm, because a two-tap answer on a list of
-                        hundreds is a list nobody finishes. */}
+                    {/* The suggestion is PRE-SELECTED, never pre-saved. Changing it here IS the
+                        answer, for every open invoice of this supplier at once; there is no
+                        separate confirm, because a two-tap answer on a hundred suppliers is a list
+                        nobody finishes. What it covers is on the line above it. */}
                     <select
                       aria-label={t('gb.kop')}
-                      defaultValue={inv.suggestion.accountId}
-                      disabled={saving === inv.id}
-                      onChange={(e) => void assign(inv.id, e.target.value)}
-                      style={{ fontSize: 13, padding: '6px 8px', borderRadius: 8, border: '1px solid #DADCE0', background: '#fff', color: '#202124', maxWidth: 220 }}
+                      defaultValue={g.suggestion.accountId}
+                      disabled={saving === g.key}
+                      onChange={(e) => void assign(g, e.target.value)}
+                      style={{ fontSize: 13, padding: '6px 8px', borderRadius: 8, border: '1px solid #DADCE0', background: '#fff', color: '#202124', maxWidth: 240 }}
                     >
                       {data.accounts.map((a) => (
                         <option key={a.id} value={a.id}>{a.id} · {a.name}</option>

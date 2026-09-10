@@ -34,9 +34,22 @@ export function suggestionReason(suggestion: LedgerSuggestion): SuggestionPhrase
   return { key: "gb.waaromNiets" };
 }
 
-/** The count line above the list. Absent when there is nothing left to answer. */
-export function openCountPhrase(open: number): SuggestionPhrase {
-  if (open <= 0) return { key: "gb.klaar" };
-  if (open === 1) return { key: "gb.openEen" };
-  return { key: "gb.open", params: { n: open } };
+/**
+ * The count line above the list. Absent when there is nothing left to answer.
+ *
+ * It names the invoices AND the suppliers, because those are two different sizes and the second
+ * one is the actual amount of work: 550 invoices across 101 suppliers is 101 decisions, and an
+ * owner told only the first number reads a backlog they will never start.
+ */
+export function openCountPhrase(openInvoices: number, suppliers: number): SuggestionPhrase {
+  if (openInvoices <= 0) return { key: "gb.klaar" };
+  if (openInvoices === 1) return { key: "gb.openEen" };
+  return { key: "gb.open", params: { n: openInvoices, lev: suppliers } };
+}
+
+/** What one supplier's group is worth, so the size of the decision is never hidden. */
+export function groupSizePhrase(count: number, money: string): SuggestionPhrase {
+  return count === 1
+    ? { key: "gb.groepEen", params: { bedrag: money } }
+    : { key: "gb.groep", params: { n: count, bedrag: money } };
 }

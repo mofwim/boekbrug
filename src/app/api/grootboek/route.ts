@@ -17,14 +17,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
-import { fetchAllRows } from "@/lib/supabase-paginate";
+import { fetchAllRows, chunkIds } from "@/lib/supabase-paginate";
 import { logAuditAction } from "@/lib/audit";
+// [CENT] The app has exactly one rounding to cents, and this is it.
+import { round2 } from "@/lib/invoice-totals";
 import {
   suggestLedgerAccount, isLedgerAccount, LEDGER_ACCOUNTS,
   type LedgerSuggestion,
 } from "@/lib/grootboek";
 
 export const dynamic = "force-dynamic";
+
+/** One request, one supplier. Bigger sets are two taps, never one request that half-lands. */
+const MAX_PER_CALL = 500;
 
 interface InvoiceRow {
   id: string;
@@ -78,32 +83,61 @@ export async function GET() {
       historyBySupplier.set(key, [...(historyBySupplier.get(key) ?? []), account]);
     }
 
-    const open = rows
-      .filter((r) => !isLedgerAccount(r.ledger_account))
-      .map((r) => {
-        const suggestion: LedgerSuggestion = suggestLedgerAccount({
-          vendor: r.client_name,
-          supplierHistory: historyBySupplier.get(supplierKey(r)) ?? [],
-        });
-        return {
-          id: r.id,
-          invoiceNumber: r.invoice_number,
-          invoiceDate: r.invoice_date,
-          vendor: r.client_name,
-          // The gross is what the owner recognises the invoice by; the base is what will book.
-          totalIncBtw: r.total_inc_btw,
-          totalExBtw: r.total_ex_btw,
-          suggestion,
-        };
-      })
-      // Newest first: the invoice they remember is the one they can answer.
-      .sort((a, b) => (b.invoiceDate ?? "").localeCompare(a.invoiceDate ?? ""));
+    // [GROOTBOEK-PER-LEVERANCIER] Grouped by supplier, not listed by invoice — and that is a
+    // measurement, not a preference. On the live administration 550 invoices wait for an account
+    // across 101 suppliers, and 511 of them belong to the 62 suppliers with more than one; the
+    // largest has 102 invoices on its own. Answering per invoice is 550 decisions about the same
+    // handful of questions, which is a list nobody finishes, and an unfinished list means the
+    // auditfile keeps writing 4000 for everything.
+    //
+    // The group carries its COUNT and its total, so the owner always sees the size of what they
+    // are deciding. A supplier whose invoices genuinely differ — a landlord who also bills for
+    // cleaning — is visible as a large group, and a different answer per invoice stays possible
+    // through the same door afterwards.
+    const groups = new Map<string, {
+      key: string; vendor: string | null; ids: string[];
+      count: number; gross: number; newest: string | null;
+    }>();
+    for (const r of rows) {
+      if (isLedgerAccount(r.ledger_account)) continue;
+      const key = supplierKey(r) || `row:${r.id}`;
+      const g = groups.get(key) ?? {
+        key, vendor: r.client_name, ids: [], count: 0, gross: 0, newest: null,
+      };
+      g.ids.push(r.id);
+      g.count += 1;
+      // [CENT-VEILIG] An amount that is not there is not zero — it is left out of the sum.
+      if (typeof r.total_inc_btw === "number" && Number.isFinite(r.total_inc_btw)) {
+        g.gross += Math.abs(r.total_inc_btw);
+      }
+      const day = r.invoice_date ?? null;
+      if (day && (!g.newest || day > g.newest)) g.newest = day;
+      groups.set(key, g);
+    }
 
+    const open = [...groups.values()]
+      .map((g) => ({
+        key: g.key,
+        vendor: g.vendor,
+        ids: g.ids,
+        count: g.count,
+        gross: round2(g.gross),
+        newest: g.newest,
+        suggestion: suggestLedgerAccount({
+          vendor: g.vendor,
+          supplierHistory: historyBySupplier.get(g.key) ?? [],
+        }) as LedgerSuggestion,
+      }))
+      // Biggest first: the supplier with 102 invoices is the one tap worth most.
+      .sort((a, b) => b.count - a.count || (b.newest ?? "").localeCompare(a.newest ?? ""));
+
+    const openInvoices = open.reduce((n, g) => n + g.count, 0);
     return NextResponse.json({
       ok: true,
       accounts: LEDGER_ACCOUNTS,
       open,
-      decided: rows.length - open.length,
+      openInvoices,
+      decided: rows.length - openInvoices,
       total: rows.length,
     });
   } catch (e) {
@@ -122,9 +156,24 @@ export async function PATCH(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Niet ingelogd" }, { status: 401 });
 
-  const body = await req.json().catch(() => null) as { id?: string; account?: string | null } | null;
-  const id = (body?.id ?? "").trim();
-  if (!id) return NextResponse.json({ error: "Geen factuur opgegeven" }, { status: 400 });
+  const body = await req.json().catch(() => null) as
+    { id?: string; ids?: string[]; account?: string | null } | null;
+  // One invoice or a supplier's whole open set — the same decision either way, so the same door.
+  const ids = [...new Set(
+    (Array.isArray(body?.ids) ? body.ids : [body?.id])
+      .map((v) => (typeof v === "string" ? v.trim() : ""))
+      .filter(Boolean),
+  )];
+  if (ids.length === 0) return NextResponse.json({ error: "Geen factuur opgegeven" }, { status: 400 });
+  // A ceiling on one request, not on the feature: a supplier with more open invoices than this is
+  // answered in two taps rather than in one request that times out halfway and leaves the set
+  // half-decided.
+  if (ids.length > MAX_PER_CALL) {
+    return NextResponse.json(
+      { error: "Te veel facturen in één keer.", code: "too_many" },
+      { status: 400 },
+    );
+  }
 
   // null clears the answer — an owner who realises they picked the wrong account must be able to
   // put the invoice back on the list rather than having to pick a second wrong one.
@@ -137,32 +186,45 @@ export async function PATCH(req: NextRequest) {
   }
 
   const pipeline = createPipelineClient();
-  // Guarded on receiver_id AND direction: this column means nothing on a sales invoice, and a
-  // route that would write it there is a route that can be pointed at somebody else's row.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (pipeline as any)
-    .from("invoices")
-    .update({ ledger_account: raw })
-    .eq("id", id)
-    .eq("receiver_id", user.id)
-    .eq("direction", "incoming")
-    .select("id")
-    .maybeSingle();
+  // [IN-CHUNK] The id list travels in the URL, so past a few hundred the whole UPDATE dies on a
+  // 414 — and then nothing is written while the owner was told it would be. Per chunk.
+  const changed: string[] = [];
+  for (const chunk of chunkIds(ids)) {
+    // Guarded on receiver_id AND direction: this column means nothing on a sales invoice, and a
+    // route that would write it there is a route that can be pointed at somebody else's row.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (pipeline as any)
+      .from("invoices")
+      .update({ ledger_account: raw })
+      .in("id", chunk)
+      .eq("receiver_id", user.id)
+      .eq("direction", "incoming")
+      .select("id");
 
-  if (error) {
-    console.error("[GROOTBOEK] rekening opslaan mislukt", { id, error: error.message });
-    return NextResponse.json({ error: "Opslaan mislukt — probeer het nog een keer." }, { status: 500 });
+    if (error) {
+      console.error("[GROOTBOEK] rekening opslaan mislukt", { count: chunk.length, error: error.message });
+      // Say what DID land. A partial write reported as a clean failure sends the owner back to
+      // re-answer invoices that are already answered.
+      return NextResponse.json(
+        { error: "Opslaan mislukt — probeer het nog een keer.", changed: changed.length },
+        { status: 500 },
+      );
+    }
+    for (const row of (data ?? []) as { id: string }[]) changed.push(row.id);
   }
-  if (!data) return NextResponse.json({ error: "Factuur niet gevonden" }, { status: 404 });
+  if (changed.length === 0) return NextResponse.json({ error: "Factuur niet gevonden" }, { status: 404 });
 
-  // The account decides where money lands in the auditfile, so the change is part of the trail.
-  await logAuditAction({
-    userId: user.id,
-    action: "invoice.ledger_account_set",
-    entityType: "invoice",
-    entityId: id,
-    newValue: { ledger_account: raw },
-  }).catch(() => {});
+  // The account decides where money lands in the auditfile, so the change is part of the trail —
+  // one entry per invoice, because that is the row a boekhouder looks up later.
+  for (const id of changed) {
+    await logAuditAction({
+      userId: user.id,
+      action: "invoice.ledger_account_set",
+      entityType: "invoice",
+      entityId: id,
+      newValue: { ledger_account: raw },
+    }).catch(() => {});
+  }
 
-  return NextResponse.json({ ok: true, id, account: raw });
+  return NextResponse.json({ ok: true, changed: changed.length, account: raw });
 }
