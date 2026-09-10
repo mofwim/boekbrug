@@ -30035,6 +30035,62 @@ test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, an
     "it must say the read failed, never that the accounts are unknown");
 });
 
+// ─── [GROOTBOEK] Which cost account, not just "a cost" ─────────────────────────────────────────
+//
+// The auditfile carries ONE cost account: 4000 "Kosten", on the GROUP code WBed. xaf-export.ts
+// says why in its own words — "the group-level WOmz / WBed where the leaf depends on facts the app
+// does not hold". Every purchase invoice, whatever it was for, lands on that same line, which is
+// the first thing an accountant notices and the difference between an export they can import and
+// one they re-code by hand.
+//
+// This gate holds the two rules that make the chart worth having:
+//   · an RGS code is a VERIFIED one or it is null — inherited verbatim from xaf-export.ts, where
+//     "a missing code is a lookup, a wrong code is a misfiled administration";
+//   · 4000 is untouched. Adding accounts beside it makes an export more precise; renaming or
+//     renumbering it silently moves history.
+// And the third that makes it safe: it suggests, it never books.
+test("[GROOTBOEK] a verified chart, an untouched 4000, and a suggestion that never books", () => {
+  const chart = code("src/lib/grootboek.ts");
+
+  // ── 4000 stays exactly what the export already writes. The unit test compares the two tables
+  //    value by value; this pins that the export's own entry was not edited to make them agree.
+  assert.match(code("src/lib/xaf-export.ts"), /\{ accID: "4000", accDesc: "Kosten", accTp: "P", rgs: "WBed" \}/,
+    "4000 was renamed or renumbered — that moves every cost already exported");
+  assert.match(chart, /export const DEFAULT_LEDGER_ACCOUNT = "4000"/);
+
+  // ── No RGS code may be invented. Every code in the file is one of the verified set.
+  const codes = [...chart.matchAll(/rgs: "([A-Za-z]+)"/g)].map((m) => m[1]);
+  assert.ok(codes.length >= 7, "the chart lost its RGS references");
+  const VERIFIED = new Set(["WBed", "WBedHui", "WBedVkk", "WBedVkkRep", "WBedKan", "WBedKanOka", "WKprInh"]);
+  for (const c of codes) {
+    assert.ok(VERIFIED.has(c), `${c} is not a code this repo has verified — a wrong code misfiles an administration`);
+  }
+  // …and the accounts that could not be verified say so rather than borrowing a neighbour's code.
+  assert.match(chart, /\{ id: "4400", name: "Vervoerskosten", rgs: null \}/);
+  assert.match(chart, /\{ id: "4500", name: "Verzekeringen", rgs: null \}/);
+  assert.match(chart, /\{ id: "4600", name: "Algemene kosten", rgs: null \}/);
+
+  // ── It suggests. Nothing in it writes, and nothing in it reaches for a client.
+  assert.doesNotMatch(chart, /supabase|createClient|fetch\(|await /,
+    "the chart must stay pure — a suggester that reads is a suggester that can fail");
+  // The default is an unmade decision, not a decision for 4000.
+  assert.match(chart, /return \{ accountId: DEFAULT_LEDGER_ACCOUNT, confidence: 0, basis: "default" \};/,
+    "an unmade decision must carry no confidence for anything downstream to act on");
+  // No suggestion is ever certain: the owner has always been able to move it.
+  assert.doesNotMatch(chart, /confidence: 1(\D|$)/, "certainty about somebody else's bookkeeping");
+
+  // ── The owner's own history outranks our word list, and only when it is UNANIMOUS. A supplier
+  //    split across accounts is a supplier whose invoices differ; a majority guess there is wrong
+  //    exactly on the invoices worth getting right.
+  assert.match(chart, /if \(distinct\.size === 1\)/);
+  assert.doesNotMatch(chart, /majority|mostCommon|sort\(\(a, b\) => b\[1\] - a\[1\]\)/,
+    "a split supplier history must decide nothing");
+
+  // ── And it is a different axis from the bank vocabulary, which answers "is it a cost".
+  assert.doesNotMatch(chart, /from "\.\/bank-categories"/,
+    "one may not be derived from the other — they answer different questions");
+});
+
 // ─── [NUL-GRONDSLAG] An amount that was not read is not a zero ─────────────────────────────────
 //
 // Three ingestion doors wrote `total_ex_btw: verification.total_ex_btw ?? 0` — the Number(null)
