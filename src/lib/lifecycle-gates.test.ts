@@ -30051,6 +30051,48 @@ test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, an
 //   · 4000 is untouched. Adding accounts beside it makes an export more precise; renaming or
 //     renumbering it silently moves history.
 // And the third that makes it safe: it suggests, it never books.
+// ─── [BESLISMATRIX] The census is checked against the repository, not written about it ─────────
+//
+// docs/BoekBrug_Accounting_Decision_Matrix.md names every decision the pipeline makes on a real
+// document, and cites for each one the module that decides and the gate that holds it. That is
+// only worth anything if the citations resolve: a matrix that names four modules which were
+// renamed away last spring reads exactly like one that is right, and is worse than no matrix,
+// because it is the document someone consults instead of the code.
+//
+// Four rows were wrong the first time it was written. This is why that was found.
+test("[BESLISMATRIX] every decision in the census cites a module and a gate that exist", () => {
+  const doc = readFileSync("docs/BoekBrug_Accounting_Decision_Matrix.md", "utf8");
+  const suite = readFileSync("src/lib/lifecycle-gates.test.ts", "utf8");
+
+  // Rows look like: | Decision | `module.ts` | `[TAG]` | Dutch sentence |
+  const rows = [...doc.matchAll(/^\| ([^|]+?) \| `([a-z0-9./-]+\.ts)` \| `\[([A-Z0-9-]+)\]` \| ([^|]+?) \|$/gm)];
+  assert.ok(rows.length >= 50, `expected the full census, parsed ${rows.length} rows`);
+
+  const missingModule: string[] = [];
+  const missingGate: string[] = [];
+  const noOwnerColumn: string[] = [];
+  for (const [, decision, mod, tag, owner] of rows) {
+    if (!existsSync(`src/lib/${mod}`)) missingModule.push(`${mod} (${decision.trim()})`);
+    if (!suite.includes(`test("[${tag}]`)) missingGate.push(`${tag} (${decision.trim()})`);
+    // The seventh column is the point of the document. A row that cannot say where the owner
+    // meets this decision is a feature that was measured reaching nobody three times over.
+    if (owner.trim().length < 20) noOwnerColumn.push(decision.trim());
+  }
+  assert.deepEqual(missingModule, [], `the census names modules that do not exist: ${missingModule.join(", ")}`);
+  assert.deepEqual(missingGate, [], `the census names gates that do not exist: ${missingGate.join(", ")}`);
+  assert.deepEqual(noOwnerColumn, [], `no answer to "how does the owner learn this applies": ${noOwnerColumn.join(", ")}`);
+
+  // And the "not built" half must stay honest about being a claim of ABSENCE. Each line there
+  // carries how it was verified; without that it is a memory, and a memory of what a repository
+  // does not contain is the least reliable sentence anybody writes about it.
+  const notBuilt = doc.slice(doc.indexOf("| Not built |"), doc.indexOf("## The table"));
+  assert.ok(notBuilt.length > 200, "the not-built table must still be there");
+  for (const line of notBuilt.split("\n").filter((l) => l.startsWith("| ") && !l.startsWith("| Not built") && !l.startsWith("|---"))) {
+    const verifiedBy = line.split("|")[2]?.trim() ?? "";
+    assert.ok(verifiedBy.length > 5, `an absence claimed with no way it was checked: ${line.slice(0, 60)}`);
+  }
+});
+
 // ─── [ZELFFACTUUR] The one document class where the second line of defence cannot fire ─────────
 //
 // Self-billing inverts who wrote the invoice: the BUYER draws it up for the seller. When the owner
