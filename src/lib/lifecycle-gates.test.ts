@@ -29755,3 +29755,53 @@ test("[RITTEN-EENMALIG] the server builds travel lines from the log, stamps them
   // 'km' to KMT, and without that row the e-factuur would call a kilometre a "piece".
   assert.match(code("src/lib/units.ts"), /\{ name: "km", code: "KMT" \}/);
 });
+
+// ─── [AL-BETAALD-NUMMER] The double-booking guard reads the number the line PRINTS ────────────
+//
+// The guard stops a bank line being coded as a cost when a paid invoice already carries that
+// money. It decided that on the amount and a fortnight's window — and it READ the paid invoices
+// keyed on the amount too, so an invoice whose number is printed on the line but whose amount
+// differs by a bank charge was never even fetched. Amount-keyed end to end.
+//
+// Measured on the production database: 53 unlinked outgoing payments print the number of exactly
+// one purchase invoice; 49 of those invoices were already settled; together € 34.858,79.
+//
+// So identity became the first handle. What this gate holds:
+//
+//   · The number is asked FIRST, and through the app's ONE reference matcher. referenceMatches
+//     already refuses a bare year, a digit-flanked fragment and a needle under four characters —
+//     every one of those rules paid for by a real mis-booking. A second copy here would be a
+//     second set of scars.
+//   · Direction still decides. A sales invoice cannot explain money leaving the account, however
+//     its number reads on the line.
+//   · The read fetches by number as well as by amount, in its OWN try/catch — the number read is
+//     an addition, and its hiccup must leave the amount rule standing rather than take it down.
+test("[AL-BETAALD-NUMMER] identity is the first handle, it comes from the one matcher, and its read cannot take the amount rule down", () => {
+  const guard = code("src/lib/bank-double-booking.ts");
+
+  // One matcher, imported — never re-implemented here.
+  assert.match(guard, /import \{ referenceMatches, isReferenceNumberToken \} from "\.\/bank-matching";/,
+    "the guard must ask the app's own reference matcher, not a second copy of its rules");
+  assert.doesNotMatch(guard, /function referenceMatches/, "a second copy of the number rules is a second set of scars");
+
+  // Identity is asked before arithmetic, and direction gates it.
+  assert.match(guard, /for \(const inv of paidRows\) \{\s*if \(\(inv\.direction \?\? ""\) !== wantDir\) continue;\s*if \(referenceMatches\(text, inv\.invoice_number \?\? null\)\) return inv;\s*\}/,
+    "the printed number must be the FIRST handle, and a sales invoice must never explain a debit");
+
+  // The read is keyed on the numbers too, or the handle above can never fire.
+  assert.match(guard, /\.in\("invoice_number", chunk\)/,
+    "amount-keyed reading is what made the number handle unreachable in the first place");
+  assert.match(guard, /isReferenceNumberToken\(part\)/, "the tokens come from the app's own parser");
+  assert.match(guard, /\.slice\(0, MAX_NUMBER_KEYS\)/, "a statement import must not grow the read with its own noise");
+  // Its own catch: the addition may fail without taking the original rule with it.
+  assert.match(guard, /\[AL-BETAALD-NUMMER\] paid-invoice read by number failed — the amount rule still stands/);
+
+  // The amount rule itself is unchanged, including the deliberate err-toward-held on an
+  // undatable pair: holding a line for a human is recoverable, a doubled cost in the aangifte
+  // is not.
+  assert.match(guard, /if \(!settled \|\| Number\.isNaN\(txMs\)\) return inv;/);
+  assert.match(guard, /if \(Math\.abs\(txMs - Date\.parse\(settled\)\) <= SETTLEMENT_WINDOW_MS\) return inv;/);
+  // The old three-argument signature still exists, so every caller that knows only the amount
+  // keeps the guard it always had.
+  assert.match(guard, /txText\?: Pick<GuardLine, "description"> & \{ reference\?: string \| null \}/);
+});
