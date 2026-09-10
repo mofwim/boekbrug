@@ -26005,7 +26005,12 @@ test("[LEVERANCIER-BEWERKEN] the edit route keeps the old IBAN first, renames by
 
   // 2. Invoices follow by supplier_id, and only their display name moves.
   assert.match(deur, /\.eq\('supplier_id', current\.id\)/, "siblings are found by id, never by name");
-  const rename = deur.slice(deur.indexOf(".from('invoices')"), deur.indexOf(".select('id')", deur.indexOf(".from('invoices')")));
+  // [POORT-GRENS] Cut on real code, and prove both markers were found: a -1 here would widen the
+  // window to the end of the file and let the assertion below pass on the wrong text.
+  const renameFrom = deur.indexOf(".from('invoices')");
+  const renameTo = deur.indexOf(".select('id')", renameFrom);
+  assert.ok(renameFrom > 0 && renameTo > renameFrom, "the invoice rename block is where the gate expects it");
+  const rename = deur.slice(renameFrom, renameTo);
   assert.match(rename, /update\(\{ client_name: plan\.changes\.name \}\)/, "only client_name is written on the invoices");
   assert.doesNotMatch(rename, /vendor_iban|client_btw_number/, "the document's own printed identifiers are never touched");
 
@@ -26043,8 +26048,11 @@ test("[LEVERANCIER-BEWERKEN] the edit route keeps the old IBAN first, renames by
 test("[LEVERANCIER-NIEUW] adoption links loose invoices only, by id only; removal counts first; no language", () => {
   const maak = code("src/app/api/supplier/route.ts");
   assert.match(maak, /\.is\('supplier_id', null\)[\s\S]{0,200}\.range\(from, to\)/, "only invoices with no supplier are read for adoption");
-  const adopt = maak.slice(maak.indexOf(".update({ supplier_id: made.id })"), maak.indexOf(".select('id')", maak.indexOf(".update({ supplier_id: made.id })")));
-  assert.ok(adopt.length > 0, "adoption writes the link");
+  // [POORT-GRENS] Both markers are real code, and both must be found before the window is cut.
+  const adoptFrom = maak.indexOf(".update({ supplier_id: made.id })");
+  const adoptTo = maak.indexOf(".select('id')", adoptFrom);
+  assert.ok(adoptFrom > 0 && adoptTo > adoptFrom, "adoption writes the link, and the gate can see where that write ends");
+  const adopt = maak.slice(adoptFrom, adoptTo);
   assert.match(adopt, /\.is\('supplier_id', null\)/, "…and re-checks on the write that nothing was linked meanwhile");
   assert.doesNotMatch(maak, /update\(\{[^}]*client_name/, "the printed name on those invoices is never rewritten");
   assert.match(maak, /\.eq\('name_key', v\.nameKey\)/, "the same company under another spelling is found before a second row is made");
