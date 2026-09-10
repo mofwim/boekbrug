@@ -30051,6 +30051,60 @@ test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, an
 //   · 4000 is untouched. Adding accounts beside it makes an export more precise; renaming or
 //     renumbering it silently moves history.
 // And the third that makes it safe: it suggests, it never books.
+// ─── [BTW-ONGECONTROLEERD] The one case no arithmetic gate can see ─────────────────────────────
+//
+// Every arithmetic check this app owns rests on one of two constraints: the identity
+// (excl + btw = incl) or the RATE — 0, 9 or 21, the only ones that exist here. A MIXED-RATE
+// invoice satisfies the first by construction and escapes the second, because with 9 % and 21 %
+// on one document the blended rate may legally be anything between them. The per-rate block is
+// then the only witness left, and without it the voorbelasting has been checked by nothing at all
+// while every screen shows the row as clean.
+//
+// Measured: 31 booked purchase invoices carry a blended rate, 28 hold no block, € 2.635,83 of
+// voorbelasting rests on them.
+//
+// [SPLIT-ALSNOG] already built the way back — a re-read that checks and overwrites nothing, on the
+// invoice's own sheet. What was missing is that nothing said WHICH of 608 invoices needed it. So
+// this is a readiness item beside [GEEN-BTW-SOORT], its sibling in kind, and not a third panel.
+test("[BTW-ONGECONTROLEERD] the blend with no block is named where the owner asks if the quarter can go", () => {
+  const rule = code("src/lib/btw-ongecontroleerd.ts");
+  const board = code("src/lib/readiness.ts");
+  const route = code("src/app/api/readiness/route.ts");
+
+  // ── The rule only speaks about the GAP between the legal rates.
+  assert.match(rule, /const LEGAL_RATES = \[0, 9, 21\] as const;/);
+  assert.match(rule, /if \(rate > 21 \+ RATE_TOLERANCE\) return false;/,
+    "above the top rate is WRONG, not unverifiable — the arithmetic gates own that");
+  // The block IS the check; with it there is nothing to say.
+  assert.match(rule, /if \(input\.hasRateBlock === true\) return false;/);
+  // A reverse charge is a different mechanism, and a zero BTW has its own question.
+  assert.match(rule, /if \(input\.shifted === true\) return false;/);
+  assert.match(rule, /if \(Math\.abs\(btw\) < 0\.005\) return false;/);
+  // Rounding drift is still that rate: a supplier who rounds per line has not become unverifiable.
+  assert.match(rule, /RATE_TOLERANCE = 0\.6/);
+  // Pure: a rule that reads is a rule that can fail.
+  assert.doesNotMatch(rule, /supabase|createClient|fetch\(|await /);
+
+  // ── It is a readiness RISK, never a verdict: a blended rate is normal at a wholesaler.
+  assert.match(board, /severity: "risk",/);
+  assert.match(board, /BTW terug die we niet hebben kunnen nakijken/);
+  assert.match(board, /er wordt niets overschreven/,
+    "the way back must be named as safe, or nobody takes it");
+  // The amount is what makes it worth reading, and the names give the number an address.
+  assert.match(board, /aan voorbelasting/);
+  assert.match(board, /const rest = \(s\.uncheckedVatNames \?\? \[\]\)\.length - namen\.length;/,
+    "a list of forty names is not a sentence anybody reads");
+
+  // ── The route asks the shared rule, over the rows where the deduction was actually claimed.
+  assert.match(route, /btwUncheckable\(\{/);
+  assert.match(route, /\["received", "paid"\]\.includes\(String\(i\.status \?\? ""\)\)/);
+  assert.match(route, /hasRateBlock: Array\.isArray\(marks\._btw_rows\) && marks\._btw_rows\.length > 0,/,
+    "an empty block is no block — it proves nothing and must not silence the risk");
+  assert.match(route, /shifted: marks\._btw_verlegd != null,/);
+  // [CENT] one rounding.
+  assert.match(route, /const uncheckedVatAmount = round2\(/);
+});
+
 // ─── [GELEERD-SINDSDIEN] The app improving in silence is the app failing in silence ────────────
 //
 // Measured: 58 incoming invoices sit at Genegeerd and 45 were held on the same arithmetic flag,

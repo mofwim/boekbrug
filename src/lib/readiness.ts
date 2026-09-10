@@ -8,6 +8,8 @@
 import type { RegimeFlag } from "./regime-flags";
 import { BAD_DEBT_MIN_EUR } from "./bad-debt";
 import { telWoord, vervoeg } from "./nl-plural";
+// [BTW-ONGECONTROLEERD] € 1.234,56 in de zin die het bedrag noemt.
+import { formatEuroNL } from "./format-nl";
 
 // THE SCORE IS NOT COSMETIC. Every point is earned by a PROVABLE condition:
 //   score = 100 × Σ(weight·subscore over APPLICABLE dimensions) / Σ(weight over applicable)
@@ -75,6 +77,13 @@ export interface ReadinessSignals {
   // een verwijt zonder adres. Zie btw-soort.ts.
   vatDoubtCount?: number;
   vatDoubtNames?: string[];
+  // [BTW-ONGECONTROLEERD] Geboekte inkoopfacturen met een GEMENGD btw-tarief en zonder de
+  // tariefspecificatie die het enige bewijs is. De identiteit klopt, het tarief bewijst niets, en
+  // er is dus voorbelasting teruggevraagd die niets in deze app ooit heeft kunnen nakijken. Zie
+  // btw-ongecontroleerd.ts; de weg terug bestaat al ([SPLIT-ALSNOG]) en is per factuur.
+  uncheckedVatCount?: number;
+  uncheckedVatAmount?: number;
+  uncheckedVatNames?: string[];
 
   // ── Bank ──
   bankTxCount: number;                  // bank transactions DATED in the quarter
@@ -357,6 +366,43 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
         // op "Alle". De ondernemer zou dan in het volledige grootboek landen met de mededeling dat
         // er ergens zes fout zijn — precies de dode belofte waar [SEGMENT-VOORDEUR] een poort voor
         // heeft. De nummers staan hierboven; die zijn hier het gereedschap.
+        fix: { label: "Naar de facturen", href: "/dashboard/incoming/manage" },
+      });
+    }
+  }
+
+  // ── [BTW-ONGECONTROLEERD] Teruggevraagde BTW die niets heeft kunnen nakijken ────────────────
+  //
+  // Elke rekenkundige controle in deze app leunt op één van twee dingen: de identiteit
+  // (excl + btw = totaal) of het TARIEF (0, 9 of 21 — meer bestaan er niet). Een factuur met twee
+  // tarieven erop voldoet aan de eerste per constructie en ontsnapt aan de tweede: met 9% en 21%
+  // door elkaar mag het gemengde percentage alles daartussen zijn, dus "12,4%" bewijst niets.
+  //
+  // Wat overblijft is de tariefspecificatie op het papier, en zonder die is er geen enkele getuige.
+  // Zo'n factuur ziet er op elk scherm volstrekt schoon uit terwijl de voorbelasting nooit is
+  // nagekeken. Dit is dus geen verwijt en geen fout — bij een groothandel is een gemengd tarief
+  // volkomen normaal — maar het hoort wel gezegd te worden op de plek waar de eigenaar vraagt of
+  // het kwartaal de deur uit kan.
+  {
+    const aantal = s.uncheckedVatCount ?? 0;
+    const bedrag = s.uncheckedVatAmount ?? 0;
+    const namen = (s.uncheckedVatNames ?? []).slice(0, 4);
+    const rest = (s.uncheckedVatNames ?? []).length - namen.length;
+    if (rest > 0) namen.push(`en ${rest} andere`);
+    if (aantal > 0) {
+      risks.push({
+        severity: "risk",
+        title:
+          aantal === 1
+            ? "1 factuur vraagt BTW terug die we niet hebben kunnen nakijken"
+            : `${aantal} facturen vragen BTW terug die we niet hebben kunnen nakijken`,
+        detail:
+          "Op deze facturen staan twee btw-tarieven door elkaar, en de uitsplitsing per tarief " +
+          "ontbreekt. Dan klopt de optelling wel, maar is er niets waaraan we het bedrag kunnen " +
+          "toetsen. " +
+          (bedrag > 0 ? `Het gaat om ${formatEuroNL(bedrag)} aan voorbelasting. ` : "") +
+          (namen.length > 0 ? `Bij ${namen.join(", ")}. ` : "") +
+          "Open zo'n factuur en laat de btw alsnog nakijken; er wordt niets overschreven.",
         fix: { label: "Naar de facturen", href: "/dashboard/incoming/manage" },
       });
     }
