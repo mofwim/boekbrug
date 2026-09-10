@@ -30051,6 +30051,74 @@ test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, an
 //   · 4000 is untouched. Adding accounts beside it makes an export more precise; renaming or
 //     renumbering it silently moves history.
 // And the third that makes it safe: it suggests, it never books.
+// ─── [VREEMDE-VALUTA] Every amount in this administration is a euro amount ─────────────────────
+//
+// Nothing in the pipeline states that assumption, which is exactly why it is dangerous: it is
+// simply true of every invoice this app has ever seen, until the day a supplier bills in dollars.
+// On that day the base, the btw, the deduction and the aangifte are all wrong by the exchange
+// rate, and NOT ONE gate downstream fires — the arithmetic on the document is perfectly
+// consistent, in dollars.
+//
+// The guard is two rules, and the second is the one worth writing down: we act only on a currency
+// we READ (an absent one is not USD and not EUR — it is not a reason to do anything, which is how
+// 100 % of the documents on this database behave), and we NEVER convert. A conversion needs the
+// rate on the invoice date, which this app does not have; and a converted figure, once stored, is
+// indistinguishable from a read one. So the answer is a hold and a name.
+test("[VREEMDE-VALUTA] a currency is read, never assumed, and a foreign one holds instead of converting", () => {
+  const rule = code("src/lib/vreemde-valuta.ts");
+  const reader = code("src/lib/ai.ts");
+  const queue = code("src/lib/auto-advance.ts");
+  const health = code("src/lib/import-health.ts");
+
+  // ── Nothing in this module may convert. No rate, no multiplication, no "approximately".
+  assert.doesNotMatch(rule, /rate|koers|exchange|convert|\* *rate/i,
+    "a converted amount is indistinguishable from a read one — that is the whole danger");
+  assert.doesNotMatch(rule, /supabase|createClient|fetch\(|await /, "pure");
+
+  // ── Absent is not a reading. This is the rule that keeps every existing document behaving
+  //    exactly as it does today; break it and the entire queue stops on documents that said
+  //    nothing about a currency, which is nearly all of them.
+  assert.match(rule, /if \(raw == null\) return null;/);
+  assert.match(rule, /return code != null && code !== HOME_CURRENCY;/,
+    "foreign means READ and not-euro — never merely not-euro");
+  assert.match(rule, /if \(code == null \|\| code === HOME_CURRENCY\) return \{ hold: false, code \};/);
+
+  // ── A symbol that means more than one currency is not a reading either. Naming the wrong money
+  //    on the owner's screen is a guess wearing the clothes of a fact.
+  assert.doesNotMatch(rule, /"\$": "USD"/, "a bare dollar sign is USD, CAD, AUD, NZD, SGD…");
+  assert.doesNotMatch(rule, /"kr":/, "kr is Swedish, Norwegian AND Danish");
+
+  // ── The reader asks for it and is told, in the prompt itself, not to fill in the euro.
+  assert.match(reader, /"currency": string or null,/);
+  assert.match(reader, /do NOT fill in "EUR" because the invoice looks Dutch/);
+  // …and only a positive foreign reading writes the key.
+  assert.match(reader, /if \(valuta\.hold && valuta\.code != null\) \{/);
+  assert.match(reader, /_valuta: \{ code: valuta\.code \},/);
+
+  // ── The queue refuses to auto-book it, under its own reason.
+  assert.match(queue, /if \(foreignCurrencyHold\(s\.health\?\.field_confidence\?\._valuta\?\.code\)\.hold\) \{/);
+  assert.match(queue, /return \{ advance: false, reason: "foreign_currency" \};/);
+  // Every refusal owes the owner a sentence — both lists, or the card says a tag out loud.
+  assert.match(code("src/lib/hold-reasons.ts"), /foreign_currency: "/);
+  assert.match(code("src/lib/why-waiting.ts"), /foreign_currency: "wacht\.vreemdeValuta",/);
+
+  // ── The OTHER euro rule stays a separate rule, deliberately. [EURO-ALLEEN] (e-invoice.ts) reads
+  //    a machine-readable XML field that is a currency code by construction, so it refuses
+  //    anything that is not EUR. This one reads a picture, so it acts only on a symbol it can
+  //    resolve. Collapsing either into the other breaks the door it came from: the XML side would
+  //    start accepting an unrecognised code as euros, and the read side would hold an invoice on
+  //    an OCR artefact.
+  const einv = code("src/lib/e-invoice.ts");
+  assert.match(einv, /export function isEuroDocument\(/);
+  assert.match(einv, /return String\(currency\)\.trim\(\)\.toUpperCase\(\) === "EUR";/,
+    "the XML door refuses everything that is not EUR, an unrecognised code included");
+  assert.doesNotMatch(rule, /isEuroDocument/, "the read door does not borrow the XML door's rule");
+
+  // ── And the row itself says so, because nothing else on it would: a dollar invoice adds up.
+  assert.match(health, /_valuta\?: \{ code\?: string \| null \}/);
+  assert.match(health, /niet in euro's/);
+});
+
 // ─── [REGELS] The lines give back the constraint a mixed-rate invoice loses ────────────────────
 //
 // btw-split.ts states the problem exactly: on a single-rate invoice two independent constraints

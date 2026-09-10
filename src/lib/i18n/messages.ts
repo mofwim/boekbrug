@@ -15368,6 +15368,11 @@ export const MESSAGES = {
     ar: 'قيمة btw صفر، لكن لا يوجد 0% على المستند.',
     en: 'The btw is zero, but the document does not state 0%.',
   },
+  'wacht.vreemdeValuta': {
+    nl: "De bedragen op dit document staan niet in euro's. Vul zelf het eurobedrag in dat je bank heeft afgeschreven.",
+    ar: 'المبالغ على هذا المستند ليست باليورو. أدخل بنفسك المبلغ باليورو الذي خصمه بنكك.',
+    en: "The amounts on this document are not in euros. Enter the euro amount your bank actually debited.",
+  },
   'wacht.eFactuurAnders': {
     nl: 'De e-factuur van de leverancier noemt andere bedragen dan er gelezen is.',
     ar: 'الفاتورة الإلكترونية من المورّد تذكر مبالغ غير التي قُرئت.',

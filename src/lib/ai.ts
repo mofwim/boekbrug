@@ -87,6 +87,8 @@ import { groundMoneyFields } from './amount-grounding';
 import { detectDepositGap } from './statiegeld';
 // [REGELS] The lines, grouped per rate and checked against both printed anchors.
 import { splitFromLines } from './factuurregels';
+// [VREEMDE-VALUTA] The euro assumption, made explicit and checkable.
+import { foreignCurrencyHold } from './vreemde-valuta';
 // [GEGROND-NAAM] The same independent witness, for the supplier NAME — the one field on an
 // incoming invoice that had no check at all. See the header of that file for the read that
 // showed why: a BALKIP invoice imported under a different company's name, amounts all correct.
@@ -617,6 +619,10 @@ export interface VerifyInvoiceResult {
   // (grondslag) column and `btw` the RIGHT one. On a mixed-rate invoice this is the only thing
   // that can verify the btw total, because the legal-rate constraint no longer applies to a blend.
   btw_breakdown?: { rate: number; base: number; btw: number }[] | null;
+  // [VREEMDE-VALUTA] The currency code printed beside the amounts, as printed. Read, never
+  // assumed: null means the document said nothing, which is the normal case and changes nothing.
+  // See vreemde-valuta.ts for why a positive reading holds the invoice and nothing converts.
+  currency?: string | null;
   // [REGELS] The invoice's own lines, as printed. Read for one reason above all: on a MIXED-rate
   // document without a summary block the lines are the ONLY thing left that can corroborate the
   // btw — group them per rate, apply the rate, and the result has to reproduce the printed total.
@@ -659,6 +665,10 @@ export interface VerifyInvoiceResult {
     // [BTW-SPLIT] The per-rate block, carried through to storage so the checklist can verify a
     // mixed-rate btw instead of reporting it as checked when nothing checked it.
     _btw_rows?: { rate: number; base: number; btw: number }[];
+    // [VREEMDE-VALUTA] Set when the document named a currency that is not the euro. The amounts
+    // stored are the amounts PRINTED — unconverted, because nothing here has a rate — so this key
+    // is what stops them being treated as euros, and what names the currency on screen.
+    _valuta?: { code: string };
     // [REGELS] A per-rate split we built from the invoice's OWN LINES, and only when it reproduced
     // both printed anchors. Different evidence from _btw_rows — that one the supplier printed,
     // this one the goods imply — so it is kept apart and never merged into it.
@@ -1529,6 +1539,7 @@ Return only a JSON object with these exact keys:
   "total_printed": number or null,
   "btw_breakdown": [{ "rate": 0 | 9 | 21, "base": number, "btw": number }] or null,
   "invoice_lines": [{ "description": string, "quantity": number or null, "unit_price": number or null, "btw_rate": 0 | 9 | 21, "amount": number }] or null,
+  "currency": string or null,
   "btw_rate": 0 | 9 | 21 or null,
   "field_confidence": {
     "vendor": number between 0 and 1,
@@ -1811,6 +1822,17 @@ STATIEGELD / EMBALLAGE / STORTGELD (crucial — a shop that sells drinks sees th
   (equal excl and incl means zero BTW). Trust the "Totaal incl."/"Reeds betaald"/paid total
   and the printed BTW, and set total_ex_btw = total_inc_btw − btw_amount. Never return
   total_ex_btw equal to total_inc_btw when btw_amount is non-zero.
+
+CURRENCY (currency) — copy it, never assume it:
+- Return the currency code printed beside the amounts: "EUR", "USD", "GBP", "CHF", "TRY"… If the
+  document shows only a symbol, return the code that symbol stands for (€ → "EUR", £ → "GBP").
+- Return null when the document prints no currency at all. Null is the normal answer and it is a
+  safe one — do NOT fill in "EUR" because the invoice looks Dutch. We only act on what you read.
+- Return null too when the symbol could be more than one currency ("kr", a bare "$"), because a
+  currency named wrongly is worse than one not named.
+- WHY: every amount in this administration is a euro amount. A dollar invoice booked as euros is
+  wrong by the exchange rate in the base, the btw and the aangifte, and nothing downstream can see
+  it — the arithmetic on the document is perfectly consistent, in dollars.
 
 INVOICE LINES (invoice_lines) — read them, and read the RATE that stands on each one:
 - Copy each priced line as printed: its description, its amount EXCLUDING btw, and the btw rate
@@ -2711,6 +2733,21 @@ Return JSON only.`;
         ...(parsed.field_confidence ?? {}),
         _btw_verlegd: { grondslag: parsed.total_ex_btw ?? parsed.total_inc_btw ?? null },
       };
+    }
+
+    // [VREEMDE-VALUTA] The document named a currency, and it is not the euro. Record it and stop
+    // there: the amounts stay exactly as printed, because converting them needs the rate on the
+    // invoice date and this app has none. The key is the whole mechanism — it holds the invoice
+    // out of the auto-booking path and it names the currency where the owner reads it. Absent, or
+    // the euro, writes nothing at all, which is how 100 % of the documents seen so far behave.
+    {
+      const valuta = foreignCurrencyHold(parsed.currency);
+      if (valuta.hold && valuta.code != null) {
+        parsed.field_confidence = {
+          ...(parsed.field_confidence ?? {}),
+          _valuta: { code: valuta.code },
+        };
+      }
     }
 
     // [BTW-SPLIT] Carry the per-rate summary block through to storage.

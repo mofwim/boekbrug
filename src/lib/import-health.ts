@@ -187,6 +187,11 @@ export interface FieldConfidence {
   // needs its own reason because the gross-as-net fallback makes ex equal incl, so the arithmetic
   // is silent by construction and the voorbelasting sits at 0 behind a clean-looking row.
   _btw_zero_unexplained?: boolean
+  // [VREEMDE-VALUTA] The document named a currency that is not the euro. The stored amounts are
+  // the PRINTED ones — nothing converted them, because a conversion needs the rate on the invoice
+  // date and this app has none. So every figure on this row is in `code`, not in euros, and the
+  // owner is the only one who can supply what their bank actually took.
+  _valuta?: { code?: string | null }
   // [ASSURANTIE] Present when the document printed assurantiebelasting (insurance premium tax) and
   // a non-zero amount had been read into btw_amount. The guard (stripAssurantiebelastingBtw in
   // @/lib/ai) removed it from the deductible column and folded it into the cost. Says so out loud:
@@ -634,6 +639,15 @@ export function classifyImportHealth(inv: HealthInput): ImportHealth {
   // 0 %-tarief, geen verlegging. De rekenkundige controle hierboven zwijgt hier per definitie —
   // het terugvalbedrag maakt excl. gelijk aan het totaal, dus de identiteit klopt — en zonder deze
   // zin staat er nergens iets over. Het is voorbelasting die de eigenaar anders nooit terugziet.
+  // [VREEMDE-VALUTA] Niets aan de rekensom valt op: een dollarfactuur klopt intern perfect — in
+  // dollars. Alleen deze zin zegt dat de bedragen op deze regel geen euro's zijn.
+  if (typeof fc?._valuta?.code === 'string' && fc._valuta.code.length > 0) {
+    flags.arithmetic = true
+    reasons.push(
+      `de bedragen op dit document staan in ${fc._valuta.code}, niet in euro's — vul zelf het eurobedrag in dat je bank heeft afgeschreven`
+    )
+  }
+
   if (fc?._btw_zero_unexplained === true) {
     flags.arithmetic = true
     reasons.push(

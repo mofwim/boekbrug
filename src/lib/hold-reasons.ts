@@ -109,6 +109,7 @@ export const HOLD_LABELS: Readonly<Record<string, string>> = {
   tax_letter: "Het document is een brief van de Belastingdienst — waar die boekt beslist de eigenaar",
   no_reliable_total: "Het totaalbedrag was niet betrouwbaar te lezen",
   zero_btw_not_explicit_zero_rate: "De btw stond op nul zonder dat er 0% op het document staat",
+  foreign_currency: "Het document staat in een andere munt dan de euro — niets is omgerekend",
   total_derived_never_grounded: "Het totaal is afgeleid en stond nergens zo op het document",
   total_not_in_document_text: "Het gelezen totaal komt niet voor in de tekst van het document",
   total_not_where_a_total_is_printed: "Het gelezen bedrag staat niet op de plek waar een totaal hoort",

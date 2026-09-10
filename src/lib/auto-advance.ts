@@ -33,6 +33,8 @@ import { placementBlocksAutoBooking } from "./document-verify";
 import { eInvoiceSettlesAmounts } from "./e-invoice";
 // [NUL-BTW-STIL] The zero-BTW question, shared with the doors that never reach this queue.
 import { zeroBtwUnexplained } from "./zero-btw";
+// [VREEMDE-VALUTA] The euro assumption. A document in another currency is never auto-booked.
+import { foreignCurrencyHold } from "./vreemde-valuta";
 
 // Auto-booking bar — stricter than import-health's 0.7 review line. A present per-field score
 // below this keeps the invoice in the queue for a human, even if it isn't otherwise "flagged".
@@ -141,6 +143,16 @@ export function shouldAutoAdvanceInvoice(s: AutoAdvanceSignals): AutoAdvanceDeci
   // pass through this queue must ask exactly the same one — and it gained the reverse-charge
   // answer on the way: a verlegde factuur carries no BTW and no rate BY DESIGN (see the note on
   // _btw_verlegd in ai.ts), so holding it here named a reading failure that never happened.
+  // [VREEMDE-VALUTA] The document named a currency that is not the euro, so the amounts stored
+  // are not euro amounts — nothing converted them, by design. Auto-booking them would put a
+  // dollar figure in the base, the btw and the aangifte under an "automatisch geverifieerd" tag,
+  // and every arithmetic gate below would pass, because the document is internally consistent in
+  // its own money. Only a human can supply what their bank actually took. Absent currency reads
+  // as no hold, so this changes nothing for a document that never named one.
+  if (foreignCurrencyHold(s.health?.field_confidence?._valuta?.code).hold) {
+    return { advance: false, reason: "foreign_currency" };
+  }
+
   if (zeroBtwUnexplained({
     totalIncBtw: s.totalIncBtw,
     btwAmount: s.health?.btw_amount,

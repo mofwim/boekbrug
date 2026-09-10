@@ -343,5 +343,25 @@ console.log("\n— [ONGEGROND-AFGELEID] a gross the app derived never books unat
     })).reason !== "total_derived_never_grounded");
 }
 
+// [VREEMDE-VALUTA] Een factuur in een andere munt boekt nooit vanzelf, en een factuur die niets
+// over een munt zei verandert niet van gedrag — dat laatste is 100 % van alles wat er nu ligt.
+{
+  const fc = () => ({ ...clean().health.field_confidence });
+  const dollar = shouldAutoAdvanceInvoice(clean({
+    health: { ...clean().health, field_confidence: { ...fc(), _valuta: { code: "USD" } } },
+  }));
+  check("een dollarfactuur wordt vastgehouden", dollar.advance === false && dollar.reason === "foreign_currency");
+
+  const euro = shouldAutoAdvanceInvoice(clean({
+    health: { ...clean().health, field_confidence: { ...fc(), _valuta: { code: "EUR" } } },
+  }));
+  check("een expliciete euro houdt niets tegen", euro.reason !== "foreign_currency");
+
+  // De belangrijkste: geen munt gelezen is geen reden. Zou dit vastgehouden worden, dan stond de
+  // hele verwerkingsstraat stil op documenten die nooit iets over een munt hebben gezegd.
+  check("geen munt gelezen → geen vreemde-valutablokkade",
+    shouldAutoAdvanceInvoice(clean()).reason !== "foreign_currency");
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);
