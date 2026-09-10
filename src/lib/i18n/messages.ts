@@ -845,6 +845,33 @@ export const MESSAGES = {
     en: 'The supplier could not be removed. Try again in a moment.',
     ar: 'تعذّر حذف المورّد. أعد المحاولة بعد قليل.',
   },
+  // [SAMENVOEGEN-EIGENAAR] The owner names the pair and the row that stays.
+  'lev.samenvoeg.kop': { nl: 'Samenvoegen met een andere leverancier', en: 'Merge with another supplier', ar: 'دمج مع مورّد آخر' },
+  'lev.samenvoeg.uitleg': {
+    nl: 'Alleen als dit echt hetzelfde bedrijf is. De facturen gaan naar de gekozen rij; deze rij verdwijnt.',
+    en: 'Only if this really is the same company. The invoices go to the chosen row; this row disappears.',
+    ar: 'فقط إن كانت هذه الشركة نفسها حقاً. الفواتير تنتقل إلى الصف المختار، وهذا الصف يختفي.',
+  },
+  'lev.samenvoeg.kies': { nl: 'Kies de leverancier die blijft', en: 'Pick the supplier that stays', ar: 'اختر المورّد الذي يبقى' },
+  'lev.samenvoeg.geen': { nl: 'Kies een leverancier…', en: 'Pick a supplier…', ar: 'اختر مورّداً…' },
+  'lev.samenvoeg.vraag': {
+    nl: 'De facturen van {dit} komen onder {ander}. Doorgaan?',
+    en: 'The invoices of {dit} will be filed under {ander}. Continue?',
+    ar: 'فواتير {dit} ستُسجَّل تحت {ander}. هل تتابع؟',
+  },
+  'lev.samenvoeg.bevestig': { nl: 'Ja, samenvoegen', en: 'Yes, merge', ar: 'نعم، ادمج' },
+  // [LEVERANCIER-ZOEKEN] The filter over the registry list. Same matcher as the name picker.
+  'leveranciers.zoek': { nl: 'Zoek een leverancier', en: 'Search a supplier', ar: 'ابحث عن مورّد' },
+  'leveranciers.zoek.niets': {
+    nl: 'Geen leverancier gevonden voor "{term}".',
+    en: 'No supplier found for "{term}".',
+    ar: 'لم يُعثر على مورّد لـ "{term}".',
+  },
+  'leveranciers.zoek.aantal': {
+    nl: '{n} van {totaal} leveranciers',
+    en: '{n} of {totaal} suppliers',
+    ar: '{n} من {totaal} مورّدين',
+  },
   'lev.fout.opslaan': {
     nl: 'De leverancier kon niet worden opgeslagen. Probeer het zo meteen opnieuw.',
     ar: 'تعذّر حفظ المورّد. حاول مرة أخرى بعد قليل.',

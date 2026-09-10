@@ -410,3 +410,44 @@ test("[LEVERANCIER-VERWIJDEREN] an existing row offers removal in two steps, wit
   assert.doesNotMatch(html, /Ja, verwijderen/, "…and the second is not, until it is asked for");
   assert.doesNotMatch(html, /Het gaat om 23 facturen/, "the count belongs to the confirm step only");
 });
+
+// ── [SAMENVOEGEN-EIGENAAR] / [LEVERANCIER-ZOEKEN] ────────────────────────────────────────────
+test("[SAMENVOEGEN-EIGENAAR] the sheet offers the other suppliers, and names both sides before the button", async () => {
+  const { default: Sheet } = await import("../../src/components/supplier/SupplierEditSheet");
+  const others = [{ id: "s2", name: "Trimex Internationaal" }, { id: "s3", name: "Enka Horeca B.V." }];
+  const html = renderToStaticMarkup(
+    React.createElement(Sheet, { supplier: CARDS[0], others, onClose() {}, onSaved() {} }),
+  );
+  assert.match(html, /Samenvoegen met een andere leverancier/);
+  assert.match(html, /Trimex Internationaal/, "every other supplier is offered as the row that stays");
+  assert.match(html, /Enka Horeca B\.V\./);
+  assert.doesNotMatch(html, /Ja, samenvoegen/, "the confirm appears only once a row is picked");
+  // Nothing to merge with → the section is absent rather than an empty picker.
+  const alone = renderToStaticMarkup(React.createElement(Sheet, { supplier: CARDS[0], others: [], onClose() {}, onSaved() {} }));
+  assert.doesNotMatch(alone, /Samenvoegen met een andere leverancier/);
+  // And a row being MADE has nothing to merge yet.
+  const nieuw = renderToStaticMarkup(React.createElement(Sheet, { supplier: null, create: { name: "X B.V.", adoptInvoices: false }, others, onClose() {}, onSaved() {} }));
+  assert.doesNotMatch(nieuw, /Samenvoegen met een andere leverancier/);
+});
+
+test("[LEVERANCIER-ZOEKEN] the search filters the registry list and never the totals", async () => {
+  const { default: Client } = await import("../../src/app/dashboard/leveranciers/LeveranciersClient");
+  const { supplierBalances } = await import("../../src/lib/supplier-balances");
+  const { buildSupplierBalancePanel } = await import("../../src/lib/supplier-balance-copy");
+  const html = renderToStaticMarkup(
+    React.createElement(Client, {
+      balance: buildSupplierBalancePanel(
+        supplierBalances({
+          asOf: TODAY, settlements: [],
+          invoices: [{ id: "a", invoiceNumber: "1", supplierKey: "can vleesgroothandel", supplierName: "CAN Vleesgroothandel B.V.",
+            invoiceDate: "2026-08-15", dueDate: "2026-08-29", status: "received", invoiceType: "factuur", totalIncBtw: 1165.73, amountPaid: 0 }],
+        }), "nl", TODAY),
+      corroboration: null, suppliers: CARDS, asOf: TODAY, today: TODAY,
+    }),
+  );
+  assert.match(html, /placeholder="Zoek een leverancier"/, "the box is there");
+  // The first paint has no query, so every row is drawn and the balance total is untouched.
+  assert.match(html, /CAN Vleesgroothandel/);
+  assert.match(html, /Verhuurder Jansen/);
+  assert.match(html, /1\.165,73/, "the total above the list is a total, not a filtered one");
+});

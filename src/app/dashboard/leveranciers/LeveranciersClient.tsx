@@ -33,6 +33,9 @@ import { failureText } from '@/lib/server-message'
 import SupplierEditSheet, { type SupplierEditCard, type SupplierCreateIntent } from '@/components/supplier/SupplierEditSheet'
 import { dateShort } from '@/lib/i18n/format-date'
 import { BANK_CATEGORY_KEY } from '@/lib/bank-category-text'
+// [LEVERANCIER-ZOEKEN] The SAME matcher the name picker uses (supplier-suggest.ts), so a company
+// the owner can pick on an invoice is a company they can find here — one spelling rule, not two.
+import { suggestSuppliers, SUPPLIER_BROWSE_LIMIT } from '@/lib/supplier-suggest'
 import type { BankCategory } from '@/lib/bank-categories'
 
 /** One supplier as the registry has it, plus what the screen needs to place and describe it. */
@@ -93,6 +96,13 @@ export default function LeveranciersClient({
   }
   // [LEVERANCIER-NIEUW] What the sheet should MAKE, when it is not editing.
   const [creating, setCreating] = useState<SupplierCreateIntent | null>(null)
+  // [LEVERANCIER-ZOEKEN] Filters the registry list only. The balance above it is a TOTAL and a
+  // filtered total is a wrong number, so nothing up there moves.
+  const [zoek, setZoek] = useState('')
+  const gevonden = suggestSuppliers(zoek, suppliers ?? [], SUPPLIER_BROWSE_LIMIT).matches
+  const zichtbaar = zoek.trim() === ''
+    ? (suppliers ?? [])
+    : gevonden.map((m) => (suppliers ?? []).find((s) => s.id === m.id)).filter((s): s is SupplierListCard => !!s)
   const addButton = (name: string, adoptInvoices: boolean, label: string) => (
     <button
       type="button"
@@ -364,6 +374,31 @@ export default function LeveranciersClient({
         <p style={{ fontSize: 12.5, color: M3.neutral, lineHeight: 1.55, margin: '0 0 10px' }}>
           {t('leveranciers.lijst.uitleg')}
         </p>
+        {/* [LEVERANCIER-ZOEKEN] A filter over the list below it, and nothing else: the totals
+            above are TOTALS, and a filtered total is a wrong number on a screen about money. */}
+        {suppliers !== null && suppliers.length > 0 && (
+          <>
+            <input
+              type="search"
+              value={zoek}
+              onChange={(e) => setZoek(e.target.value)}
+              placeholder={t('leveranciers.zoek')}
+              aria-label={t('leveranciers.zoek')}
+              style={{
+                width: '100%', padding: '10px 12px', marginBottom: 8, boxSizing: 'border-box',
+                border: `1px solid ${M3.outline}`, borderRadius: R.sm, fontSize: 14.5,
+                fontFamily: FONT, textAlign: 'start', background: '#fff', color: M3.onSurface,
+              }}
+            />
+            {zoek.trim() !== '' && (
+              <p style={{ fontSize: 12.5, color: M3.neutral, margin: '0 0 8px' }}>
+                {zichtbaar.length === 0
+                  ? t('leveranciers.zoek.niets', { term: zoek.trim() })
+                  : t('leveranciers.zoek.aantal', { n: zichtbaar.length, totaal: suppliers.length })}
+              </p>
+            )}
+          </>
+        )}
         {editAnswer && (
           <p style={{
             background: '#E6F4EA', border: '1px solid #B7DFC9', borderRadius: R.md,
@@ -384,7 +419,7 @@ export default function LeveranciersClient({
         {suppliers !== null && suppliers.length === 0 && (
           <p style={{ fontSize: 14, color: M3.neutral, lineHeight: 1.6, margin: 0 }}>{t('leveranciers.lijst.leeg')}</p>
         )}
-        {(suppliers ?? []).map((s) => (
+        {zichtbaar.map((s) => (
           <div key={s.id} style={{
             borderTop: `1px solid ${M3.outlineVariant}`, padding: '11px 2px',
             display: 'flex', justifyContent: 'space-between', gap: 14, alignItems: 'flex-start',
@@ -416,12 +451,15 @@ export default function LeveranciersClient({
         <SupplierEditSheet
           supplier={editing}
           create={creating ?? undefined}
+          others={(suppliers ?? []).filter((s) => s.id !== editing?.id).map((s) => ({ id: s.id, name: s.name }))}
           onClose={() => { setEditing(null); setCreating(null) }}
           onSaved={(result) => {
             setEditing(null)
             setCreating(null)
             setEditAnswer(
-              result.deleted
+              result.merged
+                ? mergeDoneText(result.mergedAwayName ?? '', result.name, locale)
+                : result.deleted
                 ? t('lev.verwijder.klaar', { naam: result.name })
                 : result.created
                 ? [
