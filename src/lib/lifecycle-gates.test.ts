@@ -30035,6 +30035,68 @@ test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, an
     "it must say the read failed, never that the accounts are unknown");
 });
 
+// ─── [NUL-GRONDSLAG] An amount that was not read is not a zero ─────────────────────────────────
+//
+// Three ingestion doors wrote `total_ex_btw: verification.total_ex_btw ?? 0` — the Number(null)
+// trap this repo warns about everywhere, at the one place it costs the most. An unread base is
+// stored as a real zero, and a real zero on a purchase invoice is a CLAIM: this bill cost nothing.
+// financial-result.ts books kosten from that field.
+//
+// Measured on the live administration before this was written: 46 incoming invoices carrying
+// € 56.262,32 of gross stood at total_ex_btw = 0 and btw_amount = 0, across eleven wholesale and
+// horeca suppliers — the mixed-rate 9 %/21 % invoices with a statiegeld line. All 46 were held by
+// the arithmetic gate, correctly, and the owner archived 45 of them.
+//
+// The fallback is the one the bank-attach door already argued for: the gross becomes the net cost,
+// nothing is claimed back. And it must not go quiet — the fallback makes the identity hold BY
+// CONSTRUCTION, so without a mark it would trade a number that lies for one that merely says
+// nothing. The mark is the [NUL-BTW-STIL] register, which also keeps the row out of auto-booking.
+test("[NUL-GRONDSLAG] no door stores an unread base as zero, and the fallback is never silent", () => {
+  const rule = code("src/lib/read-amounts.ts");
+  const doors = {
+    upload: code("src/app/api/email/upload/route.ts"),
+    intake: code("src/app/api/intake/route.ts"),
+    sync: code("src/lib/email-integration.ts"),
+  };
+
+  // ── One rule, and it never invents what it could not read.
+  assert.match(rule, /export function amountsToStore/);
+  assert.match(rule, /export function markUnexplainedZeroBtw/);
+  assert.match(rule, /import \{ zeroBtwUnexplained \} from "\.\/zero-btw"/,
+    "the zero-BTW question must be asked, not restated");
+  // The fallback is gross-as-net with nothing deducted. A derived split would put a figure in the
+  // voorbelasting column that no document supports.
+  assert.match(rule, /total_ex_btw: gross,\s*\n\s*btw_amount: 0,/);
+  assert.doesNotMatch(rule, /(0\.21|0\.09|\/ 1\.21|\/ 1\.09)/,
+    "a rate applied to a gross is a deduction no paper backs");
+  // A base that WAS read is kept exactly as read — this module repairs nothing.
+  assert.match(rule, /if \(base !== null\) \{/);
+
+  // ── Every door goes through it, and none of them keeps the old `?? 0`.
+  for (const [name, src] of Object.entries(doors)) {
+    assert.match(src, /amountsToStore\(\{/, `${name}: the door no longer decides this itself`);
+    assert.match(src, /total_ex_btw: storedAmounts\.total_ex_btw,/, `${name}: the base is the stored one`);
+    assert.match(src, /markUnexplainedZeroBtw\(/, `${name}: the fallback would land silent`);
+    assert.doesNotMatch(src, /total_ex_btw: (verification|v|classification)\.total_?[eE]x_?[bB]tw \?\? 0/,
+      `${name}: an unread base is stored as a real zero again`);
+  }
+
+  // ── The health verdict must judge the SAME figures the row will carry, or the queue and the
+  //    books disagree about one invoice. Both doors that compute a verdict pass the stored ones.
+  for (const name of ["intake", "sync"] as const) {
+    const src = doors[name];
+    const from = src.indexOf("health: {");
+    assert.ok(from > 0, `${name}: the health input was not found`);
+    const window = src.slice(from, from + 400);
+    assert.match(window, /total_ex_btw: storedAmounts\.total_ex_btw,/,
+      `${name}: the verify queue judges a different base than the row stores`);
+  }
+
+  // ── And the engine still reads cost off that field, which is why any of this matters.
+  assert.match(code("src/lib/financial-result.ts"), /const ex = inv\.total_ex_btw \?\? 0;/,
+    "if cost stops coming from total_ex_btw, this gate is arguing about the wrong field");
+});
+
 // ─── [NUL-BTW-STIL] A zero BTW that the document does not explain must not book in silence ─────
 //
 // One rule, asked in one place. `btw_amount = 0` on a vrijgestelde or verlegde factuur is the

@@ -34,6 +34,8 @@ import { escapeLikeValue } from "@/lib/sanitize";
 // dedup-sleutel niet levenslang bezet houden. Zelfde module als /api/intake gebruikt.
 import { trashedDuplicateCleared } from "@/lib/trashed-dedup";
 import { supplierBtwForInvoice } from "@/lib/vendor-identity"
+// [NUL-GRONDSLAG] What may be stored when the split was not read — see read-amounts.ts.
+import { amountsToStore, markUnexplainedZeroBtw } from "@/lib/read-amounts";
 
 export async function POST(req: NextRequest) {
   return withCrashNet(
@@ -475,6 +477,14 @@ const dup = await findSemanticDuplicate(
     btw: verification.vendor_btw ?? null,
   });
 
+  // [NUL-GRONDSLAG] What may be STORED, decided once. `?? 0` here made an amount that was never
+  // read indistinguishable from a real zero, and a zero base on a purchase invoice is a claim that
+  // the bill cost nothing — the engine reads kosten off that field.
+  const storedAmounts = amountsToStore({
+    totalExBtw: verification.total_ex_btw, btwAmount: verification.btw_amount,
+    totalIncBtw: verification.total_inc_btw, amount: verification.amount,
+  });
+
   const { data: invoice, error: dbError } = await pipeline
     .from("invoices")
     .insert({
@@ -502,9 +512,15 @@ const dup = await findSemanticDuplicate(
       // [BON-NUMMER] Leeg blijft leeg — een verzonnen documentkenmerk landt als factuurnummer in
       // het wettelijke inkoopboek terwijl het audit-spoor null zegt. Intake verwijderde dit al.
       invoice_number: verification.invoice_number || null,
-      total_ex_btw: verification.total_ex_btw ?? 0,
-      btw_amount: verification.btw_amount ?? 0,
-      total_inc_btw: verification.total_inc_btw ?? verification.amount ?? 0,
+      // [NUL-GRONDSLAG] The base was `?? 0`, which stored an amount that was NOT READ as a real
+      // zero — and a zero base on a purchase invoice is a claim that the bill cost nothing. The
+      // engine books kosten from this field. amountsToStore keeps a read split exactly as read and,
+      // when there was none, falls back to the gross as net with no BTW claimed — the same
+      // conservative rule the bank-attach door already used, so the cost is counted rather than
+      // dropped and nothing is deducted off a document we could not read.
+      total_ex_btw: storedAmounts.total_ex_btw,
+      btw_amount: storedAmounts.btw_amount,
+      total_inc_btw: storedAmounts.total_inc_btw,
       pdf_url: pdfUrl,
       document_id: documentId,
       // [PAY-SAFE-EXTRACT] vendor payment details — null when absent. Prepares
@@ -514,9 +530,18 @@ const dup = await findSemanticDuplicate(
       // [BRIDGE-EXTRACT] per-field AI confidence → the modal flags weak fields.
       // [DEDUP-SOFT] Merge the possible-duplicate signal so the verify queue shows "mogelijk
       // dubbel met X" and the invoice is held out of auto-confirm.
-      field_confidence: (dedupCheckFailed
-        ? markDuplicateCheckUnavailable(mergePossibleDuplicate(verification.field_confidence ?? null, possibleDup))
-        : mergePossibleDuplicate(verification.field_confidence ?? null, possibleDup)) as typeof verification.field_confidence,
+      // [NUL-GRONDSLAG] …and the fallback's zero BTW says so, wrapped around whatever the dedup
+      // markers left, so no existing note is dropped to make room for it.
+      field_confidence: markUnexplainedZeroBtw(
+        (dedupCheckFailed
+          ? markDuplicateCheckUnavailable(mergePossibleDuplicate(verification.field_confidence ?? null, possibleDup))
+          : mergePossibleDuplicate(verification.field_confidence ?? null, possibleDup)) as typeof verification.field_confidence,
+        storedAmounts,
+        {
+          btwRate: verification.btw_rate,
+          shifted: (verification.field_confidence as { _btw_verlegd?: unknown } | null)?._btw_verlegd != null,
+        },
+      ),
       // [DEDUP-CREDITNOTA / I3] A creditnota keeps NEGATIVE amounts (numSigned) and must be
       // TYPED as one, exactly like the email-sync and intake paths — otherwise the read-time
       // health classifier picks the positive-expecting arithmetic gate and a legitimately

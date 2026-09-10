@@ -115,6 +115,8 @@ import { amsterdamToday } from '@/lib/format-nl'
 // [ALARM] Opgevangen fouten die tóch iemand moeten bereiken — zie report-handled.ts.
 import { reportHandledFailure } from '@/lib/report-handled'
 import { supplierBtwForInvoice } from "./vendor-identity"
+// [NUL-GRONDSLAG] What may be stored when the split was not read — see read-amounts.ts.
+import { amountsToStore, markUnexplainedZeroBtw } from './read-amounts'
 type InvoiceFieldConfidence =
   Database['public']['Tables']['invoices']['Insert']['field_confidence']
 
@@ -4486,6 +4488,20 @@ export async function syncUserEmails(
       // creates a cost that never existed, with a voorbelasting claim on it.
       // [ZELF-EERST] The owner's permission comes before every quality signal, with its own reason
       // string so "waiting because you asked to see everything" never reads as "the read was weak".
+      // [NUL-GRONDSLAG] What may be STORED, decided once. `?? 0` here made an amount that was
+      // never read indistinguishable from a real zero, and a zero base on a purchase invoice is a
+      // claim that the bill cost nothing — the engine reads kosten off that field. Deciding it
+      // once is also what keeps the health verdict below about the figures the row will carry.
+      const storedAmounts = amountsToStore({
+        totalExBtw: classification.totalExBtw, btwAmount: classification.btwAmount,
+        totalIncBtw: classification.totalIncBtw, amount: classification.amount,
+      })
+      // [NUL-GRONDSLAG] …and the fallback's zero BTW says so, on the same object the insert carries.
+      fieldConfidenceValue = markUnexplainedZeroBtw(fieldConfidenceValue, storedAmounts, {
+        btwRate: classification.btwRate,
+        shifted: (fieldConfidenceValue as { _btw_verlegd?: unknown } | null)?._btw_verlegd != null,
+      })
+
       const autoAdv = !magAutoBoeken
         ? { advance: false, reason: 'owner_reviews_everything' }
         : attachment.fromBody === true
@@ -4529,9 +4545,11 @@ export async function syncUserEmails(
             // [E-FACTUUR] And the supplier's own structured figures, when the PDF carries them.
             eInvoiceContradicts: eInvoiceContradictsRead(classification.fieldConfidence),
             health: {
-              total_ex_btw: classification.totalExBtw ?? 0,
-              btw_amount: classification.btwAmount ?? 0,
-              total_inc_btw: classification.totalIncBtw ?? classification.amount ?? 0,
+              // [NUL-GRONDSLAG] The health verdict must be about the figures that will be STORED,
+              // or the queue judges one row and the books carry another.
+              total_ex_btw: storedAmounts.total_ex_btw,
+              btw_amount: storedAmounts.btw_amount,
+              total_inc_btw: storedAmounts.total_inc_btw,
               invoice_date: invoiceDate,
               invoice_number: classification.invoiceNumber ?? null,
               invoice_type: classification.isCreditNote === true ? 'creditnota' : 'factuur',
@@ -4623,9 +4641,15 @@ export async function syncUserEmails(
           // creditnota route [BOEK-031] (one sign convention in the table).
           invoice_type: classification.isCreditNote === true ? 'creditnota' : 'factuur',
           tax_kind: classification.taxKind ?? null, // [AANSLAG]
-          total_ex_btw: classification.totalExBtw ?? 0,
-          btw_amount: classification.btwAmount ?? 0,
-          total_inc_btw: classification.totalIncBtw ?? classification.amount ?? 0,
+          // [NUL-GRONDSLAG] The base was `?? 0`, which stored an amount that was NOT READ as a real
+          // zero — and a zero base on a purchase invoice is a claim that the bill cost nothing. The
+          // engine books kosten from this field. amountsToStore keeps a read split exactly as read and,
+          // when there was none, falls back to the gross as net with no BTW claimed — the same
+          // conservative rule the bank-attach door already used, so the cost is counted rather than
+          // dropped and nothing is deducted off a document we could not read.
+          total_ex_btw: storedAmounts.total_ex_btw,
+          btw_amount: storedAmounts.btw_amount,
+          total_inc_btw: storedAmounts.total_inc_btw,
           pdf_url: pdfUrl,
           document_id: documentId,
           source_message_id: dedupKey,

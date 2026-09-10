@@ -117,6 +117,8 @@ import { gateFairUse, gateFairUseForRead } from "@/lib/fair-use-gate";
 import { amsterdamToday } from "@/lib/format-nl";
 import { supplierBtwForInvoice } from "@/lib/vendor-identity"
 import { telWoord, vervoeg } from "@/lib/nl-plural";
+// [NUL-GRONDSLAG] What may be stored when the split was not read — see read-amounts.ts.
+import { amountsToStore, markUnexplainedZeroBtw } from "@/lib/read-amounts";
 type InvoiceFieldConfidence =
   Database["public"]["Tables"]["invoices"]["Insert"]["field_confidence"]
 
@@ -1318,6 +1320,18 @@ async function runIntake(req: NextRequest) {
   // bar. One flag covers both landings — the invoice that would book as 'received' and the bon
   // that would settle as paid — since both are the app acting without a tap.
   const magAutoBoeken = await autoBoekenAllowed(supabase, user.id)
+  // [NUL-GRONDSLAG] What may be STORED, decided once. `?? 0` here made an amount that was never
+  // read indistinguishable from a real zero, and a zero base on a purchase invoice is a claim that
+  // the bill cost nothing — the engine reads kosten off that field. One rule, one place, so the
+  // health verdict below and the row itself can never disagree about the same invoice.
+  const storedAmounts = amountsToStore({
+    totalExBtw: v.total_ex_btw, btwAmount: v.btw_amount, totalIncBtw: v.total_inc_btw, amount: v.amount,
+  });
+  // [NUL-GRONDSLAG] …and the fallback's zero BTW says so. Mutated on the object the insert below
+  // already carries, so there is one field_confidence for this row and not two.
+  Object.assign(fieldConfidence, markUnexplainedZeroBtw({}, storedAmounts, {
+    btwRate: v.btw_rate, shifted: (v.field_confidence as { _btw_verlegd?: unknown } | null)?._btw_verlegd != null,
+  }));
   const autoAdv = !magAutoBoeken
     ? // Its own reason string, ahead of every quality check: "waiting because you asked to see
       // everything" must never read as "the read was weak" — the audit row and the queue both
@@ -1355,9 +1369,11 @@ btwContradictsDocument: btwContradictionOf(v.field_confidence),
 // auto-booking doors must ask it: a gate on one door is not a gate.
 eInvoiceContradicts: eInvoiceContradictsRead(v.field_confidence),
           health: {
-            total_ex_btw: v.total_ex_btw ?? 0,
-            btw_amount: v.btw_amount ?? 0,
-            total_inc_btw: v.total_inc_btw ?? v.amount ?? 0,
+            // [NUL-GRONDSLAG] The health verdict must be about the figures that will be STORED,
+            // or the queue judges one row and the books carry another.
+            total_ex_btw: storedAmounts.total_ex_btw,
+            btw_amount: storedAmounts.btw_amount,
+            total_inc_btw: storedAmounts.total_inc_btw,
             invoice_date: invoiceDate,
             invoice_number: v.invoice_number ?? null,
             invoice_type: v.is_credit_note === true ? "creditnota" : "factuur",
@@ -1444,9 +1460,15 @@ eInvoiceContradicts: eInvoiceContradictsRead(v.field_confidence),
       invoice_type: v.is_credit_note === true ? "creditnota" : "factuur",
       // [AANSLAG] Which tax a Belastingdienst letter concerns; null on an ordinary invoice.
       tax_kind: v.tax_kind ?? null,
-      total_ex_btw: v.total_ex_btw ?? 0,
-      btw_amount: v.btw_amount ?? 0,
-      total_inc_btw: v.total_inc_btw ?? v.amount ?? 0,
+      // [NUL-GRONDSLAG] The base was `?? 0`, which stored an amount that was NOT READ as a real
+      // zero — and a zero base on a purchase invoice is a claim that the bill cost nothing. The
+      // engine books kosten from this field. amountsToStore keeps a read split exactly as read and,
+      // when there was none, falls back to the gross as net with no BTW claimed — the same
+      // conservative rule the bank-attach door already used, so the cost is counted rather than
+      // dropped and nothing is deducted off a document we could not read.
+      total_ex_btw: storedAmounts.total_ex_btw,
+      btw_amount: storedAmounts.btw_amount,
+      total_inc_btw: storedAmounts.total_inc_btw,
       pdf_url: pdfUrl,
       document_id: documentId,
       vendor_iban: v.vendor_iban ?? null,
