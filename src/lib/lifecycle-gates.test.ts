@@ -29849,3 +29849,46 @@ test("[EIGEN-CONTROLE-ONBEKEND] a failed own-invoice lookup is carried, never sw
   assert.match(health, /konden niet nagaan of dit je eigen verkoopfactuur is/);
   assert.match(health, /flags\.vendor = true/);
 });
+
+// ─── [BLIND-GEMATCHT] A matcher that lost a signal says so ────────────────────────────────────
+//
+// Two reads feed the bank page's suggestions and neither is load-bearing enough to fail the
+// request: the memory of what the owner already CONFIRMED, and the list of suggestions they
+// REFUSED. Both were best-effort with a console line, which is the right call for the request and
+// the wrong one for the owner:
+//
+//   · Without the memory, a counterparty they identify every month goes manual again.
+//   · Without the refusals, a suggestion they explicitly said no to comes back.
+//
+// Both make the app look like it forgot, and an app that seems to forget is one nobody teaches
+// twice. The loss now travels with the answer and the screen says which one it was — once, above
+// the list it affects, and never claiming that nothing was remembered.
+test("[BLIND-GEMATCHT] a lost match memory or refusal list reaches the owner, and is absent when nothing was lost", () => {
+  const route = code("src/app/api/bank/match/route.ts");
+  const screen = code("src/app/dashboard/bank/BankClient.tsx");
+
+  // The route records both losses rather than only logging them.
+  assert.match(route, /refusalsUnavailable = true;/);
+  assert.match(route, /memoryUnavailable = true;/);
+  // …and carries them ONLY when there is something to admit: no key on the ordinary day, so the
+  // screen has nothing to render and says nothing.
+  assert.match(route, /\.\.\.\(memoryUnavailable \|\| refusalsUnavailable\s*\?\s*\{ degraded: \{ memory: memoryUnavailable, refusals: refusalsUnavailable \} \}\s*: \{\}\),/,
+    "an admission that is always present is a banner, not an admission");
+
+  // The screen renders one sentence, chosen by which signal was lost.
+  assert.match(screen, /\{data\?\.degraded && \(/);
+  // [RUSTIG] Two losses, two sentences. A third key for "both" would say the same thing a second
+  // time — the exact duplication the ratchet exists to refuse, and it caught this one.
+  assert.match(screen, /\{data\.degraded\.memory && t\('bank\.blind\.geheugen'\)\}/);
+  assert.match(screen, /\{data\.degraded\.refusals && t\('bank\.blind\.geweigerd'\)\}/);
+  assert.doesNotMatch(screen, /bank\.blind\.beide/, "one thought, one place");
+
+  // The sentences may not claim the app forgot — only that it could not look right now.
+  const copy = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  for (const key of ["bank.blind.geheugen", "bank.blind.geweigerd"]) {
+    const line = copy.split("\n").find((l) => l.includes(`'${key}'`));
+    assert.ok(line, `${key} is missing from the catalogue`);
+    assert.match(line as string, /konden nu niet ophalen/,
+      `${key} must say the read failed, never that nothing was remembered`);
+  }
+});

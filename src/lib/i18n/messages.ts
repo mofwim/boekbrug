@@ -1225,6 +1225,10 @@ export const MESSAGES = {
   'bank.fout.algemeen': { nl: 'Er ging iets mis.', ar: 'حدث خطأ ما.', en: 'Something went wrong.' },
   'bank.fout.bevestigen': { nl: 'Bevestigen mislukt.', ar: 'فشل التأكيد.', en: 'Confirming failed.' },
   'bank.fout.bijwerken': { nl: 'Bijwerken mislukt.', ar: 'فشل التحديث.', en: 'Updating failed.' },
+  // [BLIND-GEMATCHT] Wat deze suggestielijst NIET heeft kunnen gebruiken. Nooit beweren dat er
+  // niets is onthouden — alleen dat we het nu niet konden lezen.
+  'bank.blind.geheugen': { nl: 'We konden nu niet ophalen wat je eerder bevestigde — deze suggesties zijn daardoor voorzichtiger dan normaal.', en: 'We could not fetch what you confirmed before — these suggestions are more cautious than usual.', ar: 'تعذّر جلب ما أكّدته سابقًا — لذلك هذه الاقتراحات أكثر تحفّظًا من المعتاد.' },
+  'bank.blind.geweigerd': { nl: 'We konden nu niet ophalen welke suggesties je hebt afgewezen — een afgewezen suggestie kan terugkomen.', en: 'We could not fetch which suggestions you rejected — a rejected one may come back.', ar: 'تعذّر جلب الاقتراحات التي رفضتها — قد يعود اقتراح رفضته.' },
   'bank.fout.matchen': { nl: 'Matchen mislukt.', ar: 'فشلت المطابقة.', en: 'Matching failed.' },
   'bank.fout.negeren': { nl: 'Negeren mislukt.', ar: 'فشل التجاهل.', en: 'Ignoring failed.' },
   'bank.fout.ontkoppelen': { nl: 'Ontkoppelen mislukt.', ar: 'فشل فكّ الربط.', en: 'Unlinking failed.' },

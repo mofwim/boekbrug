@@ -240,6 +240,11 @@ interface MatchResponse {
   ok: boolean
   summary: { pending: number; auto: number; choice: number; none: number }
   suggestions: Suggestion[]
+  /**
+   * [BLIND-GEMATCHT] What this answer could not use. Absent on the ordinary day; present means the
+   * suggestions below are worse than yesterday's for a reason the owner cannot otherwise see.
+   */
+  degraded?: { memory?: boolean; refusals?: boolean }
 }
 
 // [MOVE-PAYMENT] Shapes returned by GET /api/invoice/payment/move.
@@ -1914,6 +1919,22 @@ export default function BankClient() {
           Zolang de eerste lezing loopt (data === null) staat er niets. "Alles afgehandeld" boven een
           scherm dat nog aan het laden is, is precies het soort geruststelling dat later een leugen
           blijkt te zijn geweest. */}
+      {/* [BLIND-GEMATCHT] Two signals this page can lose with nothing to show for it: the memory of
+          what the owner already confirmed, and the list of suggestions they refused. Losing the
+          first makes a counterparty they identify every month go manual again; losing the second
+          brings back a suggestion they explicitly said no to. Both make the app look like it
+          forgot — and an app that seems to forget is one nobody teaches twice. So it says which
+          one it could not read, once, above the list it affects. */}
+      {data?.degraded && (
+        <p style={{ fontSize: 13, color: '#B26A00', margin: '0 0 12px', lineHeight: 1.5, textAlign: 'start' }}>
+          {/* [RUSTIG] Two losses, two sentences — and when both happened, both are shown rather
+              than a third sentence that says the same thing twice. One thought, one place. */}
+          {data.degraded.memory && t('bank.blind.geheugen')}
+          {data.degraded.memory && data.degraded.refusals && ' '}
+          {data.degraded.refusals && t('bank.blind.geweigerd')}
+        </p>
+      )}
+
       {data && (
         <p style={{ fontSize: 13.5, color: '#5F6368', margin: '0 0 18px', lineHeight: 1.5 }}>
           {/* "Nog geen transacties" hangt aan de lezing zelf, niet aan de genegeerd-lijst: die
