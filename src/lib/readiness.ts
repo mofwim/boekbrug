@@ -599,7 +599,7 @@ export function buildReadiness(s: ReadinessSignals): ReadinessReport {
       title: undatedPaid === 1
         ? "1 betaalde factuur zonder betaaldatum"
         : `${undatedPaid} betaalde facturen zonder betaaldatum`,
-      detail: `Je administratie staat op kasstelsel: de BTW telt op de betaaldatum. ${vervoeg(undatedPaid, "Deze betaalde factuur heeft", "Deze betaalde facturen hebben")} geen datum, dus de BTW kan niet in het juiste kwartaal — koppel de bankbetaling of vul de betaaldatum in.`,
+      detail: `Je administratie staat op kasstelsel: de BTW over je omzet telt op de betaaldatum. ${vervoeg(undatedPaid, "Deze betaalde factuur heeft", "Deze betaalde facturen hebben")} geen datum, dus de BTW kan niet in het juiste kwartaal — koppel de bankbetaling of vul de betaaldatum in.`,
       fix: FIX.bankQuarter(s.year, s.quarter),
     });
   }

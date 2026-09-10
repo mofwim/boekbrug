@@ -8490,9 +8490,9 @@ export const MESSAGES = {
     en: 'Your accountant',
   },
   'inst.kasstelselUitleg': {
-    nl: 'BTW telt op de betaaldatum — voor veel winkels/horeca verplicht. Ingaat vanaf het huidige kwartaal; eerdere kwartalen blijven ongewijzigd. Een betaalde factuur zonder betaaldatum blokkeert “klaar” tot je de betaling koppelt.',
-    ar: 'تُحتسب الضريبة بتاريخ الدفع — إلزامي لكثير من المتاجر والمطاعم. يسري من الربع الحالي؛ وتبقى الأرباع السابقة دون تغيير. الفاتورة المدفوعة بلا تاريخ دفع تمنع «klaar» حتى تربط الدفعة.',
-    en: 'BTW counts on the payment date — mandatory for many shops and hospitality. Takes effect from the current quarter; earlier quarters stay unchanged. A paid invoice without a payment date blocks “klaar” until you link the payment.',
+    nl: 'BTW over je omzet telt op de betaaldatum — voor veel winkels/horeca verplicht. Voorbelasting blijft op de factuurdatum. Gaat in vanaf het huidige kwartaal; eerdere kwartalen blijven ongewijzigd.',
+    ar: 'ضريبة إيرادك تُحتسب بتاريخ الدفع — إلزامي لكثير من المتاجر والمطاعم. أمّا ضريبة المشتريات فتبقى بتاريخ الفاتورة. يسري من الربع الحالي؛ وتبقى الأرباع السابقة دون تغيير.',
+    en: 'BTW on your turnover counts on the payment date — mandatory for many shops and hospitality. Input VAT stays on the invoice date. Takes effect from the current quarter; earlier quarters stay unchanged.',
   },
   // [KOR-AANGIFTE-UIT] What the switch does now: the return screen goes off, like Moneybird and Exact.
   'inst.korUitleg': {
@@ -11638,9 +11638,9 @@ export const MESSAGES = {
     en: 'The check against your card ledger could not run — differences between till and ledger are therefore not weighed in above.',
   },
   'wh.voet.kas': {
-    nl: 'Kasstelsel — op basis van betaaldatum: een onbetaalde factuur telt pas mee zodra hij betaald is.',
-    ar: 'النظام النقدي — على أساس تاريخ الدفع: الفاتورة غير المدفوعة لا تُحتسب إلا بعد دفعها.',
-    en: 'Cash scheme — based on the payment date: an unpaid invoice counts only once it is paid.',
+    nl: 'Kasstelsel — je omzet telt op de betaaldatum. De voorbelasting telt op de datum van de inkoopfactuur.',
+    ar: 'النظام النقدي — إيرادك يُحتسب بتاريخ الدفع. أمّا ضريبة المشتريات فتُحتسب بتاريخ فاتورة الشراء.',
+    en: 'Cash scheme — your turnover counts on the payment date. Input VAT counts on the purchase invoice date.',
   },
   'wh.voet.overstap': {
     nl: 'Deze periode loopt door je overstap naar het kasstelsel heen.',
