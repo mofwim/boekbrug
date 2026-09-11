@@ -30343,6 +30343,23 @@ test("[GROTE-STAP] the size is shown, the step is never blocked, and the check s
   assert.doesNotMatch(rule, /throw new Error/);
   assert.doesNotMatch(rule, /waarschuwing|Let op|zeker weten/i);
   assert.doesNotMatch(rule, /supabase|createClient|fetch\(|await /, "pure");
+
+  // ── THE DOOR, and only where one was actually missing. Four of the five actions in DREMPEL
+  //    already ask something before they act: the creditnota dialog prints the amount it is about
+  //    to hand back, the bulk undo opens a sheet naming the rows, and the waiting-payment panel
+  //    asks before it books. Ontkoppelen on /bank did not — one tap, no question, at any amount,
+  //    and what it leaves behind is a settled invoice reading as open and a balance too high,
+  //    which is the direction that gets a bill paid twice.
+  const bank = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(bank, /beoordeelStap\(\{ soort: 'betaling_ontkoppelen'/,
+    "unlink no longer asks how large the booking it is undoing was");
+  assert.match(bank, /await dialog\.confirm\(\{ message: zin/,
+    "[KASSA-DIALOOG] a money decision is not taken in the browser's own chrome");
+  // The size comes from the line, never from a constant: a hard-coded amount here would ask on
+  // every unlink or on none, which is the two failures this rule exists to avoid.
+  assert.match(bank, /unlink\(s\.transactionId, Math\.abs\(s\.amount\), \(s\.linkedInvoices \?\? \[\]\)\.length\)/);
+  // ── And it still does not block. A small unlink costs exactly one tap, as it did before.
+  assert.match(bank, /if \(zin && !\(await dialog\.confirm/);
 });
 
 // ─── [KETEN] The life of one invoice, read as a chain ─────────────────────────────────────────

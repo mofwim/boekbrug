@@ -30,6 +30,9 @@ import { categoryLabel } from '@/lib/bank-categories'
 import { BANK_IGNORE_REASONS, BANK_IGNORE_REASON_LABELS, bankIgnoreReasonLabel, ignoreReasonGroups } from '@/lib/bank-ignore-reason'
 import { rowMatchesQuery } from '@/lib/search'
 import { useDialog } from '@/components/ui/Dialog'
+// [GROTE-STAP] One extra beat, proportional to what a slip would cost — see grote-stap.ts. Undoing
+// a booking is the one destructive action on this screen that took a single tap at any amount.
+import { beoordeelStap, groteStapZin } from '@/lib/grote-stap'
 import { useToast } from '@/components/ui/Toast'
 // [OPEN-TOTAL] Eén definitie van openstaand, gedeeld met elk ander scherm.
 import { openAmount } from "@/lib/partial-payment"
@@ -493,7 +496,14 @@ export default function BankClient() {
   }, [showToast, t])
 
   // [BANK-UNLINK] Undo a confirmed match — makes auto-confirm safe (every booking reversible).
-  const unlink = useCallback(async (txId: string) => {
+  const unlink = useCallback(async (txId: string, bedrag: number, aantalFacturen: number) => {
+    // [GROTE-STAP] Ontkoppelen is not an untidy screen when it lands on the wrong row: a settled
+    // invoice becomes open again, the balance reads higher than it is, and the owner is looking at
+    // a bill they already paid. Below the threshold this still costs exactly one tap — a beat on
+    // every unlink is clicked away on all of them, including the one that mattered.
+    const oordeel = beoordeelStap({ soort: 'betaling_ontkoppelen', bedrag, aantal: aantalFacturen })
+    const zin = groteStapZin({ soort: 'betaling_ontkoppelen', bedrag }, oordeel, eur.format)
+    if (zin && !(await dialog.confirm({ message: zin, confirmLabel: t('bank.ontkoppelen') }))) return
     setProcessingId(txId)
     try {
       const res = await fetch('/api/bank/unlink', {
@@ -514,7 +524,7 @@ export default function BankClient() {
       else showToast(t('bank.fout.ontkoppelen'))
     } catch { showToast(t('bank.fout.ontkoppelen')) }
     finally { setProcessingId(null) }
-  }, [runMatch, showToast, t])
+  }, [runMatch, showToast, t, dialog])
 
   // [KAS-AUTO-BOOK] The other answer to the amber "even controleren" flag. Ontkoppelen says the
   // booking is wrong; this says it is right, and until now only the first had a button — so the
@@ -2691,7 +2701,7 @@ export default function BankClient() {
                 onReject={(invId) => rejectSuggestion(s.transactionId, invId)}
                 onUndoReject={undoReject[s.transactionId] ? () => undoRejectSuggestion(s.transactionId) : undefined}
                 isDoneTab={bankTab === 'done'}
-                onUnlink={() => unlink(s.transactionId)}
+                onUnlink={() => unlink(s.transactionId, Math.abs(s.amount), (s.linkedInvoices ?? []).length)}
                 onMove={() => openMove(s.transactionId)}
                 onMatchChecked={() => markMatchChecked(s.transactionId)}
                 onStorno={s.storno ? () => applyStorno(s.transactionId, s.storno!.originTxId) : undefined}
