@@ -4841,8 +4841,13 @@ test("[VOETTEKST-LEESBAAR] the footer is a colour a person can read", () => {
     "the name must be set like a name: its own size, weight and colour");
   assert.match(pdf, /<Text style=\{styles\.footerBrand\}>BoekBrug<\/Text>/,
     "…and actually rendered that way, not only declared");
-  assert.match(pdf, /De brug tussen jou en je boekhouder · boekbrug\.nl/,
+  // [VOETTEKST-LINK] With a SCHEME. Printed as bare text it carried none, so a reader that turns
+  // URL-looking text into a link resolved it against the folder the file sat in — the owner's own
+  // invoice, opened from the desktop, pointed at …/OneDrive/Desktop/boekbrug.nl.
+  assert.match(pdf, /De brug tussen jou en je boekhouder ·\{' '\}/,
     "…with an address the reader can act on");
+  assert.match(pdf, /<Link src="https:\/\/boekbrug\.nl" style=\{styles\.footerLink\}>boekbrug\.nl<\/Link>/,
+    "the address must be an absolute link annotation, never text a reader has to guess at");
   // And it stays a CREDIT LINE. 12pt is what "Totaal" gets; the document title is 22pt and the
   // sender's own company owns the top of the page. An invoice that shouts someone else's brand
   // reads as if that someone sent it, which would cost the owner more than the mention is worth.

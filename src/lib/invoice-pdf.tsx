@@ -23,7 +23,7 @@
 // Keep this module free of server-only imports.
 // =====================================================
 
-import { Document, Page, Text, View, StyleSheet, Image } from '@react-pdf/renderer'
+import { Document, Page, Text, View, StyleSheet, Image, Link } from '@react-pdf/renderer'
 import { formatDateNL, formatEuroNL, deriveBtwRate } from './format-nl'
 // [ICP] Art. 226 punt 11a: when the customer owes the BTW, the invoice must SAY so. Same rule
 // the ICP-opgaaf runs on, so the document and the aangifte can never disagree about this sale.
@@ -188,6 +188,18 @@ const styles = StyleSheet.create({
   // company keeps the top of the document at 22pt. An invoice that shouts someone else's brand
   // reads as if that someone sent it — which would cost the owner more than the mention is worth.
   footerBrand: { fontSize: 12, fontFamily: 'Helvetica-Bold', color: NAVY },
+
+  // [VOETTEKST-LINK] The address as a real link, and therefore absolute.
+  //
+  // It was printed as the bare text `boekbrug.nl`. A PDF reader that turns URL-looking text into a
+  // link has no scheme to work with there, so it resolves the string against the FOLDER the file
+  // is sitting in: the owner opened their invoice from the desktop and the line pointed at
+  // …/OneDrive/Desktop/boekbrug.nl. On a document that goes to a customer and is kept seven years,
+  // a link into a stranger's own file system is worse than no link at all.
+  //
+  // So the annotation is written by us, with the scheme, instead of being guessed by the reader.
+  // The visible text stays the short form — nobody needs to read "https://" off an invoice.
+  footerLink: { color: '#5f6368', textDecoration: 'none' },
 })
 
 // ─── Document title per invoice_type (title-case, matches the reference) ─────
@@ -723,7 +735,9 @@ export function InvoicePDF({
         <Text style={styles.footer} fixed>
           <Text style={styles.footerBrand}>BoekBrug</Text>
           {'\n'}
-          De brug tussen jou en je boekhouder · boekbrug.nl
+          De brug tussen jou en je boekhouder ·{' '}
+          {/* [VOETTEKST-LINK] Absolute, so no reader can resolve it against its own folder. */}
+          <Link src="https://boekbrug.nl" style={styles.footerLink}>boekbrug.nl</Link>
         </Text>
       </Page>
     </Document>
