@@ -1,0 +1,205 @@
+// src/lib/i18n/ar-decisions.ts
+// [AR-TERMEN] The settled Arabic vocabulary — what has been decided, so nobody decides it twice.
+//
+// ── WHY THIS FILE EXISTS ──
+//
+// The Arabic interface was reviewed twice by a native speaker, term by term, against what each
+// control actually DOES rather than against the Dutch word alone. Those rulings are decisions, not
+// preferences: they cost a person's afternoon each time, and a word that drifts back costs the same
+// afternoon again. A decision that lives only in a merged diff is a decision nobody can look up.
+//
+// So the vocabulary lives here, in the shape a test can read, and the gate [AR-TERMEN] holds it.
+// Anyone adding a key that reuses one of these Dutch sources gets the settled wording or a red
+// test; anyone who thinks a ruling is wrong changes it HERE, once, where the reason is written.
+//
+// ── WHAT IS NOT HERE, AND WHY ──
+//
+// Rulings that depend on the sentence around them are not mechanical and are not listed: an Arabic
+// negation particle inside an assembled sentence, a gendered adjective following a noun that
+// varies, a plural that the app already splits into two keys. Those were read one by one and left
+// as they are. Listing them here would be a rule that lies.
+//
+// [TAAL] The values are Arabic because they ARE the Arabic interface; everything around them is
+// English, as AGENTS.md asks.
+
+/**
+ * One Arabic wording per Dutch source. Reviewed in section ب of the audit: these are Dutch strings
+ * that the interface had been saying two or three different ways in Arabic.
+ *
+ * The invariant the gate enforces: every message key carrying one of these Dutch sources carries
+ * exactly the Arabic beside it. Not "one of these" — that one.
+ */
+export const AR_SETTLED: ReadonlyArray<readonly [nl: string, ar: string]> = [
+  ["1 dag te laat", "متأخرة يومًا واحدًا"],
+  ["Aantal", "الكمية"],
+  ["Al toegevoegd", "أُضيف مسبقًا"],
+  ["Artikelen", "المنتجات"],
+  ["Automatische incasso", "خصم مباشر تلقائي"],
+  ["BTW", "btw"],
+  ["Bank", "البنك"],
+  ["Bedrag excl. BTW", "المبلغ بدون btw"],
+  ["Betaling ongedaan maken?", "التراجع عن الدفعة؟"],
+  ["Bevestigd", "مؤكَّد"],
+  ["Bevestigen", "تأكيد"],
+  ["Bezig…", "جارٍ التنفيذ…"],
+  ["Boekhouder", "المحاسب"],
+  ["Bon", "إيصال"],
+  ["Btw", "الضريبة"],
+  ["Btw-tarief", "نسبة btw"],
+  ["Combineer {n} pagina's → één factuur", "ادمج {n} صفحة ← فاتورة واحدة"],
+  ["Concept BTW te betalen", "btw المبدئية للدفع"],
+  ["Concept BTW terug te ontvangen", "btw المبدئية المستردة"],
+  ["Controleren…", "جارٍ التحقق…"],
+  ["Dit is een creditnota", "هذا إشعار دائن"],
+  ["Documenten", "المستندات"],
+  ["Excl. BTW", "بدون btw"],
+  ["Excl. btw", "بدون الضريبة"],
+  ["Facturering", "الفوترة"],
+  ["Factuur {number}", "الفاتورة {number}"],
+  ["Geannuleerd", "ملغى"],
+  ["Geen facturen gevonden", "لم يُعثر على فواتير"],
+  ["Geen facturen in Q{q} {jaar}", "لا فواتير في الربع {q} {jaar}"],
+  ["Geen klant", "بدون عميل"],
+  ["Geen klanten gevonden voor “{zoekterm}”", "لا عملاء مطابقون لـ “{zoekterm}”"],
+  ["Geen verbinding", "لا يوجد اتصال"],
+  ["Gefactureerd", "مفوتر"],
+  ["Grootboek", "دفتر الأستاذ"],
+  ["Herinner", "ذكِّر"],
+  ["Ik stuur en ontvang facturen", "أنا أرسل الفواتير وأستقبلها"],
+  ["In behandeling", "قيد المعالجة"],
+  ["Incl. BTW", "شامل btw"],
+  ["Ink.", "وارد"],
+  ["Ja, markeer als betaald", "نعم، علّمها كمدفوعة"],
+  ["Jouw Bedrijf BV", "Jouw Bedrijf BV"],
+  ["Kies een klant…", "اختر عميلًا…"],
+  ["Klaar", "جاهز"],
+  ["Klant uitnodigen", "دعوة عميل"],
+  ["Klant", "العميل"],
+  ["Klanten zoeken", "البحث عن العملاء"],
+  ["Kosten (excl. BTW)", "التكاليف (بدون btw)"],
+  ["Laden...", "جارٍ التحميل…"],
+  ["Leeg laten = alles betaald ({amount})", "اتركه فارغًا = دُفع الكل ({amount})"],
+  ["Lespakket", "باقة الدروس"],
+  ["Logboek", "سجل النشاط"],
+  ["Medewerker", "الموظف"],
+  ["Mijn werkplek", "مساحة عملي"],
+  ["Naar Dagomzet", "إلى «إيراد اليوم»"],
+  ["Naar Inkoopfacturen", "إلى «فواتير المشتريات»"],
+  ["Niet gelukt", "لم ينجح"],
+  ["Niet gevonden", "لم يُعثر عليه"],
+  ["Nog geen facturen voor deze klant.", "لا توجد فواتير لهذا العميل بعد."],
+  ["Nog niet klaar", "غير جاهز بعد"],
+  ["Omzet (excl. BTW)", "الإيراد (بدون btw)"],
+  ["Omzet", "الإيراد"],
+  ["Ongedaan maken", "تراجع"],
+  ["Ontkoppelen mislukt", "فشل فكّ الربط"],
+  ["Ontkoppelen mislukt.", "فشل فكّ الربط."],
+  ["Open in Mijn bestanden", "افتح في «ملفاتي»"],
+  ["Openstaand", "مستحق"],
+  ["Openstaande facturen", "الفواتير غير المسدَّدة"],
+  ["Opnieuw", "إعادة المحاولة"],
+  ["Pagina {n}", "الصفحة {n}"],
+  ["Pin", "بطاقة"],
+  ["Plan", "الخطة"],
+  ["Privé", "خاص"],
+  ["QR naar betaalpagina", "رمز QR لصفحة الدفع"],
+  ["Selectie wissen", "مسح التحديد"],
+  ["Staat op een factuur", "مُدرَجة في فاتورة"],
+  ["Te betalen", "مستحقة الدفع"],
+  ["Te bevestigen", "بانتظار التأكيد"],
+  ["Te doen", "المهام"],
+  ["Terugdraaien", "التراجع عن العملية"],
+  ["Uitg.", "صادر"],
+  ["Verifiëren", "تحقّق"],
+  ["Versturen naar {name}?", "إرسال إلى {name}؟"],
+  ["Versturen...", "جارٍ الإرسال…"],
+  ["Verwerkt", "تمت المعالجة"],
+  ["Verwijderen", "حذف"],
+  ["Verwijderen...", "جارٍ الحذف…"],
+  ["Voldaan", "مسدَّدة"],
+  ["Voorbelasting (5b)", "الضريبة القابلة للخصم (5b)"],
+  ["Vorig jaar", "السنة السابقة"],
+  ["Vorig kwartaal", "الربع السابق"],
+  ["Wat moet er nog gebeuren", "ما الذي يجب فعله بعد"],
+  ["Wie ben jij?", "مَن أنت؟"],
+  ["Zoek klant op naam of e-mail…", "ابحث عن عميل بالاسم أو البريد الإلكتروني…"],
+  ["Zoeken…", "جارٍ البحث…"],
+  ["Zonder klant", "بدون عميل"],
+  ["factuur", "فاتورة"],
+  ["zonder nummer", "بدون رقم"],
+  ["{applied} genoteerd · nog {remaining} open", "سُجّل {applied} · لا يزال {remaining} مفتوحًا"],
+  ["{count} geselecteerd", "{count} محدَّد"],
+  ["{n} dagen te laat", "أيام التأخر: {n}"],
+  ["{n} dagen verlopen", "متأخر {n} يومًا"],
+  ["{n} facturen", "{n} فاتورة"],];
+
+/**
+ * Pairs that must stay APART. Reviewed in section أ: one Arabic word had been serving two Dutch
+ * meanings, and the ruling was that the meanings differ enough to need two words.
+ *
+ * Each carries the reason, because the next reader's instinct will be to unify them — that is
+ * exactly what produced the drift the audit found.
+ */
+export const AR_DELIBERATE_SPLITS: ReadonlyArray<{
+  readonly key: string; readonly ar: string; readonly why: string;
+}> = [
+  { key: "ss.doorsturenMislukt", ar: "فشل إعادة التوجيه",
+    why: "doorsturen is narrower than versturen: forwarding an existing message, not sending one" },
+  { key: "mfa.uitzetten", ar: "تعطيل",
+    why: "uitzetten switches a setting off; stoppen ends a running thing. Not the same act" },
+  { key: "ink.beheer", ar: "الإدارة",
+    why: "Beheer is the noun (a place you go), Beheren the verb (a thing you do) — Arabic keeps both" },
+  { key: "kassa.bon", ar: "إيصال",
+    why: "a bon is a receipt, never an invoice; conflating them would mislabel what the owner scanned" },
+  { key: "mfa.apparaatVerwijderen", ar: "حذف",
+    why: "verwijderen deletes the record; weghalen only takes something out of a context (إزالة)" },
+  { key: "oneind.leeg", ar: "لم يُعثر على فواتير",
+    why: "a search that found nothing is not the same as having no invoices at all (لا توجد فواتير)" },
+  { key: "ink.leeg", ar: "لم يُعثر على فواتير", why: "same Dutch as oneind.leeg, so the same wording" },
+  { key: "wh.sub.verschuldigd", ar: "مستحق الدفع",
+    why: "verschuldigd is owed and payable; openstaand is merely outstanding (المستحق)" },
+  { key: "jaar.kanttekeningen.titel", ar: "ملاحظات جانبية",
+    why: "kanttekeningen are marginal remarks or reservations, not the plain notities of a client card" },
+  { key: "bank.inlezen", ar: "جارٍ الاستيراد…",
+    why: "inlezen imports a file into the books; lezen only reads one (جارٍ القراءة…)" },
+  { key: "bank.rematch.geboekt", ar: "دفعات رُبطت تلقائياً.",
+    why: "plural; the singular sibling keeps دفعة, because Arabic agrees with number and the app has both keys" },
+  { key: "cat.teDoen", ar: "معاملات متبقية",
+    why: "plural; cat.teDoenEen is the singular, for the same reason" },
+  { key: "beh.gezond.nooitGedraaid", ar: "لم يُشغَّل قط",
+    why: "nooit gedraaid is about a job that never RAN; nog nooit is a plain never" },
+];
+
+/**
+ * Words retired by the review, with what replaced them. Whole labels, matched exactly: «إعادة»
+ * alone is retired while «إعادة الإرسال» and «إعادة المحاولة» are the words that replaced others.
+ */
+export const AR_RETIRED: Readonly<Record<string, string>> = {
+  "مرة أخرى": "إنشاء نسخة",
+  "تكرار": "جدولة الفاتورة",
+  "اعرض الفاتورة": "عرض الفاتورة",
+  "أعد المحاولة": "إعادة المحاولة",
+  "حاول مرة أخرى": "إعادة المحاولة",
+  "إعادة": "إعادة المحاولة أو إعادة الإرسال، حسب السياق",
+  "فصل": "إلغاء الربط",
+  "فكّ الربط": "إلغاء الربط",
+  "تثبيت": "حفظ، أو إقفال اليوم",
+  "قيّد": "تسجيل",
+  "جارٍ العمل…": "جارٍ التنفيذ…",
+  "أظهر": "إظهار",
+  "اعرض": "عرض",
+  "أكّد": "تأكيد",
+  "ألغِ": "إلغاء",
+  "احذف": "حذف",
+  "زَامن": "مزامنة",
+  "زامن": "مزامنة",
+};
+
+/** Dutch forms retired in favour of one form per action, so the source cannot re-teach a split. */
+export const NL_RETIRED: Readonly<Record<string, string>> = {
+  Ververs: "Vernieuwen", Stuur: "Versturen", "Opnieuw sturen": "Opnieuw versturen",
+  "Bekijk factuur": "Factuur bekijken", "Bekijk de factuur": "Factuur bekijken",
+  Sluit: "Sluiten", Pauzeer: "Pauzeren", Hervat: "Hervatten", Negeer: "Negeren",
+  Bekijk: "Bekijken", Verwijder: "Verwijderen", Annuleer: "Annuleren", Toon: "Tonen",
+  Selecteer: "Selecteren",
+};

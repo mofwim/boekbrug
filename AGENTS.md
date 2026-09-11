@@ -145,6 +145,27 @@ the same bug is invisible against an empty list, because `[].filter(cb)` never c
 
 When you add a screen to this line, add it there.
 
+# The Arabic vocabulary is decided, and the decisions are written down
+
+A native speaker reviewed the Arabic interface twice — every word on a button, then every heading,
+label, hint, error and explanation — against what each control DOES, not against the Dutch word
+alone. Two things came out of it, and both live in `src/lib/i18n/ar-decisions.ts`:
+
+- **one Arabic wording per Dutch source**, for the strings the interface had been saying two or
+  three ways;
+- **the splits that must stay split**, where one Arabic word had been serving two Dutch meanings —
+  a `bon` is a receipt and never an invoice, `doorsturen` is forwarding and not sending, `uitzetten`
+  disables a setting while `stoppen` ends a run. Each carries its reason, because the next reader's
+  instinct is to unify them, and that instinct is what produced the drift the audit found.
+
+`[AR-TERMEN]` holds both, plus the retired forms in either language. So: **do not re-decide a word
+that is in that file.** If you believe a ruling is wrong, change it there, once, where the reason
+is written — not in `messages.ts`, where the next person cannot see that anyone decided anything.
+
+And `[KNOP-IN-ZIN]`: a sentence that names a button names what the button currently says. That
+broke three times — twice from a rename, once from a button that was removed while the sentence
+telling people to press it stayed, in all three languages.
+
 # A lifecycle gate must not mark its own bounds with a comment
 
 Many gates in `src/lib/lifecycle-gates.test.ts` read a file through `code()` and then cut a window
