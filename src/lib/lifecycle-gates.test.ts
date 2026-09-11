@@ -30383,7 +30383,28 @@ test("[KETEN] the chain is derived from the documents, and claims no link it can
   assert.match(rule, /const vervanger = alle\.find\(/);
   assert.match(rule, /if \(vervanger\) keten\.push/);
   // ── An invoice never replaces itself.
-  assert.match(rule, /&& d\.id !== doc\.id\);/);
+  assert.match(rule, /&& d\.id !== origineel\.id\);/);
+
+  // ── The chain is the same chain from EITHER end. Handed a creditnota, the first build made it
+  //    the "origineel" of a one-link chain — the one thing a creditnota certainly is not, since it
+  //    exists only because another document does.
+  assert.match(rule, /const origineel = isCreditnota\(doc\)/);
+  assert.match(rule, /export function origineelVan/);
+  // ── And an original it cannot see is still not invented: the head is simply absent.
+  assert.match(rule, /if \(origineel\) keten\.push\(schakel\("origineel", origineel\)\);/);
+
+  // ── THE DOOR. The creditnota's own screen never said which invoice it corrects. The reference
+  //    WAS written — into the PDF, because art. 219 Richtlijn 2006/112/EG only equates a corrective
+  //    document with an invoice when it refers specifically and unambiguously to the initial one —
+  //    and the person holding the screen was the only one who could not see it.
+  const detail = code("src/app/dashboard/invoice/[id]/page.tsx");
+  assert.match(detail, /origineelVan\(factuurketen\(/, "the creditnota screen does not read its chain");
+  assert.match(detail, /detail\.creditHoortBij/, "and does not say which invoice it belongs to");
+  // A creditnota against an invoice issued outside this app has no row to point at, so the link is
+  // offered only when the original was actually loaded — never a button that leads nowhere.
+  assert.match(detail, /\{gecorrigeerdeFactuur && \(/);
+  // [TAAL] The words come from messages.ts; the module holds the structure and no sentence.
+  assert.doesNotMatch(rule, /Deze creditnota hoort bij/);
   // ── Only a creditnota credits.
   assert.match(rule, /String\(d\.invoice_type \?\? ""\) === "creditnota"/);
   // ── An unreadable total travels as null: a zero here would be an invented amount.

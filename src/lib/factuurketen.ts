@@ -66,26 +66,51 @@ export function factuurketen(doc: KetenDocument, alle: readonly KetenDocument[])
     datum: d.invoice_date,
     bedrag: typeof d.total_inc_btw === "number" && Number.isFinite(d.total_inc_btw) ? d.total_inc_btw : null,
   });
+  const isCreditnota = (d: KetenDocument) => String(d.invoice_type ?? "") === "creditnota";
 
-  const keten: Schakel[] = [schakel("origineel", doc)];
+  // The chain is the same chain from either end, so the head is the document that was CORRECTED —
+  // never simply the one being looked at. Handed a creditnota, the first build called it the
+  // "origineel" of a one-link chain, which is the one thing it certainly is not: a creditnota
+  // exists only because another document does, and its screen is precisely where that other
+  // document's number belongs (art. 219 Richtlijn 2006/112/EG asks the corrective document to
+  // refer to the initial one; the PDF already did, the screen did not).
+  const origineel = isCreditnota(doc)
+    ? (doc.original_invoice_id ? alle.find((d) => d.id === doc.original_invoice_id) ?? null : null)
+    : doc;
 
-  // The creditnota that names this invoice. One at most — creditnota_one_per_original holds that
-  // in the database, so finding a second here would be a database fault, not a case to merge.
-  const credit = alle.find(
-    (d) => d.original_invoice_id === doc.id && String(d.invoice_type ?? "") === "creditnota",
-  );
+  const keten: Schakel[] = [];
+  if (origineel) keten.push(schakel("origineel", origineel));
+
+  // The creditnota that names the head. One at most — creditnota_one_per_original holds that in
+  // the database, so finding a second here would be a database fault, not a case to merge.
+  const credit = isCreditnota(doc)
+    ? doc
+    : origineel
+      ? alle.find((d) => d.original_invoice_id === origineel.id && isCreditnota(d))
+      : undefined;
   if (credit) keten.push(schakel("creditnota", credit));
 
-  // The replacement, found by the NUMBER the original carries. A number and not an id, because
-  // that is what the column holds — and because a replacement may have been issued before this
-  // app ever saw the original.
-  const vervangerNr = doc.superseded_by_number?.trim();
-  if (vervangerNr) {
-    const vervanger = alle.find((d) => (d.invoice_number ?? "").trim() === vervangerNr && d.id !== doc.id);
+  // The replacement, found by the NUMBER the head carries. A number and not an id, because that is
+  // what the column holds — and because a replacement may have been issued before this app ever
+  // saw the original.
+  const vervangerNr = origineel?.superseded_by_number?.trim();
+  if (origineel && vervangerNr) {
+    const vervanger = alle.find((d) => (d.invoice_number ?? "").trim() === vervangerNr && d.id !== origineel.id);
     if (vervanger) keten.push(schakel("vervanger", vervanger));
   }
 
   return keten;
+}
+
+/**
+ * Seen from the creditnota: the invoice it corrects, or null when the chain does not carry one.
+ *
+ * Null is a real answer and not a failure — a standalone creditnota against an invoice issued
+ * outside this app has no row to point at, and the screen says so with the number the owner typed
+ * rather than claiming a link that does not exist.
+ */
+export function origineelVan(keten: readonly Schakel[]): Schakel | null {
+  return keten.find((s) => s.soort === "origineel") ?? null;
 }
 
 /** True when anything happened to this invoice after it was issued. */

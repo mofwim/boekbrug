@@ -2444,6 +2444,18 @@ export const MESSAGES = {
   },
   // [CORRECTIE-TIJDVAK] Shown when the app could not read WHICH quarters are filed. Translated,
   // unlike the notice itself: this sentence is about the app failing, not about the aangifte.
+  // [KETEN] On a CREDITNOTA's own screen: which invoice it corrects. Two keys and not one with an
+  // empty {date} — "bij factuur CR-101 van ." is a sentence no language repairs.
+  'detail.creditHoortBij': {
+    nl: 'Deze creditnota hoort bij factuur {number} van {date}',
+    ar: 'هذا الإشعار الدائن يخصّ الفاتورة {number} بتاريخ {date}',
+    en: 'This credit note belongs to invoice {number} of {date}',
+  },
+  'detail.creditHoortBijZonderDatum': {
+    nl: 'Deze creditnota hoort bij factuur {number}',
+    ar: 'هذا الإشعار الدائن يخصّ الفاتورة {number}',
+    en: 'This credit note belongs to invoice {number}',
+  },
   'corr.tijdvakNietGelezen': {
     nl: 'We konden niet nagaan of het btw-tijdvak van deze factuur al is ingediend.',
     ar: 'تعذّر علينا التحقّق مما إذا كانت فترة ضريبة المبيعات (btw) لهذه الفاتورة قد قُدِّمت بالفعل.',

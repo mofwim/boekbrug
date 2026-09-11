@@ -1,7 +1,7 @@
 // src/lib/factuurketen.test.ts — run: npx tsx --test src/lib/factuurketen.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { factuurketen, isGecorrigeerd, ketenZin, type KetenDocument } from "./factuurketen";
+import { factuurketen, isGecorrigeerd, ketenZin, origineelVan, type KetenDocument } from "./factuurketen";
 
 const inv: KetenDocument = {
   id: "a", invoice_number: "INV-100", invoice_type: "factuur",
@@ -73,4 +73,33 @@ test("the chain says what the documents ARE, never what the money means", () => 
   const met = { ...inv, superseded_by_number: "INV-102" };
   const zin = String(ketenZin(factuurketen(met, [met, credit, vervanger])));
   assert.doesNotMatch(zin, /betaald|openstaand|verschuldigd|te laat/);
+});
+
+// ── The chain read from the CREDITNOTA's end ────────────────────────────────────────────────
+
+test("handed the creditnota, the chain still starts at the invoice it corrects", () => {
+  // It used to call the creditnota the 'origineel' of a one-link chain — the one thing a
+  // creditnota certainly is not.
+  const k = factuurketen(credit, [inv, credit]);
+  assert.deepEqual(k.map((s) => s.soort), ["origineel", "creditnota"]);
+  assert.equal(origineelVan(k)?.nummer, "INV-100");
+});
+
+test("a creditnota whose original is not loaded claims no original", () => {
+  const k = factuurketen(credit, [credit]);
+  assert.deepEqual(k.map((s) => s.soort), ["creditnota"]);
+  assert.equal(origineelVan(k), null, "an original we cannot see is never invented");
+});
+
+test("a creditnota against an invoice issued elsewhere has no row to point at", () => {
+  const los = { ...credit, original_invoice_id: null };
+  const k = factuurketen(los, [los]);
+  assert.deepEqual(k.map((s) => s.soort), ["creditnota"]);
+  assert.equal(origineelVan(k), null);
+});
+
+test("from the creditnota's end the replacement of the ORIGINAL is still seen", () => {
+  const met = { ...inv, superseded_by_number: "INV-102" };
+  const k = factuurketen(credit, [met, credit, vervanger]);
+  assert.deepEqual(k.map((s) => s.soort), ["origineel", "creditnota", "vervanger"]);
 });
