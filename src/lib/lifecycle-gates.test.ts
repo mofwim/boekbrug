@@ -7221,6 +7221,140 @@ test("[TAAL] every message key is real, and every message is used", () => {
   assert.deepEqual(orphans, [], `in the catalogue but never rendered:\n  ${orphans.join("\n  ")}`);
 });
 
+// ─── [KNOP-IN-ZIN] A sentence that names a button names what the button says ──────────────────
+//
+// AGENTS.md states the rule for translation: "a sentence that points at a button names the button
+// as it is written". It is not only a translation rule — it breaks in Dutch too, and it breaks
+// silently. Three sentences were found pointing at words that are nowhere on the screen:
+//
+//   · vandaag.terugbetalenUitleg still said «سُدّدت!» after the sales list's button was renamed;
+//   · onb.slaOverLater said «تخطَّ» where the button says «تخطّي»;
+//   · nieuw.banner.offerteUitleg sent the owner to "Omzetten naar factuur" — a button RETIRED
+//     three weeks earlier, in all three languages at once. The screen no longer had it, and the
+//     sentence had gone on pointing at it, in Dutch as well as in Arabic.
+//
+// A scan over «…» quotes finds candidates but cannot tell a button from a quoted phrase, so the
+// pairs are named here. Each is cheap, and each one that exists is a rename that cannot go quiet.
+test("[KNOP-IN-ZIN] every sentence that quotes a button quotes the living text", () => {
+  const M = MESSAGES as Record<string, Record<string, string>>;
+  // [sentence, button, does the sentence quote the button IN FULL, or a fragment of it?]
+  const PAREN: Array<[string, string, "volledig" | "deel"]> = [
+    ["vandaag.terugbetalenUitleg", "lijst.voldaanActie", "volledig"],
+    ["onb.slaOverLater", "onb.slaOver", "volledig"],
+    ["nieuw.banner.offerteUitleg", "lijst.maak", "volledig"],
+    // The e-mail hint quotes the long link's own words, which is how the Dutch does it too.
+    ["ink.email.nietTussen", "ink.email.ouderOphalen", "deel"],
+  ];
+  const fouten: string[] = [];
+  for (const [zinKey, knopKey, hoe] of PAREN) {
+    const zin = M[zinKey], knop = M[knopKey];
+    if (!zin || !knop) { fouten.push(`${zinKey} or ${knopKey} no longer exists`); continue; }
+    for (const taal of ["nl", "ar", "en"]) {
+      const z = (zin[taal] ?? "").trim(), k = (knop[taal] ?? "").trim();
+      if (!z || !k) continue; // a language that falls back to Dutch quotes the Dutch, correctly
+      if (hoe === "volledig") {
+        // The button's text, minus a trailing "!" the sentence need not carry.
+        const naakt = k.replace(/[!]$/, "");
+        if (!z.includes(naakt)) fouten.push(`${zinKey} [${taal}] does not name «${k}» — it says: ${z}`);
+      } else {
+        // The fragment the sentence quotes must still be part of what the control says.
+        const geciteerd = /[«“"]([^»”"]{3,60})[»”"]/.exec(z)?.[1]?.trim();
+        if (!geciteerd) { fouten.push(`${zinKey} [${taal}] quotes nothing any more`); continue; }
+        if (!k.includes(geciteerd)) fouten.push(`${zinKey} [${taal}] quotes «${geciteerd}», which is not in «${k}»`);
+      }
+    }
+  }
+  assert.deepEqual(fouten, [], "a sentence points at a word that is not on the screen:\n  " + fouten.join("\n  "));
+});
+
+// ─── [AR-TERMEN] One Arabic word per action, and the retired forms stay retired ────────────────
+//
+// The Arabic labels were reviewed term by term against what each BUTTON actually does, not word by
+// word against the Dutch. That review made two kinds of decision, and both are lost the moment
+// someone adds a key without knowing they were made:
+//
+//   1. One word per action. "عرض" for viewing, "إظهار" for revealing a panel, "حذف" for deleting a
+//      record, "إزالة" for taking something out of a context, "تسجيل" for booking. The screens used
+//      to carry two or three words for each of those, inherited from a Dutch source that was itself
+//      inconsistent (Sluit/Sluiten, Pauzeer/Pauzeren, Bekijk factuur/Factuur bekijken).
+//   2. A label is a NOUN, not a command. "إنشاء نسخة", not "أنشئ نسخة"; the imperative reads as the
+//      app ordering the owner about, and it was exactly the register that made "مرة أخرى" and
+//      "تكرار" unreadable as the names of two different features.
+//
+// Both are checked on the VALUE, never on the key, because a key name is a developer's word and
+// these are the owner's.
+test("[AR-TERMEN] the retired Arabic forms cannot come back", () => {
+  // Whole labels that were replaced. Matched exactly: "إعادة" alone is retired, while
+  // "إعادة الإرسال" and "إعادة المحاولة" are the words that replaced other things.
+  const RETIRED: Record<string, string> = {
+    "مرة أخرى": "إنشاء نسخة",
+    "تكرار": "جدولة الفاتورة",
+    "اعرض الفاتورة": "عرض الفاتورة",
+    "أعد المحاولة": "إعادة المحاولة",
+    "حاول مرة أخرى": "إعادة المحاولة",
+    "إعادة": "إعادة المحاولة أو إعادة الإرسال، حسب السياق",
+    "فصل": "إلغاء الربط",
+    "فكّ الربط": "إلغاء الربط",
+    "تثبيت": "حفظ، أو إقفال اليوم",
+    "قيّد": "تسجيل",
+    "جارٍ العمل…": "جارٍ التنفيذ…",
+    "أظهر": "إظهار",
+    "اعرض": "عرض",
+    "أكّد": "تأكيد",
+    "ألغِ": "إلغاء",
+    "احذف": "حذف",
+    "زَامن": "مزامنة",
+    "زامن": "مزامنة",
+  };
+  // The imperative openings. A label that BEGINS with one of these is a command, and the review
+  // settled that labels are nouns.
+  const IMPERATIVE = ["أظهر", "اعرض", "أكّد", "ألغِ", "احذف", "زامن", "زَامن", "أعد", "فكّ", "قيّد", "ثبّت"];
+
+  const fouten: string[] = [];
+  for (const [key, message] of Object.entries(MESSAGES as Record<string, Record<string, string>>)) {
+    const ar = (message.ar ?? "").trim();
+    if (!ar) continue;
+    if (RETIRED[ar]) { fouten.push(`${key}: «${ar}» is retired — use «${RETIRED[ar]}»`); continue; }
+    // Two registers this rule does not reach, and both are deliberate:
+    //   · the audit trail (log.*) narrates what SOMEONE DID, in the past tense — "أكّد محاسبك
+    //     فاتورة" is a sentence about the accountant, not a button ordering anyone about;
+    //   · anything ending in sentence punctuation is prose, where an Arabic imperative is the
+    //     correct register ("أعد المحاولة بعد قليل.").
+    if (key.startsWith("log.")) continue;
+    if (/[.!؟]$/.test(ar)) continue;
+    if (ar.split(/\s+/).length > 4) continue; // a sentence, not a label
+    const opener = IMPERATIVE.find((w) => ar.startsWith(w + " "));
+    if (opener) fouten.push(`${key}: «${ar}» opens with the imperative «${opener}» — a label is a noun`);
+  }
+  assert.deepEqual(fouten, [], "the reviewed Arabic vocabulary has drifted:\n  " + fouten.join("\n  "));
+});
+
+test("[AR-TERMEN] the Dutch source keeps one form per action too", () => {
+  // The drift the extraction found started HERE: a source that says both "Sluit" and "Sluiten"
+  // hands the translator two words for one action, and the Arabic inherited the split. Unified in
+  // the same batch, so the next translation cannot re-learn the inconsistency.
+  const RETIRED: Record<string, string> = {
+    "Ververs": "Vernieuwen", "Stuur": "Versturen", "Opnieuw sturen": "Opnieuw versturen",
+    "Bekijk factuur": "Factuur bekijken", "Bekijk de factuur": "Factuur bekijken",
+    "Sluit": "Sluiten", "Pauzeer": "Pauzeren", "Hervat": "Hervatten", "Negeer": "Negeren",
+    "Bekijk": "Bekijken", "Verwijder": "Verwijderen", "Annuleer": "Annuleren", "Toon": "Tonen",
+    "Selecteer": "Selecteren",
+  };
+  const fouten: string[] = [];
+  for (const [key, message] of Object.entries(MESSAGES as Record<string, Record<string, string>>)) {
+    const nl = (message.nl ?? "").trim();
+    if (RETIRED[nl]) fouten.push(`${key}: «${nl}» → «${RETIRED[nl]}»`);
+  }
+  assert.deepEqual(fouten, [], "a second Dutch word for an action that already has one:\n  " + fouten.join("\n  "));
+
+  // NOT unified, and that is the point of naming it: `Open` on the work filter is the STATE of a
+  // job ("open" beside "Alles"), not a button that opens something. `Bijwerken` and `Vernieuwen`
+  // are two different acts — updating data and reloading a view — and the reviewer warned against
+  // collapsing them in the source even where Arabic may use one word for both.
+  assert.equal((MESSAGES as Record<string, Record<string, string>>)["werk.filter.open"].nl, "Open",
+    "the work filter's Open is an adjective; turning it into Openen makes a verb of a state");
+});
+
 test("[TAAL] no copy carries an HTML entity, because React paints it as one", () => {
   // The button on Inkomend read `Factuur met meerdere pagina&apos;s` — the entity itself, on
   // screen, in front of the owner.
