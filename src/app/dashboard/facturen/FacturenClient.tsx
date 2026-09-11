@@ -1895,7 +1895,7 @@ export default function FacturenClient({
                     <div style={{ background: '#F8F9FA', borderTop: `1px solid ${M3.surfaceVariant}`, padding: '16px' }}>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 20px', marginBottom: 16 }}>
                         <InfoLine label={t('lijst.aan')} value={inv.client_name} />
-                        {(inv as InvoiceRow & { client_btw_number?: string | null }).client_btw_number && <InfoLine label={t('lijst.btw')} value={(inv as InvoiceRow & { client_btw_number?: string | null }).client_btw_number ?? null} />}
+                        {(inv as InvoiceRow & { client_btw_number?: string | null }).client_btw_number && <InfoLine label={t('lijst.btwNummer')} value={(inv as InvoiceRow & { client_btw_number?: string | null }).client_btw_number ?? null} />}
                         <InfoLine label={t('lijst.exclBtw')} value={fmtEur(totalExBtw)} mono />
                         <InfoLine label={((r) => r == null ? t('lijst.btw') : t('lijst.btwPct', { pct: r }))(calcBtw(btwAmount, totalExBtw))} value={fmtEur(btwAmount)} mono />
                         <InfoLine label={t('lijst.inclBtw')} value={fmtEur(inv.total_inc_btw)} mono />
