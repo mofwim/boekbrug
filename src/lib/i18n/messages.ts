@@ -50,11 +50,11 @@ export const MESSAGES = {
   // "Ontvangen" describes the document, "Te betalen" describes what the owner has to do about it.
   // The second is the useful one on a screen full of incoming bills, and it matches the amber chip
   // — see the note in invoice-status.ts about why an unpaid bill may not look settled.
-  'status.received': { nl: 'Te betalen', ar: 'مستحقة للدفع', en: 'To pay' },
+  'status.received': { nl: 'Te betalen', ar: 'مستحقة الدفع', en: 'To pay' },
   // 'Te verifiëren' over 'In behandeling': it names what is actually waiting — a human still has
   // to check this reading — where "in behandeling" could mean anything is happening.
   'status.processing': { nl: 'Te verifiëren', ar: 'بانتظار التدقيق', en: 'To verify' },
-  'status.processed': { nl: 'Verwerkt', ar: 'مُعالَجة', en: 'Processed' },
+  'status.processed': { nl: 'Verwerkt', ar: 'تمت المعالجة', en: 'Processed' },
   'status.unclear': { nl: 'Onduidelijk', ar: 'غير واضحة', en: 'Unclear' },
   'status.credit': { nl: 'Creditnota', ar: 'إشعار دائن', en: 'Credit note' },
 
@@ -91,7 +91,7 @@ export const MESSAGES = {
   'chrome.uploaden': { nl: 'Uploaden', ar: 'رفع ملف', en: 'Upload' },
   'chrome.artikelen': { nl: 'Artikelen', ar: 'المنتجات', en: 'Items' },
   'chrome.jaaroverzicht': { nl: 'Jaaroverzicht', ar: 'ملخّص السنة', en: 'Year overview' },
-  'chrome.grootboek': { nl: 'Grootboek', ar: 'دفتر الأستاذ (Grootboek)', en: 'Grootboek' },
+  'chrome.grootboek': { nl: 'Grootboek', ar: 'دفتر الأستاذ', en: 'Grootboek' },
   // [DEUR] Kassa, Voertuigen, Team en Uren staan óók in deze balk — maar met hun eigen
   // schermtitel (kassa.titel, vtg.titel, team.titel, uren.titel) en niet met een tweede
   // chrome.*-sleutel ernaast. Eén scherm, één naam: twee sleutels met hetzelfde woord erin is
@@ -107,7 +107,7 @@ export const MESSAGES = {
   'chrome.bank': { nl: 'Bank', ar: 'البنك', en: 'Bank' },
   'chrome.categoriseren': { nl: 'Wat is dit?', ar: 'ما هذا؟', en: 'What is this?' },
   'chrome.instellingen': { nl: 'Instellingen', ar: 'الإعدادات', en: 'Settings' },
-  'chrome.facturering': { nl: 'Facturering', ar: 'إعداد الفواتير', en: 'Invoicing' },
+  'chrome.facturering': { nl: 'Facturering', ar: 'الفوترة', en: 'Invoicing' },
   'chrome.berichten': { nl: 'Berichten', ar: 'الرسائل', en: 'Messages' },
   'chrome.werkplek': { nl: 'Mijn werkplek', ar: 'مساحة عملي', en: 'My workspace' },
   'chrome.klantenBeheren': { nl: 'Klanten beheren', ar: 'إدارة العملاء', en: 'Manage clients' },
@@ -116,7 +116,7 @@ export const MESSAGES = {
   'chrome.factuurNamens': { nl: 'Factuur namens klant', ar: 'فاتورة نيابةً عن عميل', en: 'Invoice on behalf of a client' },
   'chrome.openstaand': { nl: 'Openstaande facturen', ar: 'الفواتير غير المسدَّدة', en: 'Outstanding invoices' },
   'chrome.opvragen': { nl: 'Stukken opvragen', ar: 'طلب المستندات', en: 'Request documents' },
-  'chrome.bevestigen': { nl: 'Bevestigen', ar: 'التأكيد', en: 'Confirm' },
+  'chrome.bevestigen': { nl: 'Bevestigen', ar: 'تأكيد', en: 'Confirm' },
   // "Mijn", omdat de boekhouder hiernaast ook de facturen van zijn KLANTEN ziet.
   'chrome.mijnFacturen': { nl: 'Mijn facturen', ar: 'فواتيري', en: 'My invoices' },
   'chrome.mijnKlanten': { nl: 'Mijn klanten', ar: 'عملائي', en: 'My clients' },
@@ -131,7 +131,7 @@ export const MESSAGES = {
   'chrome.nieuweFactuur': { nl: 'Nieuwe factuur', ar: 'فاتورة جديدة', en: 'New invoice' },
   'chrome.factuurBewerken': { nl: 'Factuur bewerken', ar: 'تعديل الفاتورة', en: 'Edit invoice' },
   'chrome.factuur': { nl: 'Factuur', ar: 'فاتورة', en: 'Invoice' },
-  'chrome.klant': { nl: 'Klant', ar: 'عميل', en: 'Client' },
+  'chrome.klant': { nl: 'Klant', ar: 'العميل', en: 'Client' },
   'chrome.gesprek': { nl: 'Gesprek', ar: 'محادثة', en: 'Conversation' },
   'chrome.kwartaal': { nl: 'Kwartaal', ar: 'الربع', en: 'Quarter' },
 
@@ -248,7 +248,7 @@ export const MESSAGES = {
   'nieuw.offerte.naarDetail': { nl: 'Naar de offerte', ar: 'إلى عرض السعر', en: 'To the quote' },
   'nieuw.actie.concept': { nl: 'Opslaan als concept', ar: 'حفظ كمسودة', en: 'Save as draft' },
   'nieuw.actie.bezig': { nl: 'Bezig...', ar: 'جارٍ التنفيذ…', en: 'Working...' },
-  'nieuw.actie.laden': { nl: 'Laden...', ar: 'جارٍ التحميل...', en: 'Loading...' },
+  'nieuw.actie.laden': { nl: 'Laden...', ar: 'جارٍ التحميل…', en: 'Loading...' },
   'nieuw.actie.versturenBezig': { nl: 'Versturen...', ar: 'جارٍ الإرسال…', en: 'Sending...' },
   'nieuw.actie.annuleren': { nl: 'Annuleren', ar: 'إلغاء', en: 'Cancel' },
   // [PDF-VOORBEELD] Het document zien vóór het onomkeerbaar is. "Bekijk" en niet "Download": de
@@ -371,7 +371,7 @@ export const MESSAGES = {
   'lijst.betaaldatum': { nl: 'Betaaldatum', ar: 'تاريخ الدفع', en: 'Payment date' },
   'lijst.vervaldatum': { nl: 'Vervaldatum', ar: 'تاريخ الاستحقاق', en: 'Due date' },
   'lijst.contant': { nl: 'Contant', ar: 'نقداً', en: 'Cash' },
-  'lijst.bank': { nl: 'Bank', ar: 'بنك', en: 'Bank' },
+  'lijst.bank': { nl: 'Bank', ar: 'البنك', en: 'Bank' },
   'lijst.gecrediteerd': { nl: 'Gecrediteerd', ar: 'صدر بها إشعار دائن', en: 'Credited' },
   'lijst.teruggezet': { nl: 'Teruggezet', ar: 'أُعيدت', en: 'Reverted' },
   'lijst.verwijderd': { nl: 'Verwijderd', ar: 'حُذفت', en: 'Deleted' },
@@ -422,7 +422,7 @@ export const MESSAGES = {
   'lijst.onbekendeKlant': { nl: 'Onbekende klant', ar: 'عميل غير معروف', en: 'Unknown client' },
   // "Voldaan!" is de KNOP (zet op betaald), "✓ Voldaan" de TOESTAND. Twee sleutels, want in het
   // Arabisch is een gebiedende wijs een ander woord dan een voltooid deelwoord.
-  'lijst.voldaan': { nl: 'Voldaan', ar: 'مدفوعة', en: 'Settled' },
+  'lijst.voldaan': { nl: 'Voldaan', ar: 'مسدَّدة', en: 'Settled' },
   'lijst.voldaanActie': { nl: 'Voldaan!', ar: 'مسددة', en: 'Settled!' },
   'lijst.fout.nietGevonden': { nl: 'Factuur niet gevonden', ar: 'لم يُعثر على الفاتورة', en: 'Invoice not found' },
   'lijst.fout.klantEmail': { nl: 'Klant e-mail ontbreekt', ar: 'بريد العميل الإلكتروني ناقص', en: "The client's e-mail is missing" },
@@ -442,7 +442,7 @@ export const MESSAGES = {
   'start.cijfers': { nl: 'Cijfers & aangifte', ar: 'الأرقام والإقرار', en: 'Figures & filing' },
   'start.conceptBtw': { nl: 'Concept BTW-aangifte', ar: 'مسودة إقرار BTW', en: 'Draft BTW return' },
   'start.tegel.dagomzet': { nl: 'Dagomzet', ar: 'إيراد اليوم', en: 'Daily turnover' },
-  'start.tegel.artikelen': { nl: 'Artikelen', ar: 'الأصناف', en: 'Articles' },
+  'start.tegel.artikelen': { nl: 'Artikelen', ar: 'المنتجات', en: 'Articles' },
   // [UREN-DEUR] De tegel die er nooit was. Zie ZzpDashboard voor waarom hij in het
   // administratieraster hoort en niet ergens anders.
   'start.tegel.uren': { nl: 'Uren', ar: 'الساعات', en: 'Hours' },
@@ -452,7 +452,7 @@ export const MESSAGES = {
   'start.jaar': { nl: 'Jaaroverzicht', ar: 'ملخّص السنة', en: 'Year overview' },
   // [GROOTBOEK-KAART] Grootboek is the accountant's own word, in every language — the same rule
   // btw and kvk follow. A translation would send them looking for a screen that is not there.
-  'start.grootboek': { nl: 'Grootboek', ar: 'دفتر الأستاذ (Grootboek)', en: 'Grootboek' },
+  'start.grootboek': { nl: 'Grootboek', ar: 'دفتر الأستاذ', en: 'Grootboek' },
   'start.grootboek.sub': {
     nl: 'Saldibalans, grootboekkaart en journaalposten',
     ar: 'ميزان المراجعة وبطاقة الحساب والقيود',
@@ -464,7 +464,7 @@ export const MESSAGES = {
     en: 'Figures for your income-tax return and your audit file',
   },
   'start.tegel.team': { nl: 'Team', ar: 'الفريق', en: 'Team' },
-  'start.tegel.werkplek': { nl: 'Mijn werkplek', ar: 'مكتبي', en: 'My workspace' },
+  'start.tegel.werkplek': { nl: 'Mijn werkplek', ar: 'مساحة عملي', en: 'My workspace' },
   'start.nieuweFactuur': { nl: 'Nieuwe factuur', ar: 'فاتورة جديدة', en: 'New invoice' },
   'start.allesUploaden': { nl: 'Alles uploaden', ar: 'رفع الكل', en: 'Upload everything' },
   // "Je waarheid" is de merknaam van het cijferscherm: wat er werkelijk in je zaak gebeurt.
@@ -484,7 +484,7 @@ export const MESSAGES = {
 
   'waarheid.bank': { nl: 'Bank — op de rekening', ar: 'البنك — في الحساب', en: 'Bank — on the account' },
   'waarheid.kas': { nl: 'Kas — in kassa', ar: 'الصندوق — في الدرج', en: 'Cash — in the till' },
-  'waarheid.teBetalen': { nl: 'Te betalen', ar: 'مستحقة للدفع', en: 'To pay' },
+  'waarheid.teBetalen': { nl: 'Te betalen', ar: 'مستحقة الدفع', en: 'To pay' },
   'waarheid.factuur.enkel': { nl: 'factuur', ar: 'فاتورة', en: 'invoice' },
   'waarheid.factuur.meer': { nl: 'facturen', ar: 'فواتير', en: 'invoices' },
   'waarheid.inkoop.enkel': { nl: 'inkoopfactuur', ar: 'فاتورة شراء', en: 'purchase invoice' },
@@ -571,9 +571,9 @@ export const MESSAGES = {
   'ink.evenControleren': { nl: 'Even controleren', ar: 'تحقّق سريع', en: 'A quick check' },
   'ink.klaarBevestigen': { nl: 'Klaar om te bevestigen', ar: 'جاهزة للتأكيد', en: 'Ready to confirm' },
   'ink.bevestigd': { nl: 'Bevestigde inkoopfacturen', ar: 'فواتير المشتريات المؤكَّدة', en: 'Confirmed purchase invoices' },
-  'ink.beheer': { nl: 'Beheer', ar: 'إدارة', en: 'Manage' },
+  'ink.beheer': { nl: 'Beheer', ar: 'الإدارة', en: 'Manage' },
   'ink.selecteer': { nl: 'Selecteren', ar: 'تحديد', en: 'Select' },
-  'ink.klaar': { nl: 'Klaar', ar: 'تم', en: 'Done' },
+  'ink.klaar': { nl: 'Klaar', ar: 'جاهز', en: 'Done' },
   'ink.sluit': { nl: 'Sluiten', ar: 'إغلاق', en: 'Close' },
   'ink.meldingSluiten': { nl: 'Melding sluiten', ar: 'إغلاق التنبيه', en: 'Close the notice' },
   'ink.toevoegen': { nl: 'Toevoegen', ar: 'إضافة', en: 'Add' },
@@ -784,7 +784,7 @@ export const MESSAGES = {
   'lev.bewerk.categorie.geen': { nl: 'Geen vaste categorie', en: 'No fixed category', ar: 'بلا صنف ثابت' },
   'leveranciers.lijst.tarief': { nl: '{tarief}% btw', en: '{tarief}% VAT', ar: 'btw {tarief}%' },
   // The bank category vocabulary, translated. Same words as the categorise screen in Dutch.
-  'bankcat.omzet': { nl: 'Omzet', en: 'Revenue', ar: 'إيراد' },
+  'bankcat.omzet': { nl: 'Omzet', en: 'Revenue', ar: 'الإيراد' },
   'bankcat.pos_income': { nl: 'Pinomzet', en: 'Card takings', ar: 'إيراد البطاقات' },
   'bankcat.kosten': { nl: 'Zakelijke kost', en: 'Business cost', ar: 'تكلفة عمل' },
   'bankcat.fee': { nl: 'Bankkosten', en: 'Bank charges', ar: 'رسوم بنكية' },
@@ -993,11 +993,11 @@ export const MESSAGES = {
   'ink.afzender': { nl: 'Afzender', ar: 'المُرسِل', en: 'Sender' },
   'ink.bron': { nl: 'Bron', ar: 'المصدر', en: 'Source' },
   'ink.factuurnummer': { nl: 'Factuurnummer', ar: 'رقم الفاتورة', en: 'Invoice number' },
-  'ink.bedragExcl': { nl: 'Bedrag excl. BTW', ar: 'المبلغ بدون ضريبة', en: 'Amount excl. VAT' },
+  'ink.bedragExcl': { nl: 'Bedrag excl. BTW', ar: 'المبلغ بدون btw', en: 'Amount excl. VAT' },
   'ink.totaal': { nl: 'Totaal', ar: 'الإجمالي', en: 'Total' },
   'ink.totaalUitleg': { nl: 'Totaalbedrag inclusief BTW — zoals het onderaan de factuur staat', ar: 'الإجمالي شامل الضريبة — كما هو مذكور أسفل الفاتورة', en: 'Total including VAT — as printed at the bottom of the invoice' },
   'ink.datumOntbreekt': { nl: 'Factuurdatum ontbreekt — verplicht om te bevestigen.', ar: 'تاريخ الفاتورة ناقص — وهو إلزامي للتأكيد.', en: 'The invoice date is missing — required to confirm.' },
-  'ink.isCreditnota': { nl: 'Dit is een creditnota', ar: 'هذه إشعار دائن', en: 'This is a credit note' },
+  'ink.isCreditnota': { nl: 'Dit is een creditnota', ar: 'هذا إشعار دائن', en: 'This is a credit note' },
   'ink.creditnota': { nl: 'Creditnota', ar: 'إشعار دائن', en: 'Credit note' },
   // [AANSLAG] The badge on a Belastingdienst letter: which tax, and where it books.
   'ink.aanslag.inkomstenbelasting': { nl: 'Aanslag inkomstenbelasting — privé, geen kost', ar: 'ضريبة الدخل — خاص، ليست تكلفة', en: 'Income tax assessment — private, not a cost' },
@@ -1089,7 +1089,7 @@ export const MESSAGES = {
   'inkoop.duidelijk': { nl: 'Duidelijk', ar: 'مفهوم', en: 'Got it' },
   'inkoop.allePeriodes': { nl: 'Toon alle periodes', ar: 'عرض كل الفترات', en: 'Show all periods' },
   'inkoop.opnieuwProberen': { nl: 'Opnieuw proberen', ar: 'إعادة المحاولة', en: 'Try again' },
-  'inkoop.verwerkt': { nl: 'Verwerkt', ar: 'معالَجة', en: 'Processed' },
+  'inkoop.verwerkt': { nl: 'Verwerkt', ar: 'تمت المعالجة', en: 'Processed' },
   'inkoop.voorbereid': { nl: 'Voorbereid', ar: 'مُجهَّزة', en: 'Prepared' },
   'inkoop.automatisch': { nl: 'Automatisch', ar: 'تلقائي', en: 'Automatic' },
 
@@ -1193,7 +1193,7 @@ export const MESSAGES = {
   'bank.lf.tariefIngesteld': { nl: '{rate}% — het vaste tarief dat je voor deze leverancier hebt ingesteld.', ar: '{rate}% — النسبة الثابتة التي ضبطتَها لهذا المورّد.', en: '{rate}% — the fixed rate you set for this supplier.' },
   'bank.lf.tariefUitFacturen': { nl: '{rate}% volgens {count} eerdere facturen van deze leverancier.', ar: '{rate}% وفق {count} فواتير سابقة من هذا المورّد.', en: '{rate}% according to {count} earlier invoices from this supplier.' },
   'bank.lf.boek': { nl: 'Boek deze regel', ar: 'سجّل هذا السطر', en: 'Book this line' },
-  'bank.lf.bezig': { nl: 'Bezig…', ar: 'جارٍ…', en: 'Working…' },
+  'bank.lf.bezig': { nl: 'Bezig…', ar: 'جارٍ التنفيذ…', en: 'Working…' },
   'bank.lf.annuleren': { nl: 'Annuleren', ar: 'إلغاء', en: 'Cancel' },
   'bank.lf.klaar': { nl: 'Geboekt. De regel is gekoppeld.', ar: 'سُجّل. السطر مرتبط.', en: 'Booked. The line is linked.' },
   'bank.lf.klaarZonderBtw': { nl: 'Geboekt zonder btw — voeg het document later toe als je het vindt.', ar: 'سُجّل بلا btw — أضف المستند لاحقًا إن وجدته.', en: 'Booked without btw — add the document later if you find it.' },
@@ -1361,7 +1361,7 @@ export const MESSAGES = {
   'vandaag.offerteMorgen': { nl: 'Verloopt morgen', ar: 'ينتهي غداً', en: 'Lapses tomorrow' },
   'vandaag.offerteOver': { nl: 'Verloopt over {n} dagen', ar: 'ينتهي بعد {n} أيام', en: 'Lapses in {n} days' },
   'vandaag.offerteVerlopenEen': { nl: 'Gisteren verlopen', ar: 'انتهى أمس', en: 'Lapsed yesterday' },
-  'vandaag.offerteVerlopenMeer': { nl: '{n} dagen verlopen', ar: 'انتهى منذ {n} يوماً', en: 'Lapsed {n} days ago' },
+  'vandaag.offerteVerlopenMeer': { nl: '{n} dagen verlopen', ar: 'متأخر {n} يومًا', en: 'Lapsed {n} days ago' },
   'vandaag.aandacht': { nl: 'Dit heeft vandaag je aandacht nodig.', ar: 'هذا ما يحتاج انتباهك اليوم.', en: 'This needs your attention today.' },
   // [ZIEL] What the app did by itself this week, and what waits for the owner.
   'vandaag.zelf.deed': { nl: 'Deze week deed BoekBrug {self} van {total} boekingen zelf.', ar: 'هذا الأسبوع سجّل BoekBrug {self} من {total} قيودًا بنفسه.', en: 'This week BoekBrug did {self} of {total} bookings itself.' },
@@ -1370,7 +1370,7 @@ export const MESSAGES = {
   'vandaag.zelf.wachtMeer': { nl: '{n} dingen wachten op jou.', ar: '{n} أشياء تنتظرك.', en: '{n} things wait for you.' },
   'vandaag.nietsNodig': { nl: 'Niets dat nu je aandacht nodig heeft', ar: 'لا شيء يحتاج انتباهك الآن', en: 'Nothing needs your attention right now' },
   'vandaag.geenVervallen': { nl: 'Geen facturen die binnen 3 dagen vervallen of te laat zijn.', ar: 'لا فواتير تستحق خلال 3 أيام أو متأخرة.', en: 'No invoices due within 3 days or overdue.' },
-  'vandaag.teBetalen': { nl: 'Te betalen', ar: 'مستحقة للدفع', en: 'To pay' },
+  'vandaag.teBetalen': { nl: 'Te betalen', ar: 'مستحقة الدفع', en: 'To pay' },
   'vandaag.jijBetalen': { nl: 'Facturen die jij moet betalen', ar: 'فواتير عليك دفعها', en: 'Invoices you need to pay' },
   'vandaag.onbetaald': { nl: 'Verstuurde facturen die nog niet betaald zijn', ar: 'فواتير مُرسَلة لم تُدفع بعد', en: 'Sent invoices not yet paid' },
   'vandaag.controleerKosten': { nl: 'Controleer ze zodat de kosten en BTW-aftrek in je boeken komen.', ar: 'دقّقها لتدخل التكاليف وخصم الضريبة في دفاترك.', en: 'Check them so the costs and VAT deduction reach your books.' },
@@ -1431,7 +1431,7 @@ export const MESSAGES = {
   'wh.overhouden': { nl: 'Wat je overhoudt', ar: 'ما يتبقّى لك', en: 'What you keep' },
   'wh.overOmzet': { nl: 'Over je omzet', ar: 'على إيرادك', en: 'On your turnover' },
   'wh.overInkopen': { nl: 'Over je inkopen', ar: 'على مشترياتك', en: 'On your purchases' },
-  'wh.vorigJaar': { nl: 'Vorig jaar', ar: 'السنة الماضية', en: 'Previous year' },
+  'wh.vorigJaar': { nl: 'Vorig jaar', ar: 'السنة السابقة', en: 'Previous year' },
   'wh.volgendJaar': { nl: 'Volgend jaar', ar: 'السنة التالية', en: 'Next year' },
   'wh.berekenen': { nl: 'Bezig met berekenen…', ar: 'جارٍ الحساب…', en: 'Calculating…' },
   'wh.naarAangifte': { nl: 'Naar de BTW-aangifte van deze periode', ar: 'إلى إقرار الضريبة لهذه الفترة', en: "To this period's VAT return" },
@@ -1539,7 +1539,7 @@ export const MESSAGES = {
   // ─── [KLANTEN] Het klantenbestand ───────────────────────────────────────────────────────────
 
   'kl.zoek': { nl: 'Zoek op naam, e-mail, KVK, IBAN...', ar: 'ابحث بالاسم أو البريد أو KVK أو IBAN...', en: 'Search by name, e-mail, KVK, IBAN...' },
-  'kl.zoek.aria': { nl: 'Klanten zoeken', ar: 'البحث في العملاء', en: 'Search clients' },
+  'kl.zoek.aria': { nl: 'Klanten zoeken', ar: 'البحث عن العملاء', en: 'Search clients' },
   'kl.bekijk': { nl: 'Bekijken', ar: 'عرض', en: 'View' },
   // [BESTE] Phone and the agreed payment term on the customer; the open balance on the list.
   'kl.veld.telefoon': { nl: 'Telefoon', ar: 'الهاتف', en: 'Phone' },
@@ -1563,7 +1563,7 @@ export const MESSAGES = {
   'brug.kiesKlant': { nl: 'Kies een klant om te beginnen', ar: 'اختر عميلاً للبدء', en: 'Choose a client to begin' },
   'brug.alles': { nl: 'Alles', ar: 'الكل', en: 'All' },
   'brug.archief': { nl: 'Toon archief', ar: 'إظهار الأرشيف', en: 'Show archive' },
-  'brug.openBestanden': { nl: 'Open in Mijn bestanden', ar: 'افتح في ملفاتي', en: 'Open in My files' },
+  'brug.openBestanden': { nl: 'Open in Mijn bestanden', ar: 'افتح في «ملفاتي»', en: 'Open in My files' },
   'brug.cijfersLaden': { nl: 'Cijfers laden…', ar: 'جارٍ تحميل الأرقام…', en: 'Loading figures…' },
   'brug.overzichtLaden': { nl: 'Overzicht laden…', ar: 'جارٍ تحميل النظرة العامة…', en: 'Loading overview…' },
   'brug.fout.cijfers': { nl: 'Cijfers konden niet geladen worden', ar: 'تعذّر تحميل الأرقام', en: 'The figures could not be loaded' },
@@ -1601,7 +1601,7 @@ export const MESSAGES = {
   // ─── [KLAAR] Ben ik klaar? — de kwartaalscore ───────────────────────────────────────────────
 
   'klr.titel': { nl: 'Ben ik klaar?', ar: 'هل أنا جاهز؟', en: 'Am I ready?' },
-  'klr.watNog': { nl: 'Wat moet er nog gebeuren', ar: 'ما الذي بقي فعله', en: 'What still needs doing' },
+  'klr.watNog': { nl: 'Wat moet er nog gebeuren', ar: 'ما الذي يجب فعله بعد', en: 'What still needs doing' },
   'klr.waarop': { nl: 'Waar de score op gebaseerd is', ar: 'علامَ تُبنى النتيجة', en: 'What the score is based on' },
   'klr.evenControleren': { nl: 'Even controleren', ar: 'تحقّق سريع', en: 'A quick check' },
   'klr.conceptAangifte': { nl: 'Bekijk de concept-aangifte', ar: 'عرض مسودة الإقرار', en: 'View the draft return' },
@@ -1674,7 +1674,7 @@ export const MESSAGES = {
   // [INTAKE-VOORTGANG] The progress dialog after a file is picked. Three phases, one percentage:
   // only the upload has a number; the fit and the read say what they are without inventing one.
   'int.voortgang.titel': { nl: 'Bezig met toevoegen', ar: 'جارٍ الإضافة', en: 'Adding…' },
-  'int.voortgang.klaarTitel': { nl: 'Klaar', ar: 'تمّ', en: 'Done' },
+  'int.voortgang.klaarTitel': { nl: 'Klaar', ar: 'جاهز', en: 'Done' },
   'int.voortgang.sluit': { nl: 'Sluiten — het toevoegen gaat door', ar: 'إغلاق — الإضافة تستمر', en: 'Close — adding carries on' },
   'int.voortgang.achtergrond': {
     nl: 'Je kunt dit sluiten. Het toevoegen gaat gewoon door, en je hoort waar het bestand terechtkomt.',
@@ -1684,7 +1684,7 @@ export const MESSAGES = {
   'int.voortgang.klaarmaken': { nl: 'Bestand wordt klaargemaakt…', ar: 'يجري تجهيز الملف…', en: 'Preparing the file…' },
   'int.voortgang.uploaden': { nl: 'Uploaden… {p}%', ar: 'جارٍ الرفع… {p}%', en: 'Uploading… {p}%' },
   'int.voortgang.lezen': { nl: 'Wordt gelezen — dit kan even duren', ar: 'جارٍ القراءة — قد يستغرق ذلك قليلاً', en: 'Being read — this can take a moment' },
-  'int.voortgang.klaar': { nl: 'Klaar', ar: 'تمّ', en: 'Done' },
+  'int.voortgang.klaar': { nl: 'Klaar', ar: 'جاهز', en: 'Done' },
   'int.voortgang.mislukt': { nl: 'Niet gelukt', ar: 'لم ينجح', en: 'Did not succeed' },
   'int.bestaande': { nl: 'Bekijk de bestaande factuur', ar: 'عرض الفاتورة الموجودة', en: 'View the existing invoice' },
   'int.tochAndere': { nl: 'Toch toevoegen — dit is een andere factuur', ar: 'أضِفها رغم ذلك — هذه فاتورة أخرى', en: 'Add it anyway — this is a different invoice' },
@@ -1929,7 +1929,7 @@ export const MESSAGES = {
   'dq.onderwerpPh': { nl: 'Onderwerp van de e-mail…', ar: 'موضوع الرسالة…', en: 'Subject of the e-mail…' },
   'dq.bericht': { nl: 'Bericht', ar: 'الرسالة', en: 'Message' },
   'dq.berichtPh': { nl: "Schrijf hier je bericht, of gebruik 'AI opstellen'…", ar: "اكتب رسالتك هنا، أو استخدم «صياغة بالذكاء الاصطناعي»…", en: "Write your message here, or use 'AI draft'…" },
-  'dq.kiesKlant': { nl: 'Kies een klant…', ar: 'اختر عميلاً…', en: 'Choose a client…' },
+  'dq.kiesKlant': { nl: 'Kies een klant…', ar: 'اختر عميلًا…', en: 'Choose a client…' },
   'dq.puntToevoegen': { nl: 'Punt toevoegen…', ar: 'أضف بنداً…', en: 'Add a point…' },
   'dq.geenPunten': { nl: 'Nog geen openstaande punten voor deze klant.', ar: 'لا بنود معلّقة لهذا العميل بعد.', en: 'No open points for this client yet.' },
   'dq.nietGevonden': { nl: 'Niet gevonden', ar: 'لم يُعثر عليه', en: 'Not found' },
@@ -1942,14 +1942,14 @@ export const MESSAGES = {
   'kw.teBetalen5g': { nl: 'BTW te betalen (5g)', ar: 'ضريبة مستحقة (5g)', en: 'VAT to pay (5g)' },
   'kw.teBetalen5gKort': { nl: 'Te betalen (5g)', ar: 'مستحق (5g)', en: 'To pay (5g)' },
   'kw.klant': { nl: 'Klant', ar: 'العميل', en: 'Client' },
-  'kw.openstaand': { nl: 'Openstaand', ar: 'معلّق', en: 'Outstanding' },
+  'kw.openstaand': { nl: 'Openstaand', ar: 'مستحق', en: 'Outstanding' },
   'kw.nietIngediend': { nl: 'Nog niet als ingediend gemarkeerd', ar: 'لم يُعلَّم كمُقدَّم بعد', en: 'Not yet marked as filed' },
   'kw.btwMet': { nl: 'De BTW is met', ar: 'تغيّرت الضريبة بمقدار', en: 'The VAT changed by' },
   'kw.geenKlanten': { nl: 'Geen klanten gekoppeld', ar: 'لا عملاء مرتبطون', en: 'No clients linked' },
   'kw.laadFout': { nl: 'Dit kwartaal konden we niet ophalen; dat zegt niets over je cijfers zelf.', ar: 'تعذّر جلب هذا الربع؛ وهذا لا يقول شيئًا عن أرقامك نفسها.', en: 'We could not load this quarter; that says nothing about your figures themselves.' },
   'kw.klantenLaadFout': { nl: 'Je klantenlijst konden we niet ophalen; dat zegt niets over je koppelingen zelf.', ar: 'تعذّر جلب قائمة عملائك؛ وهذا لا يقول شيئًا عن ارتباطاتك نفسها.', en: 'We could not load your client list; that says nothing about your links themselves.' },
   'kw.opnieuw': { nl: 'Opnieuw proberen', ar: 'إعادة المحاولة', en: 'Try again' },
-  'kw.nodigUit': { nl: 'Klant uitnodigen', ar: 'ادعُ عميلاً', en: 'Invite a client' },
+  'kw.nodigUit': { nl: 'Klant uitnodigen', ar: 'دعوة عميل', en: 'Invite a client' },
   'kw.nodigUitUitleg': { nl: 'Nodig een klant uit om kwartaaloverzichten te bekijken', ar: 'ادعُ عميلاً لعرض ملخصات الأرباع', en: 'Invite a client to view quarterly overviews' },
   'kw.dashboard': { nl: 'Dashboard', ar: 'اللوحة', en: 'Dashboard' },
 
@@ -2265,8 +2265,8 @@ export const MESSAGES = {
   },
   'dsh.factuurdatum': { nl: 'Factuurdatum', ar: 'تاريخ الفاتورة', en: 'Invoice date' },
   'dsh.totaalIncl': { nl: 'Totaal incl. btw', ar: 'الإجمالي شامل btw', en: 'Total incl. VAT' },
-  'dsh.btw': { nl: 'Btw', ar: 'btw (الضريبة)', en: 'VAT' },
-  'dsh.exclBtw': { nl: 'Excl. btw', ar: 'بدون btw', en: 'Excl. VAT' },
+  'dsh.btw': { nl: 'Btw', ar: 'الضريبة', en: 'VAT' },
+  'dsh.exclBtw': { nl: 'Excl. btw', ar: 'بدون الضريبة', en: 'Excl. VAT' },
   'dsh.laden': { nl: 'Bestand wordt geladen…', ar: 'جارٍ تحميل الملف…', en: 'Loading the file…' },
   'dsh.nietOpenen': { nl: 'Kon het bestand niet openen', ar: 'تعذّر فتح الملف', en: 'Could not open the file' },
   'dsh.nietOpenenVerbinding': {
@@ -2374,7 +2374,7 @@ export const MESSAGES = {
   'corr.totaalIncl': { nl: 'Totaal (incl. BTW)', ar: 'الإجمالي (شامل btw)', en: 'Total (incl. VAT)' },
   'corr.btw': { nl: 'BTW', ar: 'btw', en: 'VAT' },
   'corr.exclBtw': { nl: 'Bedrag excl. BTW', ar: 'المبلغ بدون btw', en: 'Amount excl. VAT' },
-  'corr.creditTitel': { nl: 'Dit is een creditnota', ar: 'هذا إشعار دائن (creditnota)', en: 'This is a credit note' },
+  'corr.creditTitel': { nl: 'Dit is een creditnota', ar: 'هذا إشعار دائن', en: 'This is a credit note' },
   'corr.creditUitleg': {
     nl: ' — geld dat jou toekomt. Vink aan bij “Creditnota” of een negatief totaal; de bedragen worden dan als minbedrag opgeslagen.',
     ar: ' — مال يعود لك. علّم هذا عند «Creditnota» أو إجمالي سالب؛ تُحفظ المبالغ حينها كمبلغ سالب.',
@@ -2463,7 +2463,7 @@ export const MESSAGES = {
   'datum.kies': { nl: 'Kies een datum', ar: 'اختر تاريخاً', en: 'Pick a date' },
 
   // InfiniteList: empty/error/loading/end states of every infinite invoice list.
-  'oneind.leeg': { nl: 'Geen facturen gevonden', ar: 'لا توجد فواتير', en: 'No invoices found' },
+  'oneind.leeg': { nl: 'Geen facturen gevonden', ar: 'لم يُعثر على فواتير', en: 'No invoices found' },
   'oneind.vernieuwen': { nl: 'Vernieuwen…', ar: 'جارٍ التحديث…', en: 'Refreshing…' },
   'oneind.opnieuw': { nl: 'Opnieuw', ar: 'إعادة المحاولة', en: 'Retry' },
   'oneind.opnieuwAria': { nl: 'Opnieuw proberen', ar: 'إعادة المحاولة', en: 'Try again' },
@@ -2479,7 +2479,7 @@ export const MESSAGES = {
   },
   'fout.opnieuw': { nl: 'Opnieuw proberen', ar: 'إعادة المحاولة', en: 'Try again' },
   'fout.naarDashboard': { nl: 'Naar dashboard', ar: 'إلى لوحة التحكم', en: 'To dashboard' },
-  'fout404.titel': { nl: 'Niet gevonden', ar: 'غير موجود', en: 'Not found' },
+  'fout404.titel': { nl: 'Niet gevonden', ar: 'لم يُعثر عليه', en: 'Not found' },
   'fout404.uitleg': {
     nl: 'Deze factuur, klant of pagina bestaat niet.',
     ar: 'هذه الفاتورة أو هذا العميل أو هذه الصفحة غير موجودة.',
@@ -2503,8 +2503,8 @@ export const MESSAGES = {
   // KlantDetailClient: the customer detail screen.
   'kld.nieuweFactuur': { nl: '+ Nieuwe factuur', ar: '+ فاتورة جديدة', en: '+ New invoice' },
   'kld.geenEmail': { nl: 'Geen e-mail', ar: 'لا بريد إلكتروني', en: 'No e-mail' },
-  'kld.gefactureerd': { nl: 'Gefactureerd', ar: 'إجمالي الفواتير', en: 'Invoiced' },
-  'kld.openstaand': { nl: 'Openstaand', ar: 'المستحق', en: 'Outstanding' },
+  'kld.gefactureerd': { nl: 'Gefactureerd', ar: 'مفوتر', en: 'Invoiced' },
+  'kld.openstaand': { nl: 'Openstaand', ar: 'مستحق', en: 'Outstanding' },
   'kld.facturen': { nl: 'Facturen', ar: 'الفواتير', en: 'Invoices' },
   'kld.gegevens': { nl: 'Gegevens', ar: 'البيانات', en: 'Details' },
   'kld.adres': { nl: 'Adres', ar: 'العنوان', en: 'Address' },
@@ -2773,7 +2773,7 @@ export const MESSAGES = {
   'kld.geschiedenis': { nl: 'Factuurgeschiedenis', ar: 'سجل الفواتير', en: 'Invoice history' },
   'kld.nogGeen': {
     nl: 'Nog geen facturen voor deze klant.',
-    ar: 'لا فواتير لهذا العميل بعد.',
+    ar: 'لا توجد فواتير لهذا العميل بعد.',
     en: 'No invoices for this customer yet.',
   },
   'kld.concept': { nl: 'Concept', ar: 'مسودة', en: 'Draft' },
@@ -2923,7 +2923,7 @@ export const MESSAGES = {
   'kluis.statUit': { nl: 'Facturen uit', ar: 'فواتير صادرة', en: 'Invoices out' },
   'kluis.statIn': { nl: 'Facturen in', ar: 'فواتير واردة', en: 'Invoices in' },
   'kluis.statAfschriften': { nl: 'Bankafschriften', ar: 'كشوف بنكية', en: 'Bank statements' },
-  'kluis.statDocumenten': { nl: 'Documenten', ar: 'مستندات', en: 'Documents' },
+  'kluis.statDocumenten': { nl: 'Documenten', ar: 'المستندات', en: 'Documents' },
   'kluis.qFact': { nl: '{count} fact.', ar: '{count} فاتورة', en: '{count} inv.' },
   'kluis.qGeenAfschr': { nl: '⚠ geen afschr.', ar: '⚠ لا كشوف', en: '⚠ no stmts.' },
   'kluis.qAfschr': { nl: '{count} afschr.', ar: '{count} كشف', en: '{count} stmts.' },
@@ -3021,7 +3021,7 @@ export const MESSAGES = {
     en: 'No sales invoice is open at all. If it is not in yet, add it first — this payment stays put meanwhile.',
   },
   'verd.geenMatch': { nl: 'Geen factuur die daaraan voldoet.', ar: 'لا فاتورة تطابق ذلك.', en: 'No invoice matches that.' },
-  'verd.factuurWoord': { nl: 'factuur', ar: 'الفاتورة', en: 'invoice' },
+  'verd.factuurWoord': { nl: 'factuur', ar: 'فاتورة', en: 'invoice' },
   'verd.kiezenAria': { nl: '{name} kiezen', ar: 'اختيار {name}', en: 'Choose {name}' },
   'verd.credit': { nl: 'creditnota — gaat eraf', ar: 'إشعار دائن — يُخصم', en: 'credit note — comes off' },
   'verd.zonderNummer': { nl: 'zonder nummer', ar: 'بدون رقم', en: 'without a number' },
@@ -3087,7 +3087,7 @@ export const MESSAGES = {
   },
   'bkc.opgehaald': { nl: '{inserted} nieuwe transacties opgehaald.', ar: 'جُلبت {inserted} معاملة جديدة.', en: '{inserted} new transactions fetched.' },
   'bkc.geenNieuwe': { nl: 'Geen nieuwe transacties bij je bank.', ar: 'لا معاملات جديدة لدى بنكك.', en: 'No new transactions at your bank.' },
-  'bkc.ontkoppelenMislukt': { nl: 'Ontkoppelen mislukt.', ar: 'فشل الفصل.', en: 'Disconnecting failed.' },
+  'bkc.ontkoppelenMislukt': { nl: 'Ontkoppelen mislukt.', ar: 'فشل فكّ الربط.', en: 'Disconnecting failed.' },
   'bkc.ontkoppeld': {
     nl: 'Bank ontkoppeld. Je transacties blijven bewaard.',
     ar: 'فُصل البنك. معاملاتك تبقى محفوظة.',
@@ -3205,7 +3205,7 @@ export const MESSAGES = {
   'ss.nietsTeVersturen': { nl: 'Niets te versturen', ar: 'لا شيء للإرسال', en: 'Nothing to send' },
   'ss.stuurDoorEen': { nl: 'Stuur 1 factuur door', ar: 'أرسل فاتورة واحدة', en: 'Forward 1 invoice' },
   'ss.stuurDoor': { nl: 'Stuur {count} facturen door', ar: 'أرسل {count} فاتورة', en: 'Forward {count} invoices' },
-  'ss.doorsturenMislukt': { nl: 'Doorsturen mislukt', ar: 'فشل الإرسال', en: 'Forwarding failed' },
+  'ss.doorsturenMislukt': { nl: 'Doorsturen mislukt', ar: 'فشل إعادة التوجيه', en: 'Forwarding failed' },
   'ss.nogTeGaan': { nl: ' Nog {count} te gaan.', ar: ' بقي {count}.', en: ' {count} to go.' },
   'ss.deelsGelukt': { nl: '{pushed} geboekt, {failed} niet gelukt.', ar: 'سُجّلت {pushed}، وفشلت {failed}.', en: '{pushed} booked, {failed} failed.' },
   'ss.geboektEen': { nl: '1 factuur geboekt in SnelStart.', ar: 'سُجّلت فاتورة واحدة في SnelStart.', en: '1 invoice booked in SnelStart.' },
@@ -3257,7 +3257,7 @@ export const MESSAGES = {
   'bst.sluiten': { nl: 'Sluiten', ar: 'إغلاق', en: 'Close' },
   'bst.previewNiet': { nl: 'Preview niet beschikbaar', ar: 'المعاينة غير متاحة', en: 'Preview not available' },
   'bst.geselecteerd': { nl: '{count} geselecteerd', ar: '{count} محدَّد', en: '{count} selected' },
-  'bst.selectieWissen': { nl: 'Selectie wissen', ar: 'إلغاء التحديد', en: 'Clear selection' },
+  'bst.selectieWissen': { nl: 'Selectie wissen', ar: 'مسح التحديد', en: 'Clear selection' },
 
   // ─── [PAY-REDEN] Waarom afboeken of terugdraaien niet lukte ─────────────────────────────────
   //
@@ -3760,7 +3760,7 @@ export const MESSAGES = {
   },
   'bank.factuurNummer': {
     nl: 'Factuur {number}',
-    ar: 'فاتورة {number}',
+    ar: 'الفاتورة {number}',
     en: 'Invoice {number}',
   },
   'bank.formaat.bewaard': {
@@ -3889,7 +3889,7 @@ export const MESSAGES = {
   },
   'bank.geselecteerd': {
     nl: '{count} geselecteerd',
-    ar: 'المحدَّد: {count}',
+    ar: '{count} محدَّد',
     en: '{count} selected',
   },
   'bank.historie.eenIban': {
@@ -3924,7 +3924,7 @@ export const MESSAGES = {
   },
   'bank.inlezen': {
     nl: 'Bezig met inlezen…',
-    ar: 'جارٍ القراءة…',
+    ar: 'جارٍ الاستيراد…',
     en: 'Reading it in…',
   },
   'bank.jaTochKoppelen': {
@@ -4137,7 +4137,7 @@ export const MESSAGES = {
   },
   'bank.rematch.geboekt': {
     nl: 'betalingen zijn automatisch gekoppeld.',
-    ar: 'دفعة رُبطت تلقائياً.',
+    ar: 'دفعات رُبطت تلقائياً.',
     en: 'payments were linked automatically.',
   },
   'bank.rematch.geboektEen': {
@@ -4270,7 +4270,7 @@ export const MESSAGES = {
   },
   'bank.tab.teBevestigen': {
     nl: 'Te bevestigen',
-    ar: 'للتأكيد',
+    ar: 'بانتظار التأكيد',
     en: 'To confirm',
   },
   'bank.terugzetten': {
@@ -5152,7 +5152,7 @@ export const MESSAGES = {
   },
   'brug.omzetExcl': {
     nl: 'Omzet (excl. BTW)',
-    ar: 'الإيرادات (بدون btw)',
+    ar: 'الإيراد (بدون btw)',
     en: 'Turnover (excl. BTW)',
   },
   'brug.omzetZonderTarief': {
@@ -5177,7 +5177,7 @@ export const MESSAGES = {
   },
   'brug.status.verwerkt': {
     nl: 'Verwerkt',
-    ar: 'مُعالَج',
+    ar: 'تمت المعالجة',
     en: 'Processed',
   },
   'brug.status.vraag': {
@@ -5269,7 +5269,7 @@ export const MESSAGES = {
   // message. Short, because it replaces "Kopiëren" in place.
   'kopieer.nietGelukt': {
     nl: 'Niet gelukt',
-    ar: 'فشل',
+    ar: 'لم ينجح',
     en: 'Failed',
   },
   // Het SOORT waarde, voor de schermlezer. Eigen sleutel per soort: "Factuurnummer" en "IBAN"
@@ -5396,12 +5396,12 @@ export const MESSAGES = {
   },
   'cat.tabTodo': {
     nl: 'Te doen',
-    ar: 'للعمل',
+    ar: 'المهام',
     en: 'To do',
   },
   'cat.teDoen': {
     nl: 'transacties te doen',
-    ar: 'معاملة متبقية',
+    ar: 'معاملات متبقية',
     en: 'transactions to do',
   },
   'cat.teDoenEen': {
@@ -5650,7 +5650,7 @@ export const MESSAGES = {
   },
   'dq.klant': {
     nl: 'Klant',
-    ar: 'عميل',
+    ar: 'العميل',
     en: 'Client',
   },
   'dq.lijstGewist': {
@@ -5795,7 +5795,7 @@ export const MESSAGES = {
   },
   'dzi.dagTotaal': {
     nl: '{n} dag · totaal ontvangen',
-    ar: 'الأيام: {n} · إجمالي المقبوض',
+    ar: '{n} يوم · إجمالي المقبوض',
     en: '{n} day · total received',
   },
   'dzi.ditIsEen': {
@@ -5983,9 +5983,9 @@ export const MESSAGES = {
   'ink.periode.dezeMaand': { nl: 'Deze maand', ar: 'هذا الشهر', en: 'This month' },
   'ink.periode.vorigeMaand': { nl: 'Vorige maand', ar: 'الشهر الماضي', en: 'Last month' },
   'ink.periode.ditKwartaal': { nl: 'Dit kwartaal', ar: 'هذا الربع', en: 'This quarter' },
-  'ink.periode.vorigKwartaal': { nl: 'Vorig kwartaal', ar: 'الربع الماضي', en: 'Last quarter' },
+  'ink.periode.vorigKwartaal': { nl: 'Vorig kwartaal', ar: 'الربع السابق', en: 'Last quarter' },
   'ink.periode.ditJaar': { nl: 'Dit jaar', ar: 'هذه السنة', en: 'This year' },
-  'ink.periode.vorigJaar': { nl: 'Vorig jaar', ar: 'السنة الماضية', en: 'Last year' },
+  'ink.periode.vorigJaar': { nl: 'Vorig jaar', ar: 'السنة السابقة', en: 'Last year' },
   'ink.anderePeriodes': {
     nl: 'Je hebt er {facturen} in andere periodes.',
     ar: 'لديك {facturen} في فترات أخرى.',
@@ -5993,7 +5993,7 @@ export const MESSAGES = {
   },
   'ink.autoIncasso': {
     nl: 'Automatische incasso',
-    ar: 'خصم تلقائي',
+    ar: 'خصم مباشر تلقائي',
     en: 'Direct debit',
   },
   // ── [RUST] De regel die twee panelen vervangt ────────────────────────────────────────────
@@ -6579,7 +6579,7 @@ export const MESSAGES = {
   },
   'ink.deelGenoteerd': {
     nl: '{applied} genoteerd · nog {remaining} open',
-    ar: 'سُجّل {applied} · لا يزال مفتوحاً {remaining}',
+    ar: 'سُجّل {applied} · لا يزال {remaining} مفتوحًا',
     en: '{applied} noted · {remaining} still open',
   },
   'ink.deelsBetaaldOpen': {
@@ -7274,7 +7274,7 @@ export const MESSAGES = {
   },
   'ink.leegLaten': {
     nl: 'Leeg laten = alles betaald ({amount})',
-    ar: 'اتركه فارغاً = دفع الكل ({amount})',
+    ar: 'اتركه فارغًا = دُفع الكل ({amount})',
     en: 'Leave empty = everything paid ({amount})',
   },
   'ink.leegtab.confirmed': {
@@ -7951,7 +7951,7 @@ export const MESSAGES = {
   },
   'ink.result.duplicate': {
     nl: 'Al toegevoegd',
-    ar: 'أُضيفت مسبقاً',
+    ar: 'أُضيف مسبقًا',
     en: 'Already added',
   },
   'ink.result.eenToegevoegd': {
@@ -7991,7 +7991,7 @@ export const MESSAGES = {
   },
   'ink.result.naarInkoop': {
     nl: 'Naar Inkoopfacturen',
-    ar: 'إلى فواتير المشتريات',
+    ar: 'إلى «فواتير المشتريات»',
     en: 'To purchase invoices',
   },
   'ink.result.naarBank': {
@@ -8184,7 +8184,7 @@ export const MESSAGES = {
   },
   'ink.tab.bevestigd': {
     nl: 'Bevestigd',
-    ar: 'مؤكَّدة',
+    ar: 'مؤكَّد',
     en: 'Confirmed',
   },
   'ink.tab.teBevestigen': {
@@ -8194,12 +8194,12 @@ export const MESSAGES = {
   },
   'ink.teLaat': {
     nl: '{n} dagen te laat',
-    ar: 'أيام التأخير: {n}',
+    ar: 'أيام التأخر: {n}',
     en: '{n} days late',
   },
   'ink.teLaatEen': {
     nl: '1 dag te laat',
-    ar: 'متأخرة يوماً واحداً',
+    ar: 'متأخرة يومًا واحدًا',
     en: '1 day late',
   },
   'ink.telling': {
@@ -8363,7 +8363,7 @@ export const MESSAGES = {
   },
   'ink.verifieren': {
     nl: 'Verifiëren',
-    ar: 'تدقيق',
+    ar: 'تحقّق',
     en: 'Verify',
   },
   'ink.verplaatsenMislukt': {
@@ -8523,7 +8523,7 @@ export const MESSAGES = {
   },
   'ink.zonderNummer': {
     nl: 'zonder nummer',
-    ar: 'بلا رقم',
+    ar: 'بدون رقم',
     en: 'without number',
   },
   'inkoop.geenVerbinding': {
@@ -8533,7 +8533,7 @@ export const MESSAGES = {
   },
   'inst.bedrijfVoorbeeld': {
     nl: 'Jouw Bedrijf BV',
-    ar: 'شركتك BV',
+    ar: 'Jouw Bedrijf BV',
     en: 'Your Company BV',
   },
   'inst.boekhouderUitleg': {
@@ -8854,7 +8854,7 @@ export const MESSAGES = {
   },
   'int.combineer': {
     nl: 'Combineer {n} pagina\'s → één factuur',
-    ar: 'ادمج الصفحات ({n}) ← فاتورة واحدة',
+    ar: 'ادمج {n} صفحة ← فاتورة واحدة',
     en: 'Combine {n} pages → one invoice',
   },
   'int.combineerEen': {
@@ -8989,7 +8989,7 @@ export const MESSAGES = {
   },
   'int.pagina': {
     nl: 'Pagina {n}',
-    ar: 'صفحة {n}',
+    ar: 'الصفحة {n}',
     en: 'Page {n}',
   },
   'int.paginaFotograferen': {
@@ -9081,7 +9081,7 @@ export const MESSAGES = {
   },
   'kas.cat.omzet': {
     nl: 'Omzet',
-    ar: 'إيراد',
+    ar: 'الإيراد',
     en: 'Revenue',
   },
   // [KAS-LOON] Contant uitbetaald loon. Een eigen categorie en niet 'Kost', omdat de twee in de
@@ -9399,12 +9399,12 @@ export const MESSAGES = {
   },
   'klr.btwTeBetalen': {
     nl: 'Concept BTW te betalen',
-    ar: 'مسودة btw مستحقة الدفع',
+    ar: 'btw المبدئية للدفع',
     en: 'Draft VAT to pay',
   },
   'klr.btwTerug': {
     nl: 'Concept BTW terug te ontvangen',
-    ar: 'مسودة btw مستردَّة لك',
+    ar: 'btw المبدئية المستردة',
     en: 'Draft VAT to receive back',
   },
   'klr.compleet': {
@@ -9464,7 +9464,7 @@ export const MESSAGES = {
   },
   'klr.status.nogNiet': {
     nl: 'Nog niet klaar',
-    ar: 'ليس جاهزاً بعد',
+    ar: 'غير جاهز بعد',
     en: 'Not ready yet',
   },
   'klr.weegt': {
@@ -9520,7 +9520,7 @@ export const MESSAGES = {
   },
   'kw.geenFacturenIn': {
     nl: 'Geen facturen in Q{q} {jaar}',
-    ar: 'لا فواتير في الربع Q{q} {jaar}',
+    ar: 'لا فواتير في الربع {q} {jaar}',
     en: 'No invoices in Q{q} {jaar}',
   },
   'kw.gestegen': {
@@ -9688,7 +9688,7 @@ export const MESSAGES = {
   },
   'kw.voorbelasting5b': {
     nl: 'Voorbelasting (5b)',
-    ar: 'ضريبة المشتريات (5b)',
+    ar: 'الضريبة القابلة للخصم (5b)',
     en: 'Input VAT (5b)',
   },
   'kw.zonderTarief': {
@@ -9764,7 +9764,7 @@ export const MESSAGES = {
   },
   'lijst.bundel.qrAlt': {
     nl: 'QR naar betaalpagina',
-    ar: 'رمز QR إلى صفحة الدفع',
+    ar: 'رمز QR لصفحة الدفع',
     en: 'QR to the payment page',
   },
   'lijst.bundel.titel': {
@@ -9784,7 +9784,7 @@ export const MESSAGES = {
   },
   'lijst.deelGenoteerd': {
     nl: '{applied} genoteerd · nog {remaining} open',
-    ar: 'سُجّل {applied} · لا يزال {remaining} مفتوحاً',
+    ar: 'سُجّل {applied} · لا يزال {remaining} مفتوحًا',
     en: '{applied} recorded · {remaining} still open',
   },
   'lijst.deelsBetaald': {
@@ -10037,7 +10037,7 @@ export const MESSAGES = {
   // [BESTE] The money above the list: what is still to come in, and how much of it is late.
   'lijst.kop.openstaand': { nl: 'Openstaand', ar: 'مستحق', en: 'Outstanding' },
   'lijst.kop.teLaat': { nl: 'Te laat', ar: 'متأخر', en: 'Late' },
-  'lijst.kop.aantal': { nl: '{n} facturen', ar: '{n} فواتير', en: '{n} invoices' },
+  'lijst.kop.aantal': { nl: '{n} facturen', ar: '{n} فاتورة', en: '{n} invoices' },
   'lijst.kop.een': { nl: '1 factuur', ar: 'فاتورة واحدة', en: '1 invoice' },
   'lijst.herhalen.pauzeLabel': {
     nl: 'Herhalen gepauzeerd',
@@ -10061,7 +10061,7 @@ export const MESSAGES = {
   },
   'lijst.klaar': {
     nl: 'Klaar',
-    ar: 'تم',
+    ar: 'جاهز',
     en: 'Done',
   },
   'lijst.kopieerLink': {
@@ -10156,7 +10156,7 @@ export const MESSAGES = {
   },
   'lijst.pay.jaBetaald': {
     nl: 'Ja, markeer als betaald',
-    ar: 'نعم، ضع علامة مدفوعة',
+    ar: 'نعم، علّمها كمدفوعة',
     en: 'Yes, mark as paid',
   },
   'lijst.pay.jaOngedaan': {
@@ -10171,7 +10171,7 @@ export const MESSAGES = {
   },
   'lijst.pay.leegAlles': {
     nl: 'Leeg laten = alles betaald ({amount})',
-    ar: 'اتركه فارغاً = دُفع الكل ({amount})',
+    ar: 'اتركه فارغًا = دُفع الكل ({amount})',
     en: 'Leave empty = everything paid ({amount})',
   },
   'lijst.pay.nogOpen': {
@@ -10181,7 +10181,7 @@ export const MESSAGES = {
   },
   'lijst.pay.ongedaan': {
     nl: 'Ongedaan maken',
-    ar: 'تراجُع',
+    ar: 'تراجع',
     en: 'Undo',
   },
   'lijst.pay.ongedaanBody': {
@@ -10191,7 +10191,7 @@ export const MESSAGES = {
   },
   'lijst.pay.ongedaanTitel': {
     nl: 'Betaling ongedaan maken?',
-    ar: 'التراجع عن الدفع؟',
+    ar: 'التراجع عن الدفعة؟',
     en: 'Undo the payment?',
   },
   'lijst.pay.titel': {
@@ -10326,7 +10326,7 @@ export const MESSAGES = {
   },
   'lijst.send.titel': {
     nl: 'Versturen naar {name}?',
-    ar: 'الإرسال إلى {name}؟',
+    ar: 'إرسال إلى {name}؟',
     en: 'Send to {name}?',
   },
   // [HERSTEL] Dezelfde correctie als bewerk.modal.waarschuwing — twee schermen versturen een
@@ -10676,7 +10676,7 @@ export const MESSAGES = {
   },
   'up.alToegevoegd': {
     nl: 'Al toegevoegd',
-    ar: 'أُضيف مسبقاً',
+    ar: 'أُضيف مسبقًا',
     en: 'Already added',
   },
   'up.andersAparte': {
@@ -10836,7 +10836,7 @@ export const MESSAGES = {
   },
   'up.klaar': {
     nl: 'Klaar',
-    ar: 'تم',
+    ar: 'جاهز',
     en: 'Done',
   },
   'up.klaarAandacht': {
@@ -11096,7 +11096,7 @@ export const MESSAGES = {
   },
   'vandaag.telaatEen': {
     nl: '1 dag te laat',
-    ar: 'متأخرة يوماً واحداً',
+    ar: 'متأخرة يومًا واحدًا',
     en: '1 day late',
   },
   'vandaag.telaatMeer': {
@@ -11552,7 +11552,7 @@ export const MESSAGES = {
   },
   'wh.lens.vorigKwartaal': {
     nl: 'Vorig kwartaal',
-    ar: 'الربع الماضي',
+    ar: 'الربع السابق',
     en: 'Last quarter',
   },
   'wh.pin.acquirer': {
@@ -11655,7 +11655,7 @@ export const MESSAGES = {
   },
   'wh.sub.verschuldigd': {
     nl: 'verschuldigd',
-    ar: 'المستحق',
+    ar: 'مستحق الدفع',
     en: 'due',
   },
   'wh.sub.voorbelasting': {
@@ -11725,7 +11725,7 @@ export const MESSAGES = {
   },
   'wh.todo.naarDagomzet': {
     nl: 'Naar Dagomzet',
-    ar: 'إلى إيراد اليوم',
+    ar: 'إلى «إيراد اليوم»',
     en: 'To Daily takings',
   },
   'wh.todo.naarKas': {
@@ -12432,7 +12432,7 @@ export const MESSAGES = {
     en: 'No invoices with status “{status}”',
   },
   'vkp.nogNietVerstuurd': { nl: 'nog niet verstuurd', ar: 'لم تُرسل بعد', en: 'not sent yet' },
-  'zoek.kort': { nl: 'Zoeken…', ar: 'بحث…', en: 'Search…' },
+  'zoek.kort': { nl: 'Zoeken…', ar: 'جارٍ البحث…', en: 'Search…' },
   'zoek.uitgebreid': {
     nl: 'Zoeken naar facturen, bedragen, bestanden…',
     ar: 'ابحث عن فواتير أو مبالغ أو ملفات…',
@@ -13276,7 +13276,7 @@ export const MESSAGES = {
   // ── [ONDERHANDEN-WERK] Werk dat op de laatste dag van het boekjaar nog niet gefactureerd was ──
   'ohw.kop': { nl: 'Onderhanden werk op {datum}', en: 'Work in progress on {datum}', ar: 'عمل قيد التنفيذ في {datum}' },
   'ohw.uren': { nl: '{uren} uur', en: '{uren} hours', ar: '{uren} ساعة' },
-  'ohw.geenKlant': { nl: 'Zonder klant', en: 'No customer', ar: 'بلا عميل' },
+  'ohw.geenKlant': { nl: 'Zonder klant', en: 'No customer', ar: 'بدون عميل' },
   'ohw.geen': { nl: 'Op die dag stond al je werk op een factuur.', en: 'On that day all your work was on an invoice.', ar: 'في ذلك اليوم كان كل عملك على فاتورة.' },
   'ohw.nietInSaldo': { nl: 'Dit bedrag zit niet in het saldo hierboven.', en: 'This amount is not in the result above.', ar: 'هذا المبلغ غير مُدرَج في النتيجة أعلاه.' },
   'ohw.oudste': { nl: 'Oudste uur hierin: {datum}.', en: 'Oldest hour in this: {datum}.', ar: 'أقدم ساعة هنا: {datum}.' },
@@ -13331,7 +13331,7 @@ export const MESSAGES = {
   'jaar.uren.titel': { nl: 'Urencriterium', en: 'Hours criterion', ar: 'معيار الساعات' },
   'jaar.mist.titel': { nl: 'Wat hier niet in zit', en: 'What is not in here', ar: 'ما ليس مشمولاً هنا' },
   'jaar.mist.intro': { nl: 'Deze administratie houdt het volgende niet bij — neem het mee vóór je cijfers overneemt:', en: 'This administration does not track the following — account for it before copying figures:', ar: 'هذه الإدارة لا تتتبع التالي — خذه بالحسبان قبل نقل الأرقام:' },
-  'jaar.kanttekeningen.titel': { nl: 'Kanttekeningen', en: 'Caveats', ar: 'ملاحظات' },
+  'jaar.kanttekeningen.titel': { nl: 'Kanttekeningen', en: 'Caveats', ar: 'ملاحظات جانبية' },
   'jaar.laden': { nl: 'Jaar doorrekenen…', en: 'Computing the year…', ar: 'جارٍ احتساب السنة…' },
   'jaar.fout': { nl: 'We konden het jaar nu niet doorrekenen. Probeer het zo opnieuw.', en: 'We could not compute the year right now. Try again shortly.', ar: 'تعذّر احتساب السنة الآن. حاول بعد قليل.' },
   'jaar.xaf.link': { nl: 'Download auditbestand (XAF 3.2) voor de boekhouder', en: 'Download audit file (XAF 3.2) for your accountant', ar: 'نزّل ملف التدقيق (XAF 3.2) للمحاسب' },
@@ -13418,7 +13418,7 @@ export const MESSAGES = {
   // [LOGBOEK] The screen's own words. `log.onbekend` is the one that matters most: an action with
   // no sentence is still SHOWN, phrased neutrally and carrying its raw name — an audit trail that
   // hides what it cannot phrase is not an audit trail.
-  'log.titel': { nl: 'Logboek', en: 'Activity log', ar: 'دفتر الأحداث' },
+  'log.titel': { nl: 'Logboek', en: 'Activity log', ar: 'سجل النشاط' },
   'log.uitleg': {
     nl: 'Alles wat er in jouw administratie is gebeurd — ook wat je boekhouder deed.',
     en: 'Everything that happened in your administration — including what your bookkeeper did.',
@@ -13585,7 +13585,7 @@ export const MESSAGES = {
   },
   'bev.rol.eigenaar': { nl: 'Jij — eigenaar', en: 'You — owner', ar: 'أنت — المالك' },
   'bev.rol.boekhouder': { nl: 'Boekhouder', en: 'Bookkeeper', ar: 'المحاسب' },
-  'bev.rol.medewerker': { nl: 'Medewerker', en: 'Employee', ar: 'موظف' },
+  'bev.rol.medewerker': { nl: 'Medewerker', en: 'Employee', ar: 'الموظف' },
   'bev.naamOnbekend': { nl: 'Naam niet gelezen', en: 'Name not read', ar: 'تعذّرت قراءة الاسم' },
   'bev.sinds': { nl: 'Sinds {datum}', en: 'Since {datum}', ar: 'منذ {datum}' },
   'bev.beheren': { nl: 'Toegang beheren', en: 'Manage access', ar: 'إدارة الوصول' },
@@ -13638,7 +13638,7 @@ export const MESSAGES = {
     ar: 'من يملك كلمة مرورك يستطيع إصدار فواتير باسمك وفي سلسلة أرقامك المتصلة. ولا يمكن سحبها بعد ذلك. الخطوة الثانية تُغلق هذا الباب.',
   },
   'mfa.aanzetten': { nl: 'Aanzetten', en: 'Switch on', ar: 'تفعيل' },
-  'mfa.uitzetten': { nl: 'Uitzetten', en: 'Switch off', ar: 'إيقاف' },
+  'mfa.uitzetten': { nl: 'Uitzetten', en: 'Switch off', ar: 'تعطيل' },
   'mfa.annuleren': { nl: 'Annuleren', en: 'Cancel', ar: 'إلغاء' },
   'mfa.scan.uitleg': {
     nl: 'Scan deze code met je authenticator-app (bijvoorbeeld Google Authenticator, 1Password of Bitwarden).',
@@ -13719,8 +13719,8 @@ export const MESSAGES = {
   },
   'mfa.apparaten': { nl: 'Apparaten', en: 'Devices', ar: 'الأجهزة' },
   'mfa.apparaatToevoegen': { nl: 'Tweede apparaat toevoegen', en: 'Add a second device', ar: 'إضافة جهاز ثانٍ' },
-  'mfa.apparaatVerwijderen': { nl: 'Verwijderen', en: 'Remove', ar: 'إزالة' },
-  'mfa.bezig': { nl: 'Bezig…', en: 'Working…', ar: 'جارٍ…' },
+  'mfa.apparaatVerwijderen': { nl: 'Verwijderen', en: 'Remove', ar: 'حذف' },
+  'mfa.bezig': { nl: 'Bezig…', en: 'Working…', ar: 'جارٍ التنفيذ…' },
 
   // ─── [PRIJS-MODUS] Typ je de catalogusprijs inclusief of exclusief btw? ─────────────────────
   //
@@ -13789,7 +13789,7 @@ export const MESSAGES = {
     ar: 'قائمة أسعارك ما زالت فارغة. أدخل خدماتك مرة واحدة، ثم سجّلها بنقرة واحدة.',
   },
   'kassa.prijslijstBeheren': { nl: 'Prijslijst beheren', en: 'Manage price list', ar: 'إدارة قائمة الأسعار' },
-  'kassa.bon': { nl: 'Bon', en: 'Ticket', ar: 'الفاتورة' },
+  'kassa.bon': { nl: 'Bon', en: 'Ticket', ar: 'إيصال' },
   'kassa.bonLeeg': {
     nl: 'Tik hierboven een dienst aan, of vul een vrij bedrag in.',
     en: 'Tap a service above, or enter a free amount.',
@@ -13798,14 +13798,14 @@ export const MESSAGES = {
   'kassa.vrijBedrag': { nl: 'Vrij bedrag', en: 'Free amount', ar: 'مبلغ حر' },
   'kassa.omschrijving': { nl: 'Omschrijving', en: 'Description', ar: 'الوصف' },
   'kassa.bedrag': { nl: 'Bedrag', en: 'Amount', ar: 'المبلغ' },
-  'kassa.tarief': { nl: 'Btw-tarief', en: 'Btw rate', ar: 'نسبة الـ btw' },
+  'kassa.tarief': { nl: 'Btw-tarief', en: 'Btw rate', ar: 'نسبة btw' },
   'kassa.toevoegen': { nl: 'Op de bon', en: 'Add to ticket', ar: 'إضافة إلى الإيصال' },
   'kassa.regelWeg': { nl: 'Regel weghalen', en: 'Remove line', ar: 'إزالة السطر' },
   'kassa.meer': { nl: 'Eentje erbij', en: 'One more', ar: 'واحد إضافي' },
   'kassa.minder': { nl: 'Eentje eraf', en: 'One fewer', ar: 'واحد أقل' },
   'kassa.totaal': { nl: 'Totaal', en: 'Total', ar: 'الإجمالي' },
   'kassa.hoeBetaald': { nl: 'Hoe is er betaald?', en: 'How was it paid?', ar: 'كيف تم الدفع؟' },
-  'kassa.pin': { nl: 'Pin', en: 'Card', ar: 'بطاقة (Pin)' },
+  'kassa.pin': { nl: 'Pin', en: 'Card', ar: 'بطاقة' },
   'kassa.contant': { nl: 'Contant', en: 'Cash', ar: 'نقداً' },
   'kassa.overig': { nl: 'Overig', en: 'Other', ar: 'أخرى' },
   'kassa.bezig': { nl: 'Bezig…', en: 'Working…', ar: 'جارٍ التنفيذ…' },
@@ -13815,7 +13815,7 @@ export const MESSAGES = {
     en: 'Nothing rung up today yet.',
     ar: 'لم يُسجَّل شيء اليوم بعد.',
   },
-  'kassa.terugdraaien': { nl: 'Terugdraaien', en: 'Void', ar: 'إلغاء العملية' },
+  'kassa.terugdraaien': { nl: 'Terugdraaien', en: 'Void', ar: 'التراجع عن العملية' },
   'kassa.terugdraaienVraag': {
     nl: 'Deze bon helemaal terugdraaien?',
     en: 'Void this whole ticket?',
@@ -13831,7 +13831,7 @@ export const MESSAGES = {
     en: 'The lines leave today’s takings. Voiding cannot be undone — what was on the ticket stays in your log.',
     ar: 'ستخرج البنود من مبيعات اليوم. لا يمكن التراجع عن الإلغاء — لكن ما كان على الفاتورة يبقى في سجلك.',
   },
-  'kassa.terugdraaienKnop': { nl: 'Terugdraaien', en: 'Void ticket', ar: 'إلغاء الفاتورة' },
+  'kassa.terugdraaienKnop': { nl: 'Terugdraaien', en: 'Void ticket', ar: 'التراجع عن العملية' },
   // One sentence per payment method — a noun inside a sentence is not a parameter.
   'kassa.betaaldPin': { nl: 'Met pin betaald', en: 'Paid by card', ar: 'مدفوعة بالبطاقة' },
   'kassa.betaaldContant': { nl: 'Contant betaald', en: 'Paid in cash', ar: 'مدفوعة نقداً' },
@@ -13877,7 +13877,7 @@ export const MESSAGES = {
   },
   'vtg.kenteken': { nl: 'Kenteken', en: 'Kenteken', ar: 'رقم اللوحة (kenteken)', tr: 'Plaka (kenteken)' },
   'vtg.auto': { nl: 'Merk en model', en: 'Make and model', ar: 'الماركة والموديل' },
-  'vtg.klant': { nl: 'Klant', en: 'Customer', ar: 'الزبون' },
+  'vtg.klant': { nl: 'Klant', en: 'Customer', ar: 'العميل' },
   'vtg.telefoon': { nl: 'Telefoon', en: 'Phone', ar: 'الهاتف' },
   'vtg.apk': { nl: 'APK verloopt op', en: 'APK expires on', ar: 'ينتهي الـ APK في' },
   'vtg.notitie': { nl: 'Notitie', en: 'Note', ar: 'ملاحظة' },
@@ -13929,7 +13929,7 @@ export const MESSAGES = {
   'werk.leeg': { nl: 'Nog geen {plural}.', en: 'No {plural} yet.', ar: 'لا {plural} بعد.' },
   'werk.filter.open': { nl: 'Open', en: 'Open', ar: 'مفتوح' },
   'werk.filter.alles': { nl: 'Alles', en: 'All', ar: 'الكل' },
-  'werk.klant': { nl: 'Klant', en: 'Customer', ar: 'الزبون' },
+  'werk.klant': { nl: 'Klant', en: 'Customer', ar: 'العميل' },
   'werk.kenteken': { nl: 'Kenteken', en: 'Kenteken', ar: 'رقم اللوحة (kenteken)' },
   'werk.omschrijving': { nl: 'Omschrijving', en: 'Description', ar: 'الوصف' },
   'werk.gepland': { nl: 'Gepland op', en: 'Planned on', ar: 'مخطط في' },
@@ -13993,7 +13993,7 @@ export const MESSAGES = {
   'werk.status.gefactureerd': { nl: 'Gefactureerd', en: 'Invoiced', ar: 'مفوتر' },
   'werk.status.geannuleerd': { nl: 'Geannuleerd', en: 'Cancelled', ar: 'ملغى' },
   'werk.status.werkorder.open': { nl: 'Gepland', en: 'Planned', ar: 'مخطط' },
-  'werk.status.werkorder.bezig': { nl: 'In behandeling', en: 'In progress', ar: 'قيد العمل' },
+  'werk.status.werkorder.bezig': { nl: 'In behandeling', en: 'In progress', ar: 'قيد المعالجة' },
   'werk.status.werkorder.wacht_onderdeel': { nl: 'Wacht op onderdelen', en: 'Waiting for parts', ar: 'بانتظار قطع' },
   'werk.status.werkorder.wacht_klant': { nl: 'Wacht op klant', en: 'Waiting for customer', ar: 'بانتظار الزبون' },
   'werk.status.werkorder.klaar': { nl: 'Gereed', en: 'Ready', ar: 'جاهز' },
@@ -14031,8 +14031,8 @@ export const MESSAGES = {
   'werk.status.reparatie.wacht_onderdeel': { nl: 'Wacht op onderdelen', en: 'Waiting for parts', ar: 'بانتظار قطع' },
   'werk.status.reparatie.wacht_klant': { nl: 'Wacht op klant', en: 'Waiting for customer', ar: 'بانتظار الزبون' },
   'werk.status.reparatie.klaar': { nl: 'Klaar voor ophalen', en: 'Ready for pickup', ar: 'جاهزة للاستلام' },
-  'werk.status.reparatie.gefactureerd': { nl: 'Gefactureerd', en: 'Invoiced', ar: 'مفوترة' },
-  'werk.status.reparatie.geannuleerd': { nl: 'Geannuleerd', en: 'Cancelled', ar: 'ملغاة' },
+  'werk.status.reparatie.gefactureerd': { nl: 'Gefactureerd', en: 'Invoiced', ar: 'مفوتر' },
+  'werk.status.reparatie.geannuleerd': { nl: 'Geannuleerd', en: 'Cancelled', ar: 'ملغى' },
   // [WERK-BEURT] Repeating work and its beurten.
   'werk.herhaal': { nl: 'Herhaalt', en: 'Repeats', ar: 'يتكرر' },
   'werk.herhaal.geen': { nl: 'Eenmalig', en: 'Once', ar: 'مرة واحدة' },
@@ -14107,7 +14107,7 @@ export const MESSAGES = {
   'werk.veld.lespakket': { nl: 'Lespakket', en: 'Lesson package', ar: 'باقة الدروس' },
   'werk.veld.examenDatum': { nl: 'Examendatum', en: 'Exam date', ar: 'تاريخ الامتحان' },
   'werk.regel.les': { nl: 'Rijles', en: 'Driving lesson', ar: 'درس قيادة' },
-  'werk.regel.pakket': { nl: 'Lespakket', en: 'Lesson package', ar: 'باقة دروس' },
+  'werk.regel.pakket': { nl: 'Lespakket', en: 'Lesson package', ar: 'باقة الدروس' },
   'werk.regel.examen': { nl: 'Examen', en: 'Exam', ar: 'امتحان' },
   'werk.les.lessen': { nl: 'Lessen', en: 'Lessons', ar: 'الدروس' },
   'werk.les.lesGedaan': { nl: 'Les gegeven', en: 'Lesson given', ar: 'أُعطي الدرس' },
@@ -14475,7 +14475,7 @@ export const MESSAGES = {
   'ritten.veld.tarief': { nl: 'Tarief per km (ex btw)', en: 'Rate per km (ex VAT)', ar: 'التعرفة لكل كم (قبل الضريبة)' },
   'ritten.veld.tariefHint': { nl: 'Leeg = niet doorbelasten.', en: 'Empty = not charged on.', ar: 'فارغ = لا يُحمَّل على العميل.' },
   'ritten.veld.klant': { nl: 'Klant', en: 'Customer', ar: 'العميل' },
-  'ritten.veld.geenKlant': { nl: 'Geen klant', en: 'No customer', ar: 'بلا عميل' },
+  'ritten.veld.geenKlant': { nl: 'Geen klant', en: 'No customer', ar: 'بدون عميل' },
   'ritten.zakelijk': { nl: 'Zakelijke rit', en: 'Business trip', ar: 'رحلة عمل' },
   'ritten.zakelijkHint': { nl: 'Alleen zakelijke kilometers tellen voor de aftrek.', en: 'Only business kilometres count towards the deduction.', ar: 'كيلومترات العمل وحدها تُحتسب للخصم.' },
   'ritten.opslaan': { nl: 'Opslaan', en: 'Save', ar: 'حفظ' },
@@ -14496,8 +14496,8 @@ export const MESSAGES = {
   'ritten.klaar': { nl: 'Klaar om te factureren', en: 'Ready to invoice', ar: 'جاهزة للفوترة' },
   'ritten.maakFactuur': { nl: 'Maak factuur', en: 'Create invoice', ar: 'إنشاء فاتورة' },
   'ritten.fout.factuur': { nl: 'De factuur kon niet worden gemaakt.', en: 'The invoice could not be created.', ar: 'تعذّر إنشاء الفاتورة.' },
-  'ritten.opFactuur': { nl: 'Staat op een factuur', en: 'On an invoice', ar: 'على فاتورة' },
-  'ritten.prive': { nl: 'Privé', en: 'Private', ar: 'خاصة' },
+  'ritten.opFactuur': { nl: 'Staat op een factuur', en: 'On an invoice', ar: 'مُدرَجة في فاتورة' },
+  'ritten.prive': { nl: 'Privé', en: 'Private', ar: 'خاص' },
   'ritten.kmKort': { nl: 'km', en: 'km', ar: 'كم' },
   'ritten.fout.geenDatum': { nl: 'Kies de datum van de rit.', en: 'Choose the date of the trip.', ar: 'اختر تاريخ الرحلة.' },
   'ritten.fout.geenVertrek': { nl: 'Vul in waar de rit begon.', en: 'Fill in where the trip started.', ar: 'اكتب من أين بدأت الرحلة.' },
@@ -14726,23 +14726,23 @@ export const MESSAGES = {
   'bh.home.todo.kop': { nl: 'Te doen', en: 'To do', ar: 'المهام' },
   'bh.home.klanten.kop': { nl: 'Mijn klanten', en: 'My clients', ar: 'عملائي' },
   'bh.home.klanten.nieuw': { nl: '+ Klant', en: '+ Client', ar: '+ عميل' },
-  'bh.home.klanten.zoekPlaceholder': { nl: 'Zoek klant op naam of e-mail…', en: 'Search a client by name or e-mail…', ar: 'ابحث عن عميل بالاسم أو البريد…' },
-  'bh.home.klanten.zoekLabel': { nl: 'Klanten zoeken', en: 'Search clients', ar: 'البحث في العملاء' },
+  'bh.home.klanten.zoekPlaceholder': { nl: 'Zoek klant op naam of e-mail…', en: 'Search a client by name or e-mail…', ar: 'ابحث عن عميل بالاسم أو البريد الإلكتروني…' },
+  'bh.home.klanten.zoekLabel': { nl: 'Klanten zoeken', en: 'Search clients', ar: 'البحث عن العملاء' },
   'bh.home.klanten.wissen': { nl: 'Wissen', en: 'Clear', ar: 'مسح' },
   'bh.home.klanten.onleesbaar.titel': { nl: 'We konden je klantenlijst nu niet ophalen', en: 'We could not fetch your client list right now', ar: 'لم نتمكن من جلب قائمة عملائك الآن' },
   'bh.home.klanten.onleesbaar.uitleg': { nl: 'Dit zegt niets over je klanten: we konden ze niet lezen. Ververs de pagina.', en: 'This says nothing about your clients: we could not read them. Refresh the page.', ar: 'هذا لا يقول شيئًا عن عملائك: لم نتمكن من قراءتهم. حدّث الصفحة.' },
   'bh.home.klanten.eerste.titel': { nl: 'Voeg je eerste klant toe', en: 'Add your first client', ar: 'أضف عميلك الأول' },
   'bh.home.klanten.eerste.uitleg': { nl: 'Nodig een klant uit of koppel een bestaande', en: 'Invite a client or link an existing one', ar: 'ادعُ عميلًا أو اربط عميلًا موجودًا' },
-  'bh.home.klanten.geenResultaat': { nl: 'Geen klanten gevonden voor “{zoekterm}”', en: 'No clients found for “{zoekterm}”', ar: 'لا عملاء مطابقون لـ ”{zoekterm}“' },
+  'bh.home.klanten.geenResultaat': { nl: 'Geen klanten gevonden voor “{zoekterm}”', en: 'No clients found for “{zoekterm}”', ar: 'لا عملاء مطابقون لـ “{zoekterm}”' },
   'bh.home.werkplek.kop': { nl: 'Werkplek', en: 'Workspace', ar: 'مساحة العمل' },
   'bh.home.tegel.beheren': { nl: 'Beheren', en: 'Manage', ar: 'الإدارة' },
   'bh.home.tegel.kwartaal': { nl: 'Kwartaal', en: 'Quarter', ar: 'الربع' },
   'bh.home.tegel.brug': { nl: 'Brug', en: 'Bridge', ar: 'الجسر' },
   'bh.home.tegel.mijnFacturen': { nl: 'Mijn facturen', en: 'My invoices', ar: 'فواتيري' },
   'bh.home.tegel.factureren': { nl: 'Factureren', en: 'Invoicing', ar: 'إصدار فاتورة' },
-  'bh.home.tegel.openstaand': { nl: 'Openstaand', en: 'Outstanding', ar: 'المستحق' },
+  'bh.home.tegel.openstaand': { nl: 'Openstaand', en: 'Outstanding', ar: 'مستحق' },
   'bh.home.tegel.opvragen': { nl: 'Opvragen', en: 'Request', ar: 'طلب المستندات' },
-  'bh.home.tegel.bevestigen': { nl: 'Bevestigen', en: 'Confirm', ar: 'التأكيد' },
+  'bh.home.tegel.bevestigen': { nl: 'Bevestigen', en: 'Confirm', ar: 'تأكيد' },
   'bh.home.tegel.bestanden': { nl: 'Bestanden', en: 'Files', ar: 'الملفات' },
   'bh.home.tegel.instellingen': { nl: 'Instellingen', en: 'Settings', ar: 'الإعدادات' },
   'bh.home.verder.kop': { nl: 'Ga verder waar je gebleven bent', en: 'Continue where you left off', ar: 'تابع من حيث توقفت' },
@@ -14754,7 +14754,7 @@ export const MESSAGES = {
   'bh.home.ai.genereer': { nl: 'Genereer ✨', en: 'Generate ✨', ar: 'أنشئ ✨' },
   'bh.home.ai.onderwerp': { nl: 'Onderwerp: {onderwerp}', en: 'Subject: {onderwerp}', ar: 'الموضوع: {onderwerp}' },
   'bh.home.ai.kopieren': { nl: 'Kopiëren', en: 'Copy', ar: 'نسخ' },
-  'bh.home.ai.opnieuw': { nl: 'Opnieuw', en: 'Again', ar: 'من جديد' },
+  'bh.home.ai.opnieuw': { nl: 'Opnieuw', en: 'Again', ar: 'إعادة المحاولة' },
   'bh.home.ai.teVeel': { nl: 'Even te veel aanvragen', en: 'A few too many requests', ar: 'طلبات كثيرة الآن' },
   'bh.home.ai.mislukt': { nl: 'Het lukte niet', en: 'It did not work', ar: 'لم ينجح الأمر' },
   'bh.home.meldingenFout': {
@@ -14763,7 +14763,7 @@ export const MESSAGES = {
     en: 'We could not fetch your notifications right now. Try again in a moment.',
   },
   'bh.home.ai.probeerStraks': { nl: 'Probeer het zo opnieuw.', en: 'Try again shortly.', ar: 'أعد المحاولة بعد قليل.' },
-  'bh.home.ai.geenVerbinding': { nl: 'Geen verbinding', en: 'No connection', ar: 'لا اتصال' },
+  'bh.home.ai.geenVerbinding': { nl: 'Geen verbinding', en: 'No connection', ar: 'لا يوجد اتصال' },
   'bh.home.ai.checkInternet': { nl: 'Controleer je internet en probeer opnieuw.', en: 'Check your internet and try again.', ar: 'تحقق من اتصالك بالإنترنت وحاول مرة أخرى.' },
 
   // ─── [BOEKHOUDER] Boekhouder · aangifte & status (AccountantWerkboard) ──────────────────────
@@ -14795,7 +14795,7 @@ export const MESSAGES = {
   'bh.werk.hero.btwAangifte': { nl: 'BTW-aangifte {kwartaal}', ar: 'إقرار ضريبة القيمة المضافة {kwartaal}', en: 'VAT return {kwartaal}' },
   'bh.werk.hero.uiterlijk': { nl: 'Uiterlijk {datum}', ar: 'في موعد أقصاه {datum}', en: 'No later than {datum}' },
   'bh.werk.countdown.verlopenEen': { nl: '{n} dag verlopen', ar: 'تأخّر {n} يوم', en: '{n} day overdue' },
-  'bh.werk.countdown.verlopenMeer': { nl: '{n} dagen verlopen', ar: 'تأخّر {n} أيام', en: '{n} days overdue' },
+  'bh.werk.countdown.verlopenMeer': { nl: '{n} dagen verlopen', ar: 'متأخر {n} يومًا', en: '{n} days overdue' },
   'bh.werk.countdown.vandaag': { nl: 'Deadline is vandaag', ar: 'الموعد النهائي اليوم', en: 'Deadline is today' },
   'bh.werk.countdown.nogEen': { nl: 'Nog {n} dag', ar: 'بقي {n} يوم', en: '{n} day left' },
   'bh.werk.countdown.nogMeer': { nl: 'Nog {n} dagen', ar: 'بقي {n} أيام', en: '{n} days left' },
@@ -14810,19 +14810,19 @@ export const MESSAGES = {
   'bh.werk.filter.alle': { nl: 'Alle klanten', ar: 'كل العملاء', en: 'All clients' },
   'bh.werk.filter.actie': { nl: 'Actie nodig', ar: 'يتطلب إجراء', en: 'Action needed' },
   'bh.werk.zoek.placeholder': { nl: 'Zoek klant…', ar: 'ابحث عن عميل…', en: 'Search client…' },
-  'bh.werk.zoek.aria': { nl: 'Klanten zoeken', ar: 'البحث في العملاء', en: 'Search clients' },
+  'bh.werk.zoek.aria': { nl: 'Klanten zoeken', ar: 'البحث عن العملاء', en: 'Search clients' },
   'bh.werk.zoek.wissen': { nl: 'Wissen', ar: 'مسح', en: 'Clear' },
   'bh.werk.csv': { nl: 'Alle klanten (CSV)', ar: 'كل العملاء (CSV)', en: 'All clients (CSV)' },
   'bh.werk.leeg.geenKlanten': { nl: 'Nog geen klanten gekoppeld', ar: 'لا يوجد عملاء مرتبطون بعد', en: 'No clients linked yet' },
   'bh.werk.leeg.geenTreffer': { nl: 'Geen klanten gevonden voor “{zoekterm}”', ar: 'لا عملاء مطابقون لـ “{zoekterm}”', en: 'No clients found for “{zoekterm}”' },
   'bh.werk.leeg.allemaalKlaar': { nl: 'Alle klanten zijn klaar 🎉', ar: 'كل العملاء جاهزون 🎉', en: 'All clients are ready 🎉' },
-  'bh.werk.rij.controleren': { nl: 'Controleren…', ar: 'جارٍ الفحص…', en: 'Checking…' },
+  'bh.werk.rij.controleren': { nl: 'Controleren…', ar: 'جارٍ التحقق…', en: 'Checking…' },
   'bh.werk.rij.koppelingVerbroken': { nl: 'Koppeling verbroken', ar: 'انقطع الربط', en: 'Link disconnected' },
   'bh.werk.rij.statusOnbekend': { nl: 'Kon status niet laden', ar: 'تعذّر تحميل الحالة', en: 'Could not load status' },
   'bh.werk.rij.compleet': { nl: '{score}% compleet', ar: '{score}% مكتمل', en: '{score}% complete' },
   'bh.werk.rij.ontbreekt': { nl: '{n} ontbreekt', ar: 'ينقص {n}', en: '{n} missing' },
   'bh.werk.rij.nakijken': { nl: '{n} nakijken', ar: '{n} للمراجعة', en: '{n} to check' },
-  'bh.werk.herinner': { nl: 'Herinner', ar: 'تذكير', en: 'Remind' },
+  'bh.werk.herinner': { nl: 'Herinner', ar: 'ذكِّر', en: 'Remind' },
   'bh.werk.versturen': { nl: 'Versturen…', ar: 'جارٍ الإرسال…', en: 'Sending…' },
   'bh.werk.verstuurd': { nl: 'Verstuurd', ar: 'أُرسل', en: 'Sent' },
   'bh.werk.mislukt': { nl: 'Mislukt · opnieuw', ar: 'فشل · أعد المحاولة', en: 'Failed · retry' },
@@ -14831,7 +14831,7 @@ export const MESSAGES = {
   'bh.werk.jaarKnop': { nl: 'Jaar', ar: 'السنة', en: 'Year' },
   // [JOURNAAL-BRON] Grootboek blijft Grootboek in elke taal — het is het woord van het vak,
   // dezelfde regel die btw en kvk volgen.
-  'bh.werk.grootboekKnop': { nl: 'Grootboek', ar: 'دفتر الأستاذ (Grootboek)', en: 'Grootboek' },
+  'bh.werk.grootboekKnop': { nl: 'Grootboek', ar: 'دفتر الأستاذ', en: 'Grootboek' },
   'bh.werk.verstuurHerinnering': { nl: 'Verstuur herinnering', ar: 'أرسل التذكير', en: 'Send reminder' },
   'bh.werk.annuleren': { nl: 'Annuleren', ar: 'إلغاء', en: 'Cancel' },
   'bh.werk.melding': { nl: 'De klant krijgt dit als melding in de app (geen e-mail).', ar: 'يصل هذا إلى العميل كإشعار داخل التطبيق (وليس بريدًا إلكترونيًا).', en: 'The client receives this as an in-app notification (no e-mail).' },
@@ -14844,7 +14844,7 @@ export const MESSAGES = {
   'bh.fact.geenMachtigingUitleg': { nl: 'Factureren namens iemand is iets anders dan zijn administratie inzien. Je klant zet het zelf aan bij Instellingen → Mijn boekhouder, en daar ook weer uit.', ar: 'إصدار فواتير نيابةً عن شخص شيء آخر غير الاطّلاع على إدارته. عميلك يفعّل ذلك بنفسه في Instellingen → Mijn boekhouder، ويوقفه هناك أيضاً.', en: 'Invoicing on someone\'s behalf is not the same as viewing their administratie. Your client switches it on themselves under Instellingen → Mijn boekhouder, and off again there.' },
   'bh.fact.geenMachtigingWet': { nl: 'De factuur komt op zijn naam, in zijn nummerreeks en onder zijn BTW-nummer — hij blijft er zelf verantwoordelijk voor (art. 35a Wet OB). Daarom vraagt de app het hem.', ar: 'تصدر الفاتورة باسمه، ضمن سلسلة أرقامه وتحت رقم BTW الخاص به — وتبقى مسؤوليته هو (art. 35a Wet OB). لذلك يطلبها التطبيق منه.', en: 'The invoice goes out in their name, in their number series and under their BTW number — they stay responsible for it themselves (art. 35a Wet OB). That is why the app asks them.' },
   'bh.fact.namensLabel': { nl: 'Namens welke klant?', ar: 'نيابةً عن أي عميل؟', en: 'On behalf of which client?' },
-  'bh.fact.kiesKlantOptie': { nl: 'Kies een klant…', ar: 'اختر عميلاً…', en: 'Choose a client…' },
+  'bh.fact.kiesKlantOptie': { nl: 'Kies een klant…', ar: 'اختر عميلًا…', en: 'Choose a client…' },
   'bh.fact.mandaat': { nl: 'Deze factuur komt op naam van {naam}, met zijn nummerreeks. Hij krijgt bericht zodra hij verstuurd is en kan de machtiging altijd zelf intrekken.', ar: 'تصدر هذه الفاتورة باسم {naam}، ضمن سلسلة أرقامه. يصله إشعار فور إرسالها ويمكنه سحب التفويض بنفسه في أي وقت.', en: 'This invoice goes out in the name of {naam}, in their number series. They are notified as soon as it is sent and can withdraw the mandate themselves at any time.' },
   'bh.fact.mandaatBtw': { nl: 'Deze factuur komt op naam van {naam}, met zijn nummerreeks en BTW-nummer {btw}. Hij krijgt bericht zodra hij verstuurd is en kan de machtiging altijd zelf intrekken.', ar: 'تصدر هذه الفاتورة باسم {naam}، ضمن سلسلة أرقامه وتحت رقم BTW‏ {btw}. يصله إشعار فور إرسالها ويمكنه سحب التفويض بنفسه في أي وقت.', en: 'This invoice goes out in the name of {naam}, in their number series and under BTW number {btw}. They are notified as soon as it is sent and can withdraw the mandate themselves at any time.' },
   'bh.fact.aanWie': { nl: 'Aan wie stuurt {naam} deze factuur?', ar: 'إلى من يرسل {naam} هذه الفاتورة؟', en: 'Who is {naam} sending this invoice to?' },
@@ -14868,7 +14868,7 @@ export const MESSAGES = {
   'bh.fact.btwTarief': { nl: '{tarief}% BTW', ar: '{tarief}% BTW', en: '{tarief}% BTW' },
   'bh.fact.regelErbij': { nl: '+ Regel erbij', ar: '+ سطر إضافي', en: '+ Add a line' },
   'bh.fact.subtotaal': { nl: 'Subtotaal', ar: 'المجموع الفرعي', en: 'Subtotal' },
-  'bh.fact.btw': { nl: 'BTW', ar: 'BTW', en: 'BTW' },
+  'bh.fact.btw': { nl: 'BTW', ar: 'btw', en: 'BTW' },
   'bh.fact.totaal': { nl: 'Totaal', ar: 'الإجمالي', en: 'Total' },
   'bh.fact.bezig': { nl: 'Bezig met versturen…', ar: 'جارٍ الإرسال…', en: 'Sending…' },
   'bh.fact.verstuurNamens': { nl: 'Verstuur namens {naam}', ar: 'أرسل نيابةً عن {naam}', en: 'Send on behalf of {naam}' },
@@ -14887,15 +14887,15 @@ export const MESSAGES = {
   'bh.fact.foutOnbekend': { nl: 'Er ging iets mis. Probeer het opnieuw.', ar: 'حدث خطأ ما. حاول مرة أخرى.', en: 'Something went wrong. Try again.' },
 
   // ─── [BOEKHOUDER] Boekhouder · inkoopfacturen bevestigen (AccountantBevestigen) ─────────────
-  'bh.bev.titel': { nl: 'Bevestigen', ar: 'التأكيد', en: 'Confirm' },
+  'bh.bev.titel': { nl: 'Bevestigen', ar: 'تأكيد', en: 'Confirm' },
   'bh.bev.subtitel': { nl: 'Deze stukken houden een kwartaal tegen — bevestig wat klopt.', ar: 'هذه المستندات تعطّل ربعًا كاملًا — أكّد ما هو صحيح.', en: 'These documents are holding up a quarter — confirm what is correct.' },
   'bh.bev.leeg': { nl: 'Er staat niets te wachten. Bij je gemachtigde klanten is elke inkoopfactuur bevestigd.', ar: 'لا شيء في الانتظار. لدى العملاء الذين فوّضوك، كل فاتورة شراء مؤكدة.', en: 'Nothing is waiting. At the clients who authorised you, every purchase invoice is confirmed.' },
   'bh.bev.uitleg': { nl: 'Je bevestigt de lezing, je verandert er niets aan. Klopt een bedrag niet? Bevestig dan niet en vraag het je klant. Elke bevestiging draagt jouw naam en meldt hem — de verantwoordelijkheid blijft bij hem (art. 52 AWR).', ar: 'أنت تؤكد القراءة ولا تغيّر فيها شيئًا. مبلغ غير صحيح؟ فلا تؤكد واسأل عميلك. كل تأكيد يحمل اسمك ويُعلم عميلك — والمسؤولية تبقى عليه (art. 52 AWR).', en: 'You confirm the reading, you change nothing about it. Is an amount wrong? Then do not confirm and ask your client. Every confirmation carries your name and notifies him — the responsibility stays with him (art. 52 AWR).' },
   'bh.bev.wacht.een': { nl: 'stuk wacht op bevestiging', ar: 'مستند بانتظار التأكيد', en: 'document waiting for confirmation' },
   'bh.bev.wacht.meer': { nl: 'stukken wachten op bevestiging', ar: 'مستندات بانتظار التأكيد', en: 'documents waiting for confirmation' },
   'bh.bev.actie.bevestigen': { nl: 'Bevestigen', ar: 'تأكيد', en: 'Confirm' },
-  'bh.bev.actie.bevestigd': { nl: 'Bevestigd', ar: 'تم التأكيد', en: 'Confirmed' },
-  'bh.bev.actie.bezig': { nl: 'Bezig…', ar: 'جارٍ…', en: 'Working…' },
+  'bh.bev.actie.bevestigd': { nl: 'Bevestigd', ar: 'مؤكَّد', en: 'Confirmed' },
+  'bh.bev.actie.bezig': { nl: 'Bezig…', ar: 'جارٍ التنفيذ…', en: 'Working…' },
   'bh.bev.actie.annuleren': { nl: 'Annuleren', ar: 'إلغاء', en: 'Cancel' },
   // [NO-SILENT-EMPTY] De derde lege staat: niet 'niets te doen' en niet 'geen machtiging', maar
   // 'we konden het niet lezen'. De zin noemt expliciet wat het NIET betekent, omdat de boekhouder
@@ -14952,7 +14952,7 @@ export const MESSAGES = {
   'bh.bev.fout.algemeen': { nl: 'Er ging iets mis.', ar: 'حدث خطأ ما.', en: 'Something went wrong.' },
 
   // ─── [BOEKHOUDER] Boekhouder · openstaand + machtiging vragen (AccountantDebiteuren, VraagMachtiging) 
-  'bh.deb.titel': { nl: 'Openstaande facturen', ar: 'الفواتير المستحقة', en: 'Outstanding invoices' },
+  'bh.deb.titel': { nl: 'Openstaande facturen', ar: 'الفواتير غير المسدَّدة', en: 'Outstanding invoices' },
   'bh.deb.ondertitel': { nl: 'Oudste schuld bovenaan — niet het grootste bedrag.', ar: 'الأقدم في الأعلى — وليس الأكبر مبلغًا.', en: 'Oldest debt at the top — not the largest amount.' },
   'bh.deb.dagen.vandaag': { nl: 'vandaag vervallen', ar: 'تستحق اليوم', en: 'due today' },
   'bh.deb.dagen.een': { nl: '1 dag te laat', ar: 'متأخرة يومًا واحدًا', en: '1 day overdue' },
@@ -14967,15 +14967,15 @@ export const MESSAGES = {
   'bh.deb.totaal.meerEnkel': { nl: 'te laat · {facturen} facturen bij {klanten} klant', ar: 'متأخرة · {facturen} فواتير لدى {klanten} عميل', en: 'overdue · {facturen} invoices at {klanten} client' },
   'bh.deb.totaal.meerMeer': { nl: 'te laat · {facturen} facturen bij {klanten} klanten', ar: 'متأخرة · {facturen} فواتير لدى {klanten} عملاء', en: 'overdue · {facturen} invoices at {klanten} clients' },
   'bh.deb.totaal.geenHerinnerbaar': { nl: 'Vandaag kun je er geen enkele herinneren — per factuur staat hieronder waarom.', ar: 'لا يمكنك إرسال تذكير لأي منها اليوم — السبب مذكور أسفل كل فاتورة.', en: 'You cannot remind any of them today — the reason is below each invoice.' },
-  'bh.deb.totaal.herinnerbaarEen': { nl: '{aantal} kan vandaag een herinnering krijgen.', ar: 'يمكن إرسال تذكير اليوم لـ {aantal} منها.', en: '{aantal} can get a reminder today.' },
-  'bh.deb.totaal.herinnerbaarMeer': { nl: '{aantal} kunnen vandaag een herinnering krijgen.', ar: 'يمكن إرسال تذكير اليوم لـ {aantal} منها.', en: '{aantal} can get a reminder today.' },
+  'bh.deb.totaal.herinnerbaarEen': { nl: '{aantal} kan vandaag een herinnering krijgen.', ar: '{aantal} يمكن أن يحصل على تذكير اليوم.', en: '{aantal} can get a reminder today.' },
+  'bh.deb.totaal.herinnerbaarMeer': { nl: '{aantal} kunnen vandaag een herinnering krijgen.', ar: '{aantal} يمكنهم الحصول على تذكير اليوم.', en: '{aantal} can get a reminder today.' },
   'bh.deb.totaal.namensKlant': { nl: 'De mail gaat uit op naam van je klant, en hij krijgt van elke herinnering bericht.', ar: 'يُرسَل البريد باسم عميلك، ويصله إشعار بكل تذكير.', en: 'The e-mail goes out in your client\'s name, and they are notified of every reminder.' },
   'bh.deb.groep.oudste': { nl: 'oudste:', ar: 'الأقدم:', en: 'oldest:' },
   'bh.deb.rij.onbekendeAfnemer': { nl: 'Onbekende afnemer', ar: 'عميل غير معروف', en: 'Unknown customer' },
   'bh.deb.rij.herinneringEen': { nl: '{aantal} herinnering verstuurd', ar: 'أُرسل {aantal} تذكير', en: '{aantal} reminder sent' },
   'bh.deb.rij.herinneringMeer': { nl: '{aantal} herinneringen verstuurd', ar: 'أُرسلت {aantal} تذكيرات', en: '{aantal} reminders sent' },
   'bh.deb.knop.herinner': { nl: 'Herinner', ar: 'ذكِّر', en: 'Remind' },
-  'bh.deb.knop.bezig': { nl: 'Bezig…', ar: 'جارٍ…', en: 'Working…' },
+  'bh.deb.knop.bezig': { nl: 'Bezig…', ar: 'جارٍ التنفيذ…', en: 'Working…' },
   'bh.deb.status.verstuurd': { nl: 'Herinnering verstuurd', ar: 'تم إرسال التذكير', en: 'Reminder sent' },
   'bh.deb.fout.herinneringMislukt': { nl: 'De herinnering kon niet worden verstuurd.', ar: 'تعذّر إرسال التذكير.', en: 'The reminder could not be sent.' },
   'bh.deb.fout.algemeen': { nl: 'Er ging iets mis.', ar: 'حدث خطأ ما.', en: 'Something went wrong.' },
@@ -14986,7 +14986,7 @@ export const MESSAGES = {
   'bh.macht.kiesPlaceholder': { nl: 'Kies een klant…', ar: 'اختر عميلًا…', en: 'Choose a client…' },
   'bh.macht.knop.vraag': { nl: 'Vraag toestemming', ar: 'اطلب الإذن', en: 'Ask for permission' },
   'bh.macht.knop.gevraagd': { nl: 'Gevraagd', ar: 'تم الطلب', en: 'Asked' },
-  'bh.macht.knop.bezig': { nl: 'Bezig…', ar: 'جارٍ…', en: 'Working…' },
+  'bh.macht.knop.bezig': { nl: 'Bezig…', ar: 'جارٍ التنفيذ…', en: 'Working…' },
   'bh.macht.gevraagdMelding': { nl: 'Gevraagd. Zodra hij het aanzet, staat deze pagina vol.', ar: 'تم الطلب. وبمجرد أن يفعّله، ستمتلئ هذه الصفحة.', en: 'Asked. As soon as they turn it on, this page fills up.' },
   'bh.macht.fout.mislukt': { nl: 'Vragen mislukt.', ar: 'تعذّر إرسال الطلب.', en: 'The request failed.' },
   'bh.macht.fout.algemeen': { nl: 'Er ging iets mis.', ar: 'حدث خطأ ما.', en: 'Something went wrong.' },
@@ -14997,7 +14997,7 @@ export const MESSAGES = {
   'bh.opvr.intro': { nl: 'Eén bericht met precies wat er nog mist — in zijn inbox en in zijn mail.', ar: 'رسالة واحدة تحتوي بالضبط على ما ينقص — في صندوق الوارد لديه وفي بريده الإلكتروني.', en: 'One message with exactly what is still missing — in their inbox and in their e-mail.' },
   'bh.opvr.geenKlanten': { nl: 'Je hebt nog geen gekoppelde klanten. Nodig er een uit bij', ar: 'ليس لديك عملاء مرتبطون بعد. ادعُ عميلاً من', en: 'You have no linked clients yet. Invite one from' },
   'bh.opvr.klant': { nl: 'Klant', ar: 'العميل', en: 'Client' },
-  'bh.opvr.kiesKlant': { nl: 'Kies een klant…', ar: 'اختر عميلاً…', en: 'Choose a client…' },
+  'bh.opvr.kiesKlant': { nl: 'Kies een klant…', ar: 'اختر عميلًا…', en: 'Choose a client…' },
   'bh.opvr.kwartaal': { nl: 'Kwartaal', ar: 'الربع', en: 'Quarter' },
   'bh.opvr.mistIn': { nl: 'Wat BoekBrug mist in {kwartaal}', ar: 'ما تفتقده BoekBrug في {kwartaal}', en: 'What BoekBrug is missing in {kwartaal}' },
   'bh.opvr.laden': { nl: 'Bezig met lezen…', ar: 'جارٍ القراءة…', en: 'Reading…' },
@@ -15017,7 +15017,7 @@ export const MESSAGES = {
   // ─── [BOEKHOUDER] Boekhouder · klanten beheren (KlantenBeheer) ──────────────────────────────
   'bh.klant.invite.title': { nl: 'Klant uitnodigen', ar: 'دعوة عميل', en: 'Invite client' },
   'bh.klant.invite.intro': { nl: 'Vul het e-mailadres van je klant in. Ze ontvangen een uitnodiging om BoekBrug te gebruiken.', ar: 'أدخل عنوان البريد الإلكتروني لعميلك. سيتلقّى دعوة لاستخدام BoekBrug.', en: 'Enter your client\'s e-mail address. They will receive an invitation to use BoekBrug.' },
-  'bh.klant.invite.sending': { nl: 'Versturen...', ar: 'جارٍ الإرسال...', en: 'Sending...' },
+  'bh.klant.invite.sending': { nl: 'Versturen...', ar: 'جارٍ الإرسال…', en: 'Sending...' },
   'bh.klant.invite.send': { nl: 'Nodig uit', ar: 'أرسل دعوة', en: 'Invite' },
   'bh.klant.invite.sent': { nl: '✓ Uitnodiging verstuurd.', ar: '✓ تم إرسال الدعوة.', en: '✓ Invitation sent.' },
   'bh.klant.invite.failed': { nl: 'Versturen mislukt.', ar: 'فشل الإرسال.', en: 'Sending failed.' },
@@ -15049,12 +15049,12 @@ export const MESSAGES = {
   'bh.klant.unlink.action': { nl: 'Ontkoppelen', ar: 'إلغاء الربط', en: 'Unlink' },
   'bh.klant.unlink.title': { nl: 'Klant ontkoppelen', ar: 'إلغاء ربط العميل', en: 'Unlink client' },
   'bh.klant.unlink.confirm': { nl: 'Weet je zeker dat je {name} wilt ontkoppelen? Je verliest toegang tot hun gegevens.', ar: 'هل أنت متأكد أنك تريد إلغاء الربط مع {name}؟ ستفقد الوصول إلى بياناتهم.', en: 'Are you sure you want to unlink {name}? You will lose access to their data.' },
-  'bh.klant.unlink.busy': { nl: 'Verwijderen...', ar: 'جارٍ الحذف...', en: 'Removing...' },
+  'bh.klant.unlink.busy': { nl: 'Verwijderen...', ar: 'جارٍ الحذف…', en: 'Removing...' },
   'bh.klant.unlink.failed': { nl: 'Verwijderen mislukt.', ar: 'فشل الحذف.', en: 'Removing failed.' },
   'bh.klant.cancel': { nl: 'Annuleren', ar: 'إلغاء', en: 'Cancel' },
 
   // ─── [BOEKHOUDER] Boekhouder · het kwartaal en de gegevens van een klant ────────────────────
-  'bh.kwt.actie.verwerkt': { nl: 'Verwerkt', ar: 'مُعالَجة', en: 'Processed' },
+  'bh.kwt.actie.verwerkt': { nl: 'Verwerkt', ar: 'تمت المعالجة', en: 'Processed' },
   'bh.kwt.actie.inBehandeling': { nl: 'In behandeling', ar: 'قيد المعالجة', en: 'In progress' },
   'bh.kwt.actie.vraag': { nl: 'Vraag', ar: 'سؤال', en: 'Question' },
   'bh.kwt.sectie.debiteuren': { nl: 'Debiteuren', ar: 'الذمم المدينة', en: 'Receivables' },
@@ -15067,13 +15067,13 @@ export const MESSAGES = {
   'bh.kwt.kop.metKlant': { nl: 'Q{q} {jaar} — {klant}', ar: 'الربع {q} {jaar} — {klant}', en: 'Q{q} {jaar} — {klant}' },
   'bh.kwt.sorteerOudste': { nl: 'Oudste ↑', ar: 'الأقدم ↑', en: 'Oldest ↑' },
   'bh.kwt.sorteerNieuwste': { nl: 'Nieuwste ↓', ar: 'الأحدث ↓', en: 'Newest ↓' },
-  'bh.kwt.laden': { nl: 'Laden...', ar: 'جارٍ التحميل...', en: 'Loading...' },
+  'bh.kwt.laden': { nl: 'Laden...', ar: 'جارٍ التحميل…', en: 'Loading...' },
   'bh.kwt.documenten': { nl: 'Documenten — bekijk in Brug', ar: 'المستندات — عرضها في الجسر', en: 'Documents — view in Bridge' },
   'bh.kwt.pakketBezig': { nl: 'Kwartaalpakket genereren…', ar: 'جارٍ إنشاء حزمة الربع…', en: 'Generating quarter package…' },
   'bh.kwt.pakketDownload': { nl: 'Download kwartaalpakket (ZIP)', ar: 'تنزيل حزمة الربع (ZIP)', en: 'Download quarter package (ZIP)' },
   'bh.kwt.pakketMislukt': { nl: 'Pakket genereren mislukt — probeer opnieuw.', ar: 'تعذّر إنشاء الحزمة — حاول مرة أخرى.', en: 'Could not generate the package — please try again.' },
-  'bh.kwt.omzet': { nl: 'Omzet (excl. BTW)', ar: 'الإيراد (بدون ضريبة)', en: 'Turnover (excl. VAT)' },
-  'bh.kwt.kosten': { nl: 'Kosten (excl. BTW)', ar: 'التكاليف (بدون ضريبة)', en: 'Costs (excl. VAT)' },
+  'bh.kwt.omzet': { nl: 'Omzet (excl. BTW)', ar: 'الإيراد (بدون btw)', en: 'Turnover (excl. VAT)' },
+  'bh.kwt.kosten': { nl: 'Kosten (excl. BTW)', ar: 'التكاليف (بدون btw)', en: 'Costs (excl. VAT)' },
   'bh.kwt.btwSaldo': { nl: 'BTW te betalen (5g)', ar: 'ضريبة مستحقة (5g)', en: 'VAT to pay (5g)' },
   'bh.kwt.facturen': { nl: 'Facturen', ar: 'الفواتير', en: 'Invoices' },
   'bh.kwt.zoekPlaceholder': { nl: 'Zoek op factuurnummer, klant of bedrag…', ar: 'ابحث برقم الفاتورة أو العميل أو المبلغ…', en: 'Search by invoice number, client or amount…' },
@@ -15083,8 +15083,8 @@ export const MESSAGES = {
   'bh.kwt.opnieuw': { nl: 'Opnieuw proberen', ar: 'إعادة المحاولة', en: 'Try again' },
   'bh.kwt.geenFacturen': { nl: 'Geen facturen in Q{q} {jaar}', ar: 'لا فواتير في الربع {q} {jaar}', en: 'No invoices in Q{q} {jaar}' },
   'bh.kwt.geenGevonden': { nl: 'Geen facturen gevonden voor “{zoek}”', ar: 'لا توجد فواتير مطابقة لـ«{zoek}»', en: 'No invoices found for “{zoek}”' },
-  'bh.kwt.uitgaand': { nl: 'Uitg.', ar: 'صادرة', en: 'Out' },
-  'bh.kwt.inkomend': { nl: 'Ink.', ar: 'واردة', en: 'In' },
+  'bh.kwt.uitgaand': { nl: 'Uitg.', ar: 'صادر', en: 'Out' },
+  'bh.kwt.inkomend': { nl: 'Ink.', ar: 'وارد', en: 'In' },
   'bh.kwt.verlopen': { nl: 'Verlopen', ar: 'متأخرة', en: 'Overdue' },
   'bh.kwt.creditnota': { nl: 'Creditnota', ar: 'إشعار دائن', en: 'Credit note' },
   'bh.kwt.betaaldOp': { nl: 'betaald {datum}', ar: 'دُفعت في {datum}', en: 'paid {datum}' },
@@ -15093,9 +15093,9 @@ export const MESSAGES = {
   'bh.kwt.nietVerwerkt': { nl: 'Niet verwerkt', ar: 'غير مُعالجة', en: 'Not processed' },
   'bh.kwt.aan': { nl: 'Aan', ar: 'إلى', en: 'To' },
   'bh.kwt.vervangt': { nl: 'Vervangt', ar: 'يحلّ محلّ', en: 'Replaces' },
-  'bh.kwt.exclBtw': { nl: 'Excl. BTW', ar: 'بدون ضريبة', en: 'Excl. VAT' },
+  'bh.kwt.exclBtw': { nl: 'Excl. BTW', ar: 'بدون btw', en: 'Excl. VAT' },
   'bh.kwt.btwTarief': { nl: 'BTW {tarief}%', ar: 'ضريبة {tarief}%', en: 'VAT {tarief}%' },
-  'bh.kwt.inclBtw': { nl: 'Incl. BTW', ar: 'شامل الضريبة', en: 'Incl. VAT' },
+  'bh.kwt.inclBtw': { nl: 'Incl. BTW', ar: 'شامل btw', en: 'Incl. VAT' },
   'bh.kwt.openen': { nl: 'Openen', ar: 'فتح', en: 'Open' },
   'bh.kwt.vraag.titel': { nl: 'Vraag aan de klant', ar: 'سؤال إلى العميل', en: 'Question for the client' },
   'bh.kwt.vraag.uitleg': { nl: 'Je klant ziet dit bij factuur {nummer}{partij}. Laat je het leeg, dan melden we alleen dát je een vraag hebt.', ar: 'يرى عميلك هذا عند الفاتورة {nummer}{partij}. إن تركته فارغًا أعلمناه فقط بأن لديك سؤالًا.', en: 'Your client sees this with invoice {nummer}{partij}. Leave it empty and we only say you have a question.' },
@@ -15114,12 +15114,12 @@ export const MESSAGES = {
   'bh.kwt.voorstel.status.accepted': { nl: 'Voorstel overgenomen', ar: 'تم قبول الاقتراح', en: 'Proposal accepted' },
   'bh.kwt.voorstel.status.declined': { nl: 'Voorstel afgewezen', ar: 'رُفض الاقتراح', en: 'Proposal declined' },
   'bh.kwt.voorstel.status.stale': { nl: 'Voorstel vervallen', ar: 'سقط الاقتراح', en: 'Proposal lapsed' },
-  'bh.det.laden': { nl: 'Laden...', ar: 'جارٍ التحميل...', en: 'Loading...' },
+  'bh.det.laden': { nl: 'Laden...', ar: 'جارٍ التحميل…', en: 'Loading...' },
   'bh.det.ontkoppelTitel': { nl: 'Klant ontkoppelen?', ar: 'إلغاء ربط العميل؟', en: 'Unlink client?' },
   'bh.det.ontkoppelUitleg': { nl: 'Je verliest de toegang tot de administratie van {naam}. Hij houdt alles zelf; later opnieuw koppelen kan.', ar: 'ستفقد الوصول إلى دفاتر {naam}. يحتفظ هو بكل شيء؛ ويمكن الربط من جديد لاحقًا.', en: 'You lose access to the books of {naam}. They keep everything; you can link again later.' },
   'bh.det.ontkoppelUitlegAnoniem': { nl: 'Je verliest de toegang tot de administratie van deze klant. Hij houdt alles zelf; later opnieuw koppelen kan.', ar: 'ستفقد الوصول إلى دفاتر هذا العميل. يحتفظ هو بكل شيء؛ ويمكن الربط من جديد لاحقًا.', en: 'You lose access to this client\'s books. They keep everything; you can link again later.' },
   'bh.det.ontkoppelen': { nl: 'Ontkoppelen', ar: 'إلغاء الربط', en: 'Unlink' },
-  'bh.det.ontkoppelMislukt': { nl: 'Ontkoppelen mislukt', ar: 'تعذّر إلغاء الربط', en: 'Unlinking failed' },
+  'bh.det.ontkoppelMislukt': { nl: 'Ontkoppelen mislukt', ar: 'فشل فكّ الربط', en: 'Unlinking failed' },
   'bh.det.klantgegevens': { nl: 'Klantgegevens', ar: 'بيانات العميل', en: 'Client details' },
   'bh.det.naam': { nl: 'Naam', ar: 'الاسم', en: 'Name' },
   'bh.det.email': { nl: 'E-mail', ar: 'البريد الإلكتروني', en: 'E-mail' },
@@ -15225,7 +15225,7 @@ export const MESSAGES = {
   'auth.wachtwoordVergeten': { nl: 'Wachtwoord vergeten?', ar: 'نسيت كلمة المرور؟', en: 'Forgot your password?' },
   'auth.inloggen': { nl: 'Inloggen', ar: 'تسجيل الدخول', en: 'Sign in' },
   'auth.bezig': { nl: 'Bezig...', ar: 'جارٍ التنفيذ…', en: 'Working...' },
-  'auth.laden': { nl: 'Laden...', ar: 'جارٍ التحميل...', en: 'Loading...' },
+  'auth.laden': { nl: 'Laden...', ar: 'جارٍ التحميل…', en: 'Loading...' },
   'auth.nieuwAccount': { nl: 'Nieuw account aanmaken', ar: 'إنشاء حساب جديد', en: 'Create a new account' },
   'auth.mailOpnieuw': { nl: 'Stuur de mail opnieuw', ar: 'إعادة إرسال الرسالة', en: 'Send the e-mail again' },
   'auth.mailVersturen': { nl: 'Bezig met versturen...', ar: 'جارٍ الإرسال…', en: 'Sending...' },
@@ -15239,14 +15239,14 @@ export const MESSAGES = {
   'auth.taal': { nl: 'Taal', ar: 'اللغة', en: 'Language' },
 
   // Het registratiescherm. Zelfde reden als de sleutels hierboven: dit is de deur.
-  'reg.wieBenJij': { nl: 'Wie ben jij?', ar: 'من أنت؟', en: 'Who are you?' },
+  'reg.wieBenJij': { nl: 'Wie ben jij?', ar: 'مَن أنت؟', en: 'Who are you?' },
   'reg.zzper': { nl: 'ZZP’er', ar: 'صاحب عمل حر', en: 'Freelancer' },
   'reg.zzperUitleg': {
     nl: 'Ik stuur en ontvang facturen',
-    ar: 'أُرسل الفواتير وأستلمها',
+    ar: 'أنا أرسل الفواتير وأستقبلها',
     en: 'I send and receive invoices',
   },
-  'reg.boekhouder': { nl: 'Boekhouder', ar: 'محاسب', en: 'Bookkeeper' },
+  'reg.boekhouder': { nl: 'Boekhouder', ar: 'المحاسب', en: 'Bookkeeper' },
   'reg.boekhouderUitleg': {
     nl: 'Ik beheer facturen van mijn klanten',
     ar: 'أدير فواتير عملائي',
@@ -15656,7 +15656,7 @@ export const MESSAGES = {
   'beh.naam': { nl: 'Naam', ar: 'الاسم', en: 'Name' },
   'beh.email': { nl: 'E-mail', ar: 'البريد الإلكتروني', en: 'E-mail' },
   'beh.rol': { nl: 'Rol', ar: 'الدور', en: 'Role' },
-  'beh.plan': { nl: 'Plan', ar: 'الباقة', en: 'Plan' },
+  'beh.plan': { nl: 'Plan', ar: 'الخطة', en: 'Plan' },
   'beh.sinds': { nl: 'Sinds', ar: 'منذ', en: 'Since' },
   'beh.nogGeenAccounts': { nl: 'Nog geen accounts.', ar: 'لا حسابات بعد.', en: 'No accounts yet.' },
 
@@ -15685,7 +15685,7 @@ export const MESSAGES = {
   // label is here.
   'beh.gezond.ok': { nl: 'ok', ar: 'سليمة', en: 'ok' },
   'beh.gezond.nogNietLangs': { nl: 'nog niet langs', ar: 'لم يحن دورها بعد', en: 'not due yet' },
-  'beh.gezond.nooitGedraaid': { nl: 'nooit gedraaid', ar: 'لم تعمل قط', en: 'never ran' },
+  'beh.gezond.nooitGedraaid': { nl: 'nooit gedraaid', ar: 'لم يُشغَّل قط', en: 'never ran' },
   'beh.gezond.afgebroken': { nl: 'afgebroken', ar: 'توقفت في المنتصف', en: 'aborted' },
   'beh.gezond.gefaald': { nl: 'gefaald', ar: 'فشلت', en: 'failed' },
   'beh.gezond.teLangStil': { nl: 'te lang stil', ar: 'صامتة أطول من اللازم', en: 'silent too long' },
@@ -15760,7 +15760,7 @@ export const MESSAGES = {
     en: 'These do not count below: documents from before this measurement carry no reason. That number should fall; if it rises, a path has stopped writing its reason and the list is incomplete.',
   },
   'beh.vast.reden': { nl: 'Reden', ar: 'السبب', en: 'Reason' },
-  'beh.vast.aantal': { nl: 'Aantal', ar: 'العدد', en: 'Count' },
+  'beh.vast.aantal': { nl: 'Aantal', ar: 'الكمية', en: 'Count' },
   'beh.vast.aandeel': { nl: 'Aandeel', ar: 'النسبة', en: 'Share' },
   'beh.vast.vooralBij': { nl: 'Vooral bij', ar: 'غالبًا عند', en: 'Mostly at' },
   'beh.vast.verspreid': { nl: 'verspreid', ar: 'متفرّق', en: 'spread out' },

@@ -21,6 +21,7 @@ import { LOCALE_BOOT_SCRIPT } from "./i18n/locale-boot";
 // [TAAL] The catalogue as a VALUE. An entity in a message survives every source-level check
 // there is; only the shipped string shows it.
 import { MESSAGES } from "./i18n/messages";
+import { AR_SETTLED, AR_DELIBERATE_SPLITS, AR_RETIRED, NL_RETIRED } from "./i18n/ar-decisions";
 import { DOCUMENT_REFERRERS } from "./document-references";
 // [PAY-KEY-SCOPE] The triage this gate checks against is a function now, so the gate asks it
 // instead of parsing it out of source — see the test.
@@ -7284,28 +7285,9 @@ test("[KNOP-IN-ZIN] every sentence that quotes a button quotes the living text",
 // Both are checked on the VALUE, never on the key, because a key name is a developer's word and
 // these are the owner's.
 test("[AR-TERMEN] the retired Arabic forms cannot come back", () => {
-  // Whole labels that were replaced. Matched exactly: "إعادة" alone is retired, while
-  // "إعادة الإرسال" and "إعادة المحاولة" are the words that replaced other things.
-  const RETIRED: Record<string, string> = {
-    "مرة أخرى": "إنشاء نسخة",
-    "تكرار": "جدولة الفاتورة",
-    "اعرض الفاتورة": "عرض الفاتورة",
-    "أعد المحاولة": "إعادة المحاولة",
-    "حاول مرة أخرى": "إعادة المحاولة",
-    "إعادة": "إعادة المحاولة أو إعادة الإرسال، حسب السياق",
-    "فصل": "إلغاء الربط",
-    "فكّ الربط": "إلغاء الربط",
-    "تثبيت": "حفظ، أو إقفال اليوم",
-    "قيّد": "تسجيل",
-    "جارٍ العمل…": "جارٍ التنفيذ…",
-    "أظهر": "إظهار",
-    "اعرض": "عرض",
-    "أكّد": "تأكيد",
-    "ألغِ": "إلغاء",
-    "احذف": "حذف",
-    "زَامن": "مزامنة",
-    "زامن": "مزامنة",
-  };
+  // Whole labels that were replaced — read from ar-decisions.ts, which is where the review's
+  // rulings are recorded. Two copies of a decision is how a decision starts drifting.
+  const RETIRED = AR_RETIRED;
   // The imperative openings. A label that BEGINS with one of these is a command, and the review
   // settled that labels are nouns.
   const IMPERATIVE = ["أظهر", "اعرض", "أكّد", "ألغِ", "احذف", "زامن", "زَامن", "أعد", "فكّ", "قيّد", "ثبّت"];
@@ -7329,17 +7311,43 @@ test("[AR-TERMEN] the retired Arabic forms cannot come back", () => {
   assert.deepEqual(fouten, [], "the reviewed Arabic vocabulary has drifted:\n  " + fouten.join("\n  "));
 });
 
+test("[AR-TERMEN] a settled Dutch source keeps its one settled Arabic wording", () => {
+  // Section ب of the review: 102 Dutch strings the interface had been saying two or three ways in
+  // Arabic. Each was ruled once. This asserts the ruling still holds everywhere the Dutch appears,
+  // which is the whole point of writing it down: a new key that reuses "Verwerkt" gets
+  // "تمت المعالجة" or a red test, and nobody spends the reviewer's afternoon on it twice.
+  const M = MESSAGES as Record<string, Record<string, string>>;
+  const settled = new Map(AR_SETTLED.map(([nl, ar]) => [nl, ar]));
+  const fouten: string[] = [];
+  for (const [key, m] of Object.entries(M)) {
+    const nl = (m.nl ?? "").trim(), ar = (m.ar ?? "").trim();
+    const wil = settled.get(nl);
+    if (!wil || !ar) continue;
+    if (ar !== wil) fouten.push(`${key}: «${nl}» must read «${wil}», not «${ar}»`);
+  }
+  assert.deepEqual(fouten, [], "a settled wording drifted:\n  " + fouten.join("\n  "));
+});
+
+test("[AR-TERMEN] the deliberate splits stay split", () => {
+  // The other half of the review: one Arabic word that had been serving two Dutch meanings, ruled
+  // apart because the meanings differ — a receipt is not an invoice, forwarding is not sending,
+  // disabling a setting is not stopping a run. The instinct of the next reader is to unify them
+  // again, which is exactly the drift the audit found, so each one carries its reason in the file.
+  const M = MESSAGES as Record<string, Record<string, string>>;
+  const fouten: string[] = [];
+  for (const s of AR_DELIBERATE_SPLITS) {
+    const ar = (M[s.key]?.ar ?? "").trim();
+    if (!ar) { fouten.push(`${s.key} no longer exists — the split it held is unrecorded`); continue; }
+    if (ar !== s.ar) fouten.push(`${s.key}: «${ar}» — the ruling was «${s.ar}» because ${s.why}`);
+  }
+  assert.deepEqual(fouten, [], "a deliberate distinction was flattened:\n  " + fouten.join("\n  "));
+});
+
 test("[AR-TERMEN] the Dutch source keeps one form per action too", () => {
   // The drift the extraction found started HERE: a source that says both "Sluit" and "Sluiten"
   // hands the translator two words for one action, and the Arabic inherited the split. Unified in
   // the same batch, so the next translation cannot re-learn the inconsistency.
-  const RETIRED: Record<string, string> = {
-    "Ververs": "Vernieuwen", "Stuur": "Versturen", "Opnieuw sturen": "Opnieuw versturen",
-    "Bekijk factuur": "Factuur bekijken", "Bekijk de factuur": "Factuur bekijken",
-    "Sluit": "Sluiten", "Pauzeer": "Pauzeren", "Hervat": "Hervatten", "Negeer": "Negeren",
-    "Bekijk": "Bekijken", "Verwijder": "Verwijderen", "Annuleer": "Annuleren", "Toon": "Tonen",
-    "Selecteer": "Selecteren",
-  };
+  const RETIRED = NL_RETIRED;
   const fouten: string[] = [];
   for (const [key, message] of Object.entries(MESSAGES as Record<string, Record<string, string>>)) {
     const nl = (message.nl ?? "").trim();
