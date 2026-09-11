@@ -27595,7 +27595,7 @@ test("[JAARSTAND] a quarter that could not be read never renders as fine", () =>
 
 test("[JAARSTAND] the filings read is a list, not four recomputes", () => {
   const route = code("src/app/api/btw/filed/route.ts");
-  assert.match(route, /readFiledQuartersOfYear/,
+  assert.match(route, /readFiledQuarters(Detail)?OfYear/,
     "the year route no longer uses the shared reader in filed-quarter.ts — the module that owns " +
       "every other read of btw_filings");
   assert.doesNotMatch(route, /computeResultForRange|computeFilingDivergence/,
@@ -30265,6 +30265,164 @@ test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, an
 //   · 4000 is untouched. Adding accounts beside it makes an export more precise; renaming or
 //     renumbering it silently moves history.
 // And the third that makes it safe: it suggests, it never books.
+// ─── [CORRECTIE-TIJDVAK] Correcting an invoice, and correcting a return, are two things ───────
+//
+// The machinery for the second exists and is live: btw-filing.ts computes the divergence between
+// what was filed and what the books now say, and decides whether a suppletie follows. What nothing
+// asked was the question that connects them, at the moment the correction is proposed — does this
+// land in a quarter that already went to the Belastingdienst?
+//
+// correction-proposal.ts and correction-scope.ts never looked. So a creditnota against a July
+// invoice was, to this app, the same act in September (Q3 open, nothing owed to anyone) as in
+// November (Q3 filed, the figures now disagree with a submitted return). The first is bookkeeping;
+// the second is a tax event, and the owner was told nothing.
+test("[CORRECTIE-TIJDVAK] a correction in a filed quarter is named, never blocked", () => {
+  const rule = code("src/lib/correctie-tijdvak.ts");
+
+  // ── It NEVER blocks. An invoice that was wrong stays wrong until someone fixes it, and the
+  //    Belastingdienst's own answer to the consequence is the suppletie. Refusing the correction
+  //    to keep a filed return tidy leaves the books wrong, which is exactly backwards.
+  assert.match(rule, /mag gewoon/);
+  assert.doesNotMatch(rule, /throw new Error|return false; \/\/ blok|geblokkeerd/);
+
+  // ── And it computes NO suppletie. Two places deciding what a return owes is two answers to one
+  //    question; btw-filing.ts owns it and already does it.
+  assert.doesNotMatch(rule, /suppletie[A-Za-z]*\(|computeFilingDivergence|correctionRoute/);
+  assert.doesNotMatch(rule, /supabase|createClient|fetch\(|await /, "pure");
+
+  // ── An open quarter says NOTHING ([RUSTIG]): a notice on every correction is read on none.
+  assert.match(rule, /if \(g\.soort === "open"\) return null;/);
+  // ── An unreadable date is UNKNOWN and says so — never quietly assumed open.
+  assert.match(rule, /if \(!q\) return \{ soort: "onbekend" \};/);
+  assert.match(rule, /niet leesbaar/);
+  // ── It reuses the one quarter arithmetic rather than restating it.
+  assert.match(rule, /from ".\/filed-quarter"/);
+
+  // ── THE DOOR. The rule above was written, tested and then imported by nothing: for a week the
+  //    owner could correct an invoice into a filed quarter and be told exactly as much as before,
+  //    which is nothing. A module no screen imports is not a feature.
+  const modal = code("src/components/invoice/InvoiceCorrectionModal.tsx");
+  assert.match(modal, /tijdvakMelding/, "the correction editor does not ask the question");
+  assert.match(modal, /from '@\/lib\/correctie-tijdvak'/);
+  assert.match(modal, /\/api\/btw\/filed\?year=\$\{jaar\}/, "the editor never reads which quarters are filed");
+  assert.match(modal, /tijdvak\.zin/, "the sentence is computed and then not rendered");
+  assert.match(modal, /corr\.tijdvakNietGelezen/, "[NO-SILENT-EMPTY] a failed read has no line of its own");
+
+  // ── And it must still not block. The button's only reason to be disabled is that it is saving.
+  assert.match(modal, /disabled=\{saving\}/);
+  assert.doesNotMatch(modal, /disabled=\{saving \|\| tijdvak|tijdvak\.soort === 'zin' \?\s*true/);
+
+  // ── The read itself. `gediend` carries the day each quarter went out; without it the sentence
+  //    can only claim the quarter was filed, never show when.
+  const filed = code("src/app/api/btw/filed/route.ts");
+  assert.match(filed, /gediend: rows/);
+  assert.match(filed, /readFiledQuartersDetailOfYear/);
+  // [NO-SILENT-EMPTY] A failed read stays a 503 here. An empty `gediend` means nothing is filed.
+  assert.match(filed, /if \(failed\) return NextResponse\.json\(\{ error: "filings_read_failed" \}, \{ status: 503 \}\);/);
+});
+
+// ─── [GROTE-STAP] One extra beat, proportional to what a slip would cost ──────────────────────
+//
+// Measured: every destructive action in this app costs the same number of taps whether it moves
+// €12 or €12.000, and there is no MAX on any of them. The spec calls for an approval workflow —
+// employee drafts, manager finalizes — and that org chart does not exist here; a zzp'er clicking
+// their own approval dialog approves nothing. Where a second pair of eyes genuinely exists this
+// app already has it: an accountant proposes and the owner taps OK ([VOORSTEL]).
+//
+// What was missing is a SIZE check, and it must stay rare or it becomes the dialog everybody
+// clicks away — including on the one that mattered.
+test("[GROTE-STAP] the size is shown, the step is never blocked, and the check stays rare", () => {
+  const rule = code("src/lib/grote-stap.ts");
+
+  // ── Per-action thresholds: the same euros are not the same risk on a different action.
+  assert.match(rule, /terugbetaling: 250,/);
+  assert.match(rule, /creditnota: 1000,/);
+  assert.match(rule, /export const BULK_DREMPEL = 10;/);
+  // A bulk step is judged on its COUNT — an amount threshold would let forty small rows through.
+  assert.match(rule, /if \(aantal > BULK_DREMPEL\)/);
+
+  // ── An unreadable amount is NOT large. Treating unknown as large would put the extra beat on
+  //    exactly the invoices the owner is already asked most about.
+  assert.match(rule, /const bedrag = Number\.isFinite\(stap\.bedrag as number\) \? Math\.abs\(stap\.bedrag as number\) : null;/);
+  assert.match(rule, /if \(bedrag != null && bedrag > drempel\)/);
+
+  // ── It returns a sentence, never a refusal, and the sentence carries no warning words: the
+  //    owner knows what they are doing; what they may have lost track of is how much.
+  assert.doesNotMatch(rule, /throw new Error/);
+  assert.doesNotMatch(rule, /waarschuwing|Let op|zeker weten/i);
+  assert.doesNotMatch(rule, /supabase|createClient|fetch\(|await /, "pure");
+
+  // ── THE DOOR, and only where one was actually missing. Four of the five actions in DREMPEL
+  //    already ask something before they act: the creditnota dialog prints the amount it is about
+  //    to hand back, the bulk undo opens a sheet naming the rows, and the waiting-payment panel
+  //    asks before it books. Ontkoppelen on /bank did not — one tap, no question, at any amount,
+  //    and what it leaves behind is a settled invoice reading as open and a balance too high,
+  //    which is the direction that gets a bill paid twice.
+  const bank = code("src/app/dashboard/bank/BankClient.tsx");
+  assert.match(bank, /beoordeelStap\(\{ soort: 'betaling_ontkoppelen'/,
+    "unlink no longer asks how large the booking it is undoing was");
+  assert.match(bank, /await dialog\.confirm\(\{ message: zin/,
+    "[KASSA-DIALOOG] a money decision is not taken in the browser's own chrome");
+  // The size comes from the line, never from a constant: a hard-coded amount here would ask on
+  // every unlink or on none, which is the two failures this rule exists to avoid.
+  assert.match(bank, /unlink\(s\.transactionId, Math\.abs\(s\.amount\), \(s\.linkedInvoices \?\? \[\]\)\.length\)/);
+  // ── And it still does not block. A small unlink costs exactly one tap, as it did before.
+  assert.match(bank, /if \(zin && !\(await dialog\.confirm/);
+});
+
+// ─── [KETEN] The life of one invoice, read as a chain ─────────────────────────────────────────
+//
+// The links exist already — original_invoice_id on a creditnota, superseded_by_number on a
+// replaced invoice, with creditnota_one_per_original holding the one-to-one in the database. What
+// was missing is the reading: credited-invoices.ts answers "is this credited", and nothing answers
+// "what happened to this invoice, in order". The relation was in the database and not on the page
+// — the same shape as the grootboek before [JOURNAAL-BRON].
+test("[KETEN] the chain is derived from the documents, and claims no link it cannot see", () => {
+  const rule = code("src/lib/factuurketen.ts");
+
+  // ── No second store of the same edges. The spec's relations table is right for a system whose
+  //    relations are not otherwise recorded; here they are, with constraints holding them, and two
+  //    stores would need keeping true against each other.
+  assert.doesNotMatch(rule, /invoice_relations|relation_type/);
+  assert.doesNotMatch(rule, /supabase|createClient|fetch\(|await /, "pure");
+
+  // ── A link it cannot see is never claimed: "no replacement" and "the replacement was not
+  //    loaded" must not render identically.
+  assert.match(rule, /const vervanger = alle\.find\(/);
+  assert.match(rule, /if \(vervanger\) keten\.push/);
+  // ── An invoice never replaces itself.
+  assert.match(rule, /&& d\.id !== origineel\.id\);/);
+
+  // ── The chain is the same chain from EITHER end. Handed a creditnota, the first build made it
+  //    the "origineel" of a one-link chain — the one thing a creditnota certainly is not, since it
+  //    exists only because another document does.
+  assert.match(rule, /const origineel = isCreditnota\(doc\)/);
+  assert.match(rule, /export function origineelVan/);
+  // ── And an original it cannot see is still not invented: the head is simply absent.
+  assert.match(rule, /if \(origineel\) keten\.push\(schakel\("origineel", origineel\)\);/);
+
+  // ── THE DOOR. The creditnota's own screen never said which invoice it corrects. The reference
+  //    WAS written — into the PDF, because art. 219 Richtlijn 2006/112/EG only equates a corrective
+  //    document with an invoice when it refers specifically and unambiguously to the initial one —
+  //    and the person holding the screen was the only one who could not see it.
+  const detail = code("src/app/dashboard/invoice/[id]/page.tsx");
+  assert.match(detail, /origineelVan\(factuurketen\(/, "the creditnota screen does not read its chain");
+  assert.match(detail, /detail\.creditHoortBij/, "and does not say which invoice it belongs to");
+  // A creditnota against an invoice issued outside this app has no row to point at, so the link is
+  // offered only when the original was actually loaded — never a button that leads nowhere.
+  assert.match(detail, /\{gecorrigeerdeFactuur && \(/);
+  // [TAAL] The words come from messages.ts; the module holds the structure and no sentence.
+  assert.doesNotMatch(rule, /Deze creditnota hoort bij/);
+  // ── Only a creditnota credits.
+  assert.match(rule, /String\(d\.invoice_type \?\? ""\) === "creditnota"/);
+  // ── An unreadable total travels as null: a zero here would be an invented amount.
+  assert.match(rule, /Number\.isFinite\(d\.total_inc_btw\) \? d\.total_inc_btw : null/);
+
+  // ── And it says what the documents ARE, never what the money means — that is factuurstaat's
+  //    question, and answering it twice is how two screens come to disagree.
+  assert.doesNotMatch(rule, /openstaand|betaald|verschuldigd/);
+});
+
 // ─── [FACTUURSTAAT] One status field, twelve different readings of it ─────────────────────────
 //
 // Measured before this module existed: 69 places in this app decide "is this invoice paid?" for
@@ -30546,6 +30704,17 @@ test("[WACHTKOPPELING] the waiting link holds an intention, and never books one"
 
   // ── And a read that could not run is not rendered as "nothing is waiting".
   assert.match(route, /bankUnavailable = true;/);
+
+  // ── THE DOOR. A table on production, an API with tests, and no screen is not a feature — it is
+  //    the failure this session diagnosed five times and then committed four times. The panel must
+  //    be mounted, it must be able to RECORD (a panel that can only show leaves the capability as
+  //    unreachable as no panel at all), and the booking must still go through /api/bank/confirm.
+  const paneel = code("src/components/bank/WachtkoppelingPanel.tsx");
+  assert.match(code("src/app/dashboard/bank/BankClient.tsx"), /<WachtkoppelingPanel/,
+    "the waiting-payment panel is not mounted on any screen");
+  assert.match(paneel, /method: 'POST'/, "the panel cannot record a payment, so nothing ever reaches the table");
+  assert.match(paneel, /'\/api\/bank\/confirm'/, "the booking must go through the one money door");
+  assert.doesNotMatch(paneel, /amount_applied|bank_tx_invoices/, "the panel may not book anything itself");
 });
 
 // ─── [VAKWOORD] The profession's words, and the ones this app must NOT answer ─────────────────
