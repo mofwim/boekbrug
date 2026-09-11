@@ -45,6 +45,7 @@ import { decide as decideAutonomy } from "./autonomy-scope";
 import { workDoneLedger as workDoneLedgerFor, estimateMinutes as estimateMinutesFor } from "./work-done";
 // [SEGMENT-VOORDEUR] De drie deuren, en alles wat ze beloven.
 import { SEGMENT_PAGES, claimedRoutes } from "./segment-pages";
+import { VAKWOORDEN, NOT_A_DOOR } from "./vakwoorden";
 import { execSync } from "node:child_process";
 import { parseVak, sellsOverCounter } from "./vak-profile";
 import { demoRefusalFor } from "./demo-tenant";
@@ -21089,7 +21090,12 @@ test("[DEUR] every dashboard screen resolves a name, so the bar has something to
   assert.ok(patterns.length >= 5, `the PATTERN_TITLES parse found only ${patterns.length} entries`);
 
   /** Screens that carry their own chrome, or never render at all. Each with the reason. */
-  const EXEMPT = new Map([
+  const EXEMPT = new Map<string, string>([
+    // [VAKWOORD] The profession's words are redirects onto screens that already exist, so they
+    // never render and have no title of their own. Read out of VAKWOORDEN rather than listed here:
+    // a word removed from the map while its directory stays behind then goes red, which is the
+    // only way this list and that one can be kept saying the same thing.
+    ...VAKWOORDEN.map((v) => [`/dashboard/${v.woord}`, `[VAKWOORD] redirect to ${v.naar} — never renders`] as [string, string]),
     ["/dashboard", "the owner's home — DashboardHeader, not the sub-page bar"],
     ["/dashboard/accountant", "the accountant's home — same header"],
     ["/dashboard/bestanden", "draws its own file-manager header (breadcrumbs, not a back button)"],
@@ -21097,7 +21103,6 @@ test("[DEUR] every dashboard screen resolves a name, so the bar has something to
     ["/dashboard/verkoop", "the medewerker board: the dashboard layout hides all chrome for a sales member on purpose"],
     ["/dashboard/beheer", "operator-only, behind a notFound() gate"],
     ["/dashboard/resultaat", "redirect to /dashboard/waarheid — never renders"],
-    ["/dashboard/journaal", "redirect to /dashboard/grootboek — the word an accountant types, never renders"],
     ["/dashboard/documents", "redirect to bestanden/brug — never renders"],
     ["/dashboard/accountant/status", "redirect to the agenda — never renders"],
     ["/dashboard/accountant/werkplek", "redirect to the accountant home — never renders"],
@@ -30052,6 +30057,61 @@ test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, an
 //   · 4000 is untouched. Adding accounts beside it makes an export more precise; renaming or
 //     renumbering it silently moves history.
 // And the third that makes it safe: it suggests, it never books.
+// ─── [VAKWOORD] The profession's words, and the ones this app must NOT answer ─────────────────
+//
+// A Dutch accountant opening an unfamiliar package does not browse; they look for the nouns of
+// their trade. BoekBrug has debiteuren, crediteuren, saldibalans and journaalposten — under the
+// names the ENTREPRENEUR uses, which are the right names and are not changing. So the word becomes
+// a door onto the screen that already answers it.
+//
+// The half that needs a gate is the other half. A redirect is a CLAIM: it says "you asked for X,
+// here is X". Pointing `memoriaal` at the grootboek would be worse than a 404, because the 404 is
+// true — the accountant would hunt for a memoriaalboeking on a page that has none and conclude the
+// screen is broken rather than the feature absent. The list of what this app does not have is part
+// of what it has.
+test("[VAKWOORD] every word has a real door, and every absence stays a 404", () => {
+  const rule = code("src/lib/vakwoorden.ts");
+  assert.ok(VAKWOORDEN.length >= 10, `the vocabulary bridge parsed only ${VAKWOORDEN.length} words`);
+  assert.ok(NOT_A_DOOR.length >= 3, "the deliberate absences are gone from the module");
+
+  // ── Every word has a route, and every route is in the map. Both directions: a directory left
+  //    behind after a word is removed is a door nothing describes.
+  const dirs = readdirSync("src/app/dashboard").filter((d) =>
+    existsSync(`src/app/dashboard/${d}/page.tsx`)
+    && readFileSync(`src/app/dashboard/${d}/page.tsx`, "utf8").includes("vakwoordNaar"));
+  assert.deepEqual(
+    [...dirs].sort(), VAKWOORDEN.map((v) => v.woord).sort(),
+    "the map and the routes on disk disagree about which words have a door",
+  );
+
+  // ── Each door resolves its target THROUGH the map, never from a string of its own. A door that
+  //    keeps its own destination drifts from the list that says where it goes.
+  for (const v of VAKWOORDEN) {
+    const page = readFileSync(`src/app/dashboard/${v.woord}/page.tsx`, "utf8");
+    assert.match(page, /redirect\(vakwoordNaar\("[a-z]+"\) \?\? "\/dashboard"\);/,
+      `${v.woord} hard-codes its own destination`);
+  }
+
+  // ── Every target is a screen that actually exists. A door onto a 404 is the failure this whole
+  //    bridge was built to remove, reintroduced one level down.
+  for (const v of VAKWOORDEN) {
+    const target = v.naar.replace(/^\/dashboard/, "src/app/dashboard");
+    assert.ok(existsSync(`${target}/page.tsx`), `${v.woord} opens onto ${v.naar}, which has no page`);
+  }
+
+  // ── And the absences have NO route. This is the assertion that keeps the bridge honest.
+  for (const n of NOT_A_DOOR) {
+    assert.ok(!existsSync(`src/app/dashboard/${n.woord}/page.tsx`),
+      `${n.woord} was given a door, but ${n.waarom}`);
+    assert.ok(!rule.includes(`woord: "${n.woord}", naar:`), `${n.woord} is in both lists`);
+  }
+
+  // ── Nothing here renames the owner's app into accountancy vocabulary: the doors are redirects,
+  //    and the screens they land on keep the names the entrepreneur reads.
+  assert.match(code("src/components/nav/DashboardChrome.tsx"), /\["\/dashboard\/facturen", "chrome\.mijnFacturen"\]/);
+  assert.match(code("src/components/nav/DashboardChrome.tsx"), /\["\/dashboard\/incoming", "chrome\.inkomend"\]/);
+});
+
 // ─── [RITME] The expectation half, and the four ways it stays quiet ───────────────────────────
 //
 // supplier-cadence.ts answers "which invoice did NOT arrive". It has had unit tests since it was

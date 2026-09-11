@@ -31,7 +31,7 @@ Verified absent from this repository at the time of writing, each for a stated r
 | Not built | Verified by | Why not |
 |---|---|---|
 | A persistent journal / ledger-entry table | no migration creates one | Every amount is currently derived from the documents on demand, and the derivation is gated. The trigger that would change this is named below. |
-| A manual journal entry (memoriaalboeking) | no API route accepts one | The condition, stated in advance: **the first entry a real owner needs that is not represented by a document** — a depreciation adjustment, a provision, an opening balance, a correction. Until then a journal table would be a second source of truth for figures that already have one. |
+| A manual journal entry (memoriaalboeking) | no API route accepts one, and `[VAKWOORD]` fails if `/dashboard/memoriaal` is ever given a door | The condition, stated in advance: **the first entry a real owner needs that is not represented by a document** — a depreciation adjustment, a provision, an opening balance, a correction. Until then a journal table would be a second source of truth for figures that already have one. |
 | Currency conversion | no exchange-rate code anywhere | A conversion needs the rate on the invoice date, which this app does not have. A foreign invoice is HELD and named instead ([VREEMDE-VALUTA]) — a converted figure, once stored, is indistinguishable from a read one. |
 | Peppol transport (sending over the network) | no access-point client | The UBL the network requires is built and gated ([SI-UBL]). What is missing is a commercial access-point contract, not code. This is a decision for the owner, not an engineering gap. |
 | Owner-written rules ("always book X to 4300") | no rule engine | Five learning loops already exist (bottom section) and are measured working. A rule language would be a sixth way to say the same things, with the owner maintaining it. |
@@ -58,6 +58,7 @@ removed. Column 5 is the seventh column: what the owner sees, in the Dutch they 
 | Is it a netted platform settlement (Mollie)? | `mollie-settlement.ts` | `[MOLLIE-AFREKENING]` | De afrekening toont de bruto omzet, de kosten en de uitbetaling apart. |
 | Does one file hold several invoices? | `multi-invoice-pdf.ts` | `[MULTI-INVOICE]` | De reden noemt de nummers die niet zijn overgenomen. |
 | Is it an offerte or proforma, which is no turnover? | `ubl-export.ts` | `[OFFERTE-IS-GEEN-PROFORMA]` | Een offerte staat op het offertescherm, nooit in de omzet. |
+| Which screen answers a word from the profession? | `vakwoorden.ts` | `[VAKWOORD]` | /dashboard/crediteuren, /saldibalans, /debiteuren … komen uit op het scherm dat het al beantwoordt. |
 
 ### B. What does it say?
 
@@ -152,4 +153,4 @@ removed. Column 5 is the seventh column: what the owner sees, in the Dutch they 
   a rename either updates this row or goes red — the one thing a census must not do is quietly
   describe a repository that no longer exists.
 
-Rows: 57 decisions across 8 stages, each citing a module and a gate that exist.
+Rows: 58 decisions across 8 stages, each citing a module and a gate that exist.

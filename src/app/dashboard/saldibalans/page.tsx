@@ -1,6 +1,6 @@
-// src/app/dashboard/journaal/page.tsx
+// src/app/dashboard/saldibalans/page.tsx
 // [VAKWOORD] Het woord dat een boekhouder typt, op het scherm dat het al beantwoordt.
-// Hier: het journaal is een tabblad van het grootboekscherm
+// Hier: de saldibalans is het eerste tabblad daar
 //
 // De koppeling zelf staat NIET in dit bestand maar in src/lib/vakwoorden.ts, zodat elf deuren één
 // lijst delen en een gate kan nakijken dat de lijst en de mappen elkaar dekken.
@@ -12,5 +12,5 @@ export const dynamic = "force-dynamic";
 export default function Page() {
   // Nooit een vaste string hier: een deur die zijn eigen bestemming bijhoudt, drijft weg van de
   // lijst die zegt waar hij heen gaat.
-  redirect(vakwoordNaar("journaal") ?? "/dashboard");
+  redirect(vakwoordNaar("saldibalans") ?? "/dashboard");
 }
