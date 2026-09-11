@@ -139,15 +139,18 @@ export async function buildXafInputForOwner(args: {
     .order("id", { ascending: true }).range(from, to));
   const linkedIds = bankRows.map((b) => b.invoice_id).filter((x): x is string => !!x);
   // A linked invoice may be dated in ANOTHER year — fetch by id, not by window.
-  const linkedRows = await fetchAllRowsForIds<{ id: string; direction: string | null; receiver_id: string | null }, string>(
+  const linkedRows = await fetchAllRowsForIds<{ id: string; direction: string | null; receiver_id: string | null; invoice_number: string | null }, string>(
     linkedIds,
     (chunk, from, to) => pipeline
       .from("invoices")
-      .select("id, direction, receiver_id")
+      // [XAF-OMSCHRIJVING] The number too: a bank entry that says which invoice it settles is the
+      // difference between a ledger an accountant can read and one that repeats the bank's own code.
+      .select("id, direction, receiver_id, invoice_number")
       .in("id", chunk)
       .order("id", { ascending: true }).range(from, to),
   );
   const linkedDirection = new Map(linkedRows.map((r) => [r.id, effectiveDirection(r, ownerId)]));
+  const linkedNumber = new Map(linkedRows.map((r) => [r.id, r.invoice_number]));
 
   // ── Cash rows ([KAS-ZACHT]: live ones only) ──
   const liveCash = await liveCashEntries(pipeline);
@@ -314,6 +317,8 @@ export async function buildXafInputForOwner(args: {
       description: b.description,
       category: b.category,
       linkedInvoiceDirection: b.invoice_id ? linkedDirection.get(b.invoice_id) ?? null : null,
+      linkedInvoiceNumber: b.invoice_id ? linkedNumber.get(b.invoice_id) ?? null : null,
+      counterpartName: b.counterpart_name,
       posSettlement: toResultBankTx(b).posSettlement === true,
     })),
     cash: cashRows.map((c) => ({
