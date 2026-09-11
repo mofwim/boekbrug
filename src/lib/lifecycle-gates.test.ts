@@ -31627,3 +31627,37 @@ test("[WIT-SCHERM] the work screen is never mounted for a trade with no work lay
   assert.ok(page.indexOf("if (!skin) redirect") < page.indexOf("<WerkClient"),
     "the guard runs after the screen is mounted, which is not a guard");
 });
+
+// ─── [TAAL-SCHERM] No gate had ever rendered a screen in a language other than Dutch ──────────
+//
+// useLocale is a useSyncExternalStore over the language cookie, and its SERVER snapshot is
+// hard-coded to Dutch on purpose so hydration matches the HTML. Every render test therefore
+// renders Dutch, whatever the owner chose: the Arabic and Turkish screens have only ever existed
+// in a browser, after hydration, where nothing looks.
+//
+// AGENTS.md records that the first accountants using this product read Arabic. A per-locale table
+// with no `ar` row, a direction lookup on an undefined entry, a plural helper with no case for a
+// language — each would be invisible to tsc, eslint, next build, the smoke sweep and every render
+// test at once. tests/render/screens-locale.test.tsx walks the screens in ar, tr, en and nl.
+test("[TAAL-SCHERM] the screens are walked in every language, and no key may reach the screen", () => {
+  const suite = readFileSync("tests/render/screens-locale.test.tsx", "utf8");
+
+  // The mock IS the feature here: without it the file renders Dutch four times and proves nothing.
+  assert.match(suite, /use-locale\.ts/, "useLocale is no longer mocked, so every language is Dutch");
+  assert.match(suite, /useLocale: \(\) => locale,/);
+  assert.match(suite, /for \(const taal of \["ar", "tr", "en", "nl"\]\)/,
+    "a language dropped from the walk is a language nothing renders");
+
+  // The second assertion, and the one a fallback cannot cover: Dutch under an Arabic interface is
+  // a small cost; `sent.action.view` on a button is a broken app.
+  assert.match(suite, /const KEYS = Object\.keys\(MESSAGES\)/);
+  assert.match(suite, /a message key instead of a sentence/);
+  // Whole-token matching, never substring: a key is `bank.fout.laden`, and ordinary prose is full
+  // of a dot between two lower-case words.
+  assert.match(suite, /\(\^\|\\\\s\)\$\{k\.replace/,
+    "the key check matches by substring again, which fires on prose and therefore on nothing");
+
+  // And it must keep rendering rather than merely importing: a file that imports every screen and
+  // asserts nothing is the shape this repo has been burned by twice this session.
+  assert.match(suite, /renderToStaticMarkup\(/);
+});
