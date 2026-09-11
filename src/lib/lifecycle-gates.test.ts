@@ -7346,6 +7346,21 @@ test("[AR-TERMEN] a settled Dutch source keeps its one settled Arabic wording", 
   assert.deepEqual(fouten, [], "a settled wording drifted:\n  " + fouten.join("\n  "));
 });
 
+test("[AR-TERMEN] the Dutch term is written one way inside Arabic", () => {
+  // «btw» is kept untranslated on purpose — it is what the owner reads on a letter from the
+  // Belastingdienst. Kept, but written ONE way: the catalogue had «رقم BTW» in nine values and
+  // «رقم btw» in fourteen, which is the same drift the Dutch casing caused on the bare label.
+  // Stated as an invariant rather than a list of forms, because the next uppercase one will be a
+  // wording nobody has written yet. If a value ever genuinely needs the capital, the decision is
+  // made in ar-decisions.ts like every other one — not by quietly adding it here.
+  const fouten: string[] = [];
+  for (const [key, message] of Object.entries(MESSAGES as Record<string, Record<string, string>>)) {
+    const ar = (message.ar ?? "").trim();
+    if (/BTW/.test(ar)) fouten.push(`${key}: «${ar}» writes the term as BTW — inside Arabic it is «btw»`);
+  }
+  assert.deepEqual(fouten, [], "the Dutch term is spelled two ways inside Arabic:\n  " + fouten.join("\n  "));
+});
+
 test("[AR-TERMEN] the decision lists do not contradict each other", () => {
   // AR_SETTLED prescribes wordings; AR_RETIRED_EVERYWHERE forbids them. Nothing stops one list
   // from prescribing what the other forbids, and that is not hypothetical: AR_SETTLED carried
