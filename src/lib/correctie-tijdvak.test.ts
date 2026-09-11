@@ -1,7 +1,7 @@
 // src/lib/correctie-tijdvak.test.ts — run: npx tsx --test src/lib/correctie-tijdvak.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { tijdvakGevolg, tijdvakZin, vraagtEenBlik } from "./correctie-tijdvak";
+import { tijdvakGevolg, tijdvakZin, vraagtEenBlik, tijdvakMelding } from "./correctie-tijdvak";
 
 const gediend = [{ year: 2026, quarter: 3, filed_at: "2026-10-28T09:00:00Z" }];
 
@@ -23,7 +23,7 @@ test("a correction in a FILED quarter names the quarter and the day it went", ()
   }
   const zin = String(tijdvakZin(g));
   assert.match(zin, /al hebt ingediend/);
-  assert.match(zin, /2026-10-28/);
+  assert.match(zin, /28-10-2026/, "the day is written the way the owner's screens write a date");
   assert.equal(vraagtEenBlik(g), true);
 });
 
@@ -66,4 +66,39 @@ test("this module computes no suppletie and touches no figure", () => {
   // answers to one question.
   const g: Record<string, unknown> = { ...tijdvakGevolg("2026-07-15", gediend) };
   assert.deepEqual(Object.keys(g).sort(), ["gediendOp", "soort", "tijdvak"]);
+});
+
+// ── tijdvakMelding: the four things the correction door can say ──────────────
+
+test("[CORRECTIE-TIJDVAK] nothing is said while the filings read is still in flight", () => {
+  assert.deepEqual(tijdvakMelding("2026-08-04", { soort: "bezig" }), { soort: "stil" });
+});
+
+test("[CORRECTIE-TIJDVAK] a failed read is its own answer, never silence and never 'open'", () => {
+  assert.deepEqual(tijdvakMelding("2026-08-04", { soort: "mislukt" }), { soort: "mislukt" });
+});
+
+test("[CORRECTIE-TIJDVAK] no readable date says so, without pretending a quarter was judged", () => {
+  const m = tijdvakMelding(null, { soort: "geenDatum" });
+  assert.equal(m.soort, "zin");
+  assert.match(m.soort === "zin" ? m.zin : "", /niet leesbaar/);
+});
+
+test("[CORRECTIE-TIJDVAK] an open quarter earns no words", () => {
+  assert.deepEqual(
+    tijdvakMelding("2026-08-04", { soort: "gelezen", filings: [] }),
+    { soort: "stil" },
+  );
+});
+
+test("[CORRECTIE-TIJDVAK] a filed quarter is named, with the day it went out", () => {
+  const m = tijdvakMelding("2026-08-04", {
+    soort: "gelezen",
+    filings: [{ year: 2026, quarter: 3, filed_at: "2026-10-14T09:12:00Z" }],
+  });
+  assert.equal(m.soort, "zin");
+  const zin = m.soort === "zin" ? m.zin : "";
+  assert.match(zin, /3e kwartaal van 2026/);
+  assert.match(zin, /14-10-2026/);
+  assert.match(zin, /mag gewoon/, "the notice must never read as a refusal");
 });

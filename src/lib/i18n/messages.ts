@@ -2442,6 +2442,13 @@ export const MESSAGES = {
     ar: 'statiegeld (رهن عبوات) أو مرتجعات على الفاتورة؟ تُحسب ضمن المبلغ بدون الضريبة، بإشارتها.',
     en: 'Deposit (statiegeld), packaging or a return on the invoice? They count inside the ex-VAT amount, with their sign.',
   },
+  // [CORRECTIE-TIJDVAK] Shown when the app could not read WHICH quarters are filed. Translated,
+  // unlike the notice itself: this sentence is about the app failing, not about the aangifte.
+  'corr.tijdvakNietGelezen': {
+    nl: 'We konden niet nagaan of het btw-tijdvak van deze factuur al is ingediend.',
+    ar: 'تعذّر علينا التحقّق مما إذا كانت فترة ضريبة المبيعات (btw) لهذه الفاتورة قد قُدِّمت بالفعل.',
+    en: 'We could not check whether the BTW period of this invoice has already been filed.',
+  },
   'corr.nietsGewijzigd': { nl: 'Er is niets gewijzigd.', ar: 'لم يتغيّر شيء.', en: 'Nothing was changed.' },
   'corr.mislukt': {
     nl: 'Corrigeren mislukt — er is niets gewijzigd',

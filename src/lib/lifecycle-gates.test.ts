@@ -27587,7 +27587,7 @@ test("[JAARSTAND] a quarter that could not be read never renders as fine", () =>
 
 test("[JAARSTAND] the filings read is a list, not four recomputes", () => {
   const route = code("src/app/api/btw/filed/route.ts");
-  assert.match(route, /readFiledQuartersOfYear/,
+  assert.match(route, /readFiledQuarters(Detail)?OfYear/,
     "the year route no longer uses the shared reader in filed-quarter.ts — the module that owns " +
       "every other read of btw_filings");
   assert.doesNotMatch(route, /computeResultForRange|computeFilingDivergence/,
@@ -30289,6 +30289,28 @@ test("[CORRECTIE-TIJDVAK] a correction in a filed quarter is named, never blocke
   assert.match(rule, /niet leesbaar/);
   // ── It reuses the one quarter arithmetic rather than restating it.
   assert.match(rule, /from ".\/filed-quarter"/);
+
+  // ── THE DOOR. The rule above was written, tested and then imported by nothing: for a week the
+  //    owner could correct an invoice into a filed quarter and be told exactly as much as before,
+  //    which is nothing. A module no screen imports is not a feature.
+  const modal = code("src/components/invoice/InvoiceCorrectionModal.tsx");
+  assert.match(modal, /tijdvakMelding/, "the correction editor does not ask the question");
+  assert.match(modal, /from '@\/lib\/correctie-tijdvak'/);
+  assert.match(modal, /\/api\/btw\/filed\?year=\$\{jaar\}/, "the editor never reads which quarters are filed");
+  assert.match(modal, /tijdvak\.zin/, "the sentence is computed and then not rendered");
+  assert.match(modal, /corr\.tijdvakNietGelezen/, "[NO-SILENT-EMPTY] a failed read has no line of its own");
+
+  // ── And it must still not block. The button's only reason to be disabled is that it is saving.
+  assert.match(modal, /disabled=\{saving\}/);
+  assert.doesNotMatch(modal, /disabled=\{saving \|\| tijdvak|tijdvak\.soort === 'zin' \?\s*true/);
+
+  // ── The read itself. `gediend` carries the day each quarter went out; without it the sentence
+  //    can only claim the quarter was filed, never show when.
+  const filed = code("src/app/api/btw/filed/route.ts");
+  assert.match(filed, /gediend: rows/);
+  assert.match(filed, /readFiledQuartersDetailOfYear/);
+  // [NO-SILENT-EMPTY] A failed read stays a 503 here. An empty `gediend` means nothing is filed.
+  assert.match(filed, /if \(failed\) return NextResponse\.json\(\{ error: "filings_read_failed" \}, \{ status: 503 \}\);/);
 });
 
 // ─── [GROTE-STAP] One extra beat, proportional to what a slip would cost ──────────────────────

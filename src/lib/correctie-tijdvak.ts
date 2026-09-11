@@ -30,6 +30,9 @@
 // Pure. Run: npx tsx --test src/lib/correctie-tijdvak.test.ts
 
 import { quarterOf, quarterLabel } from "./filed-quarter";
+// The owner reads this sentence, so the date in it is written the way the rest of their screens
+// write one (dd-mm-jjjj), not the way the database stores it.
+import { formatDateNL } from "./format-nl";
 
 /** A quarter the owner has already filed. */
 export interface GediendTijdvak {
@@ -69,6 +72,17 @@ export function tijdvakGevolg(
 }
 
 /**
+ * "2026-Q3" → "het 3e kwartaal van 2026".
+ *
+ * `tijdvak` is a KEY — it is compared, grouped and logged elsewhere in that shape, so it stays as
+ * it is. This is only how it is read out to a person: nobody filed a "2026-Q3".
+ */
+function kwartaalInWoorden(label: string): string {
+  const m = /^(\d{4})-Q([1-4])$/.exec(label);
+  return m ? `het ${m[2]}e kwartaal van ${m[1]}` : label;
+}
+
+/**
  * The Dutch sentence, or null when there is nothing worth saying.
  *
  * An open quarter says NOTHING. That is the [RUSTIG] rule and it is what keeps the filed-quarter
@@ -79,11 +93,49 @@ export function tijdvakZin(g: TijdvakGevolg): string | null {
   if (g.soort === "onbekend") {
     return "De datum van deze factuur is niet leesbaar, dus we konden niet nagaan in welk btw-tijdvak de correctie valt.";
   }
-  return `Deze correctie valt in ${g.tijdvak}, dat je al hebt ingediend${g.gediendOp ? ` op ${g.gediendOp}` : ""}. ` +
+  return `Deze correctie valt in ${kwartaalInWoorden(g.tijdvak)}, dat je al hebt ingediend${g.gediendOp ? ` op ${formatDateNL(g.gediendOp)}` : ""}. ` +
     "De correctie mag gewoon — je btw-aangifte over dat tijdvak klopt daarna niet meer, en BoekBrug rekent voor je uit of er een suppletie nodig is.";
 }
 
 /** True when the owner should be shown the sentence before they confirm. */
 export function vraagtEenBlik(g: TijdvakGevolg): boolean {
   return g.soort !== "open";
+}
+
+// ── THE DOOR'S SIDE OF IT ─────────────────────────────────────────────────────
+// [CORRECTIE-TIJDVAK] The correction editor cannot answer the question on its own: whether the
+// quarter is filed is a row in btw_filings, and reading it is a round trip that can fail. So the
+// screen reports HOW the read went and this decides what is said — which keeps the four outcomes
+// (still reading, no date to judge, the read failed, here is the answer) in one place with a test
+// on each, instead of four branches inside a component that nothing renders in a test.
+
+/** How the filings read went, as the screen knows it. */
+export type TijdvakLezing =
+  /** The read is in flight. Nothing is said yet — a sentence that flickers is worse than a pause. */
+  | { soort: "bezig" }
+  /** There is no readable invoice date, so no read was made. The filings cannot change that answer. */
+  | { soort: "geenDatum" }
+  /** The read ran and failed. [NO-SILENT-EMPTY]: that is never shown as "nothing is filed". */
+  | { soort: "mislukt" }
+  /** The read answered. An empty list here means the owner has filed nothing that year. */
+  | { soort: "gelezen"; filings: readonly (GediendTijdvak & { filed_at?: string | null })[] };
+
+export type TijdvakMelding =
+  /** Say nothing at all: an open quarter is the ordinary case and earns no words ([RUSTIG]). */
+  | { soort: "stil" }
+  /** The screen says, in the owner's own language, that this check could not run. */
+  | { soort: "mislukt" }
+  | { soort: "zin"; zin: string };
+
+/** What the correction door shows, from the invoice date and how the read went. */
+export function tijdvakMelding(
+  invoiceDate: string | null | undefined,
+  lezing: TijdvakLezing,
+): TijdvakMelding {
+  if (lezing.soort === "bezig") return { soort: "stil" };
+  if (lezing.soort === "mislukt") return { soort: "mislukt" };
+  const gevolg: TijdvakGevolg =
+    lezing.soort === "geenDatum" ? { soort: "onbekend" } : tijdvakGevolg(invoiceDate, lezing.filings);
+  const zin = tijdvakZin(gevolg);
+  return zin ? { soort: "zin", zin } : { soort: "stil" };
 }
