@@ -30618,6 +30618,60 @@ test("[MERK-KOP] the wordmark is text, links home, and stays off the customer's 
     "the invoice mail is the owner's message to their customer, not ours");
 });
 
+// ─── [MERK-VOET] One sign-off, and the two mails that must not carry it ───────────────────────
+//
+// The closing line was written by hand in fourteen places, in four different greys and three
+// different margins, and said the product's name in flat 12px text that linked to nothing. On the
+// PDF the same line had already been fixed once ([VOETTEKST-MERK], [VOETTEKST-LINK]): the name set
+// like a name, the address a real link. A mail and its own attachment closing differently is the
+// kind of difference nobody reports and everybody registers.
+//
+// So it comes from one function now, and this gate holds the three things that made it worth
+// doing — that no fifteenth one gets written by hand, that it stays a CREDIT LINE rather than
+// becoming a letterhead on someone else's invoice, and that the two mails which must NOT carry it
+// still do not.
+test("[MERK-VOET] the sign-off comes from one place, stays a credit line, and skips the two", () => {
+  const merk = code("src/lib/mail-merk.ts");
+  const email = code("src/lib/email.ts");
+
+  // ── One definition. The tagline may appear in mail code only inside mail-merk.ts.
+  for (const f of ["src/lib/email.ts", "src/lib/offerte-send.ts", "src/app/api/pakket/route.ts"]) {
+    assert.doesNotMatch(code(f), /De brug tussen jou en je boekhouder/,
+      `${f} writes the sign-off by hand — it belongs to merkVoet(), or the greys drift again`);
+    assert.match(code(f), /merkVoet/, `${f} sends mail and must sign it`);
+  }
+
+  // ── A credit line, not a letterhead. The PDF's own bound, in the mail's units.
+  assert.match(merk, /font-size: 15px; font-weight: 700/,
+    "a name meant to be recognised is set like a name");
+  assert.doesNotMatch(merk, /font-size: (1[89]|[2-9]\d)px[^;]*;[^`]*BoekBrug<\/a><br/,
+    "bigger than the mail's own heading is a letterhead on someone else's correspondence");
+  // ── It points at the site: the customer reading an invoice mail has no dashboard.
+  assert.match(merk, /export const MERK_URL = "https:\/\/boekbrug\.nl";/);
+
+  // ── THE TWO EXCEPTIONS, and they are deliberate.
+  //    Windows cut on real code and checked, never on a comment: code() strips comments, so a
+  //    marker in one is not in the string being sliced and the window silently runs to EOF.
+  const venster = (van: string, tot: string) => {
+    const a = email.indexOf(van), b = email.indexOf(tot);
+    assert.ok(a >= 0 && b > a, `the window ${van} … ${tot} measures nothing — a sender was renamed`);
+    return email.slice(a, b);
+  };
+  // The operator alarm is a machine talking to whoever keeps it running. It is not customer
+  // communication and has no brand to carry — its own header says so.
+  assert.doesNotMatch(venster("export async function sendBeheerAlarm", "export async function sendAccountantInvite"),
+    /merkVoet/, "the operator alarm is a machine note, not post from a product");
+  // The feedback mail goes from us to us, with the reporter as reply-to. Signing our own internal
+  // notification to ourselves is the kind of tidiness that only adds a line to read.
+  assert.doesNotMatch(venster("export async function sendFeedbackNotification", "export async function sendOfferteToClient"),
+    /merkVoet/, "an internal notification does not need to be told who sent it");
+
+  // ── And the mail that had no sign-off at all: the one that hands a whole administratie to a
+  //    bookkeeper who may never have heard of this product.
+  assert.match(venster("export async function sendQuarterPackageLink", "export async function sendQuarterReadyToAccountant"),
+    /\$\{merkVoet\(\)\}/, "the package mail reaches a third party and must name the product");
+});
+
 // ─── [OCHTEND-TAKEN] Tasks ride along; they never summon ──────────────────────────────────────
 //
 // The morning mail reported what HAPPENED and never what to do, and its own header forbade the

@@ -51,15 +51,62 @@ export function merkKop(baseUrl: string): string {
 }
 
 /**
- * The closing line: what this product is, and the way out.
+ * The public site, and what the sign-off points at.
  *
- * The opt-out sentence is the caller's, because only the caller knows which mail this is and where
- * it is switched off — a footer that guesses sends the owner to a setting that does not exist.
+ * Not `/dashboard`, which is where the header goes: the footer also ends the invoice mail, and the
+ * customer reading that has no account. A link into a dashboard they cannot open is worse than no
+ * link — it is the product looking like it was not written for them.
  */
-export function merkVoet(baseUrl: string, afmeldZin: string): string {
+export const MERK_URL = "https://boekbrug.nl";
+
+/**
+ * [MERK-VOET] The sign-off under every mail this product sends, in the shape the invoice PDF
+ * already uses: the name at the weight a name needs to be recognised, the tagline and the address
+ * under it, both linked.
+ *
+ * ── WHY THIS IS ALLOWED HERE AND THE HEADER IS NOT ──
+ *
+ * The boundary above is about the WORDMARK AT THE TOP: our name opening a message an owner sends
+ * their customer would read as if we had sent it. The foot of the message is the opposite
+ * position — it is where the PDF has carried the same credit line to the same customer since
+ * [VOETTEKST-MERK], and where the thirteen mails already had it, hand-written in four different
+ * greys and three different margins.
+ *
+ * So the same discipline the PDF wrote down applies word for word: this stays a CREDIT LINE and
+ * never becomes a letterhead. 15px is under the mail's own <h2> and nowhere near it, it sits below
+ * everything the reader came for, and the sender's own name keeps the subject line and the From.
+ * An invoice that shouts someone else's brand reads as if that someone sent it — which would cost
+ * the owner more than the mention is worth.
+ *
+ * The line above the brand is the CALLER'S, and it carries two different things: the opt-out
+ * sentence on a mail that has one, and "who this came through" on the message an accountant sends
+ * their client. Only the caller knows which — a footer that guesses the opt-out sends the owner to
+ * a setting that does not exist for this mail. Most mails need neither, being answers to something
+ * the reader just did, so it is optional rather than an empty string every call has to pass.
+ *
+ * The visible address is DERIVED from the link, never written beside it. A preview deploy passing
+ * its own baseUrl would otherwise print "boekbrug.nl" over an href pointing somewhere else, which
+ * is the one kind of wrong a footer must not be.
+ */
+export function merkVoet(baseUrl: string = MERK_URL, eigenRegel?: string): string {
+  const home = escapeHtml(baseUrl);
+  const zichtbaar = home.replace(/^https?:\/\//, "");
+  const eigen = eigenRegel ? `${escapeHtml(eigenRegel)}<br /><br />` : "";
   return `
-      <p style="color: #a0a0a5; font-size: 12px; margin-top: 24px; line-height: 1.6;">
-        ${escapeHtml(afmeldZin)}<br />
-        <a href="${escapeHtml(baseUrl)}/dashboard" style="color: #a0a0a5;">BoekBrug</a> — de brug tussen jou en je boekhouder
+      <p style="color: #5f6368; font-size: 12px; margin-top: 32px; line-height: 1.6;">
+        ${eigen}<a href="${home}" style="color: ${MERK_BLAUW}; font-size: 15px; font-weight: 700; text-decoration: none;">BoekBrug</a><br />
+        De brug tussen jou en je boekhouder · <a href="${home}" style="color: ${MERK_BLAUW}; text-decoration: none;">${zichtbaar}</a>
       </p>`;
+}
+
+/**
+ * The same sign-off for a hand-written text/plain part.
+ *
+ * Most mails derive their text half from the html at the send chokepoint ([MAIL-TEKST]) and need
+ * nothing here. The invoice mail writes its own, because the facts a customer needs must survive
+ * in a fixed order — so it needs the sign-off as text, from the same place, or the two halves
+ * drift the moment one is edited.
+ */
+export function merkVoetTekst(): string {
+  return `BoekBrug — De brug tussen jou en je boekhouder\n${MERK_URL.replace(/^https?:\/\//, "")}`;
 }
