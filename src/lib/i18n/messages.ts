@@ -440,7 +440,7 @@ export const MESSAGES = {
   'start.tegel.bank': { nl: 'Bank', ar: 'البنك', en: 'Bank' },
   'start.tegel.kas': { nl: 'Kas', ar: 'الصندوق', en: 'Cash drawer' },
   'start.cijfers': { nl: 'Cijfers & aangifte', ar: 'الأرقام والإقرار', en: 'Figures & filing' },
-  'start.conceptBtw': { nl: 'Concept BTW-aangifte', ar: 'مسودة إقرار btw', en: 'Draft BTW return' },
+  'start.conceptBtw': { nl: 'Concept BTW-aangifte', ar: 'مسودة إقرار btw', en: 'Draft VAT return' },
   'start.tegel.dagomzet': { nl: 'Dagomzet', ar: 'إيراد اليوم', en: 'Daily turnover' },
   'start.tegel.artikelen': { nl: 'Artikelen', ar: 'المنتجات', en: 'Articles' },
   // [UREN-DEUR] De tegel die er nooit was. Zie ZzpDashboard voor waarom hij in het
@@ -2321,9 +2321,9 @@ export const MESSAGES = {
   'corr.soort.omzetbelasting': { nl: 'Naheffing omzetbelasting (afdracht)', ar: 'ضريبة القيمة المضافة (تسوية)', en: 'VAT assessment (settlement)' },
   'corr.soort.motorrijtuigenbelasting': { nl: 'Motorrijtuigenbelasting (kost, zonder btw)', ar: 'ضريبة المركبات (تكلفة، بدون btw)', en: 'Motor vehicle tax (a cost, no btw)' },
   'corr.soort.overig': { nl: 'Andere brief Belastingdienst', ar: 'رسالة أخرى من مصلحة الضرائب', en: 'Other tax office letter' },
-  'corr.splitUitleg': { nl: 'BTW-specificatie zoals op de factuur — één regel per tarief. Laat alles leeg om de specificatie te wissen.', ar: 'تفصيلة btw كما على الفاتورة — سطر لكل نسبة. اترك الكل فارغًا لمسح التفصيلة.', en: 'BTW specification as printed — one row per rate. Leave everything empty to clear it.' },
+  'corr.splitUitleg': { nl: 'BTW-specificatie zoals op de factuur — één regel per tarief. Laat alles leeg om de specificatie te wissen.', ar: 'تفصيلة btw كما على الفاتورة — سطر لكل نسبة. اترك الكل فارغًا لمسح التفصيلة.', en: 'VAT specification as printed — one row per rate. Leave everything empty to clear it.' },
   'corr.grondslag': { nl: 'Grondslag', ar: 'الأساس', en: 'Base' },
-  'corr.btwBedrag': { nl: 'BTW-bedrag', ar: 'مبلغ btw', en: 'BTW amount' },
+  'corr.btwBedrag': { nl: 'BTW-bedrag', ar: 'مبلغ btw', en: 'VAT amount' },
   // [BTW-TARIEF] Eén tik in plaats van hoofdrekenen. Het TARIEF wordt gevraagd, nooit geraden:
   // uit een bedrag exclusief valt geen tarief af te leiden, en een geraden btw is een geraden
   // voorbelasting. Elke zin een eigen sleutel — een getal is een parameter, een woord niet.
@@ -2354,12 +2354,12 @@ export const MESSAGES = {
   'corr.onbelastUitleg': {
     nl: 'Statiegeld, emballage of pallets op de factuur? Daar zit geen btw op. Vul dat bedrag hier in — het zit al in het bedrag excl. BTW, dus je totaal verandert er niet van.',
     ar: 'تأمين فوارغ أو عبوات أو منصّات نقل على الفاتورة؟ لا ضريبة عليها. أدخل ذلك المبلغ هنا — هو أصلاً ضمن المبلغ بدون ضريبة، فلن يتغيّر إجماليك.',
-    en: 'Deposits, packaging or pallets on the invoice? Those carry no BTW. Enter that amount here — it is already inside the amount excluding BTW, so your total does not change.',
+    en: 'Deposits, packaging or pallets on the invoice? Those carry no VAT. Enter that amount here — it is already inside the amount excluding VAT, so your total does not change.',
   },
   'corr.onbelastLabel': {
     nl: 'Bedrag zonder btw (statiegeld, emballage, pallets)',
     ar: 'مبلغ بلا ضريبة (تأمين فوارغ، عبوات، منصّات)',
-    en: 'Amount without BTW (deposits, packaging, pallets)',
+    en: 'Amount without VAT (deposits, packaging, pallets)',
   },
   'corr.onbelastPlaceholder': {
     nl: 'Bijvoorbeeld 12,60',
@@ -2459,7 +2459,7 @@ export const MESSAGES = {
   'corr.tijdvakNietGelezen': {
     nl: 'We konden niet nagaan of het btw-tijdvak van deze factuur al is ingediend.',
     ar: 'تعذّر علينا التحقّق مما إذا كانت فترة ضريبة المبيعات (btw) لهذه الفاتورة قد قُدِّمت بالفعل.',
-    en: 'We could not check whether the BTW period of this invoice has already been filed.',
+    en: 'We could not check whether the VAT period of this invoice has already been filed.',
   },
   'corr.nietsGewijzigd': { nl: 'Er is niets gewijzigd.', ar: 'لم يتغيّر شيء.', en: 'Nothing was changed.' },
   'corr.mislukt': {
@@ -5052,7 +5052,7 @@ export const MESSAGES = {
   'brug.btw5a': {
     nl: 'BTW verschuldigd (5a)',
     ar: 'btw المستحق (5a)',
-    en: 'BTW due (5a)',
+    en: 'VAT due (5a)',
   },
   'brug.btw5b': {
     nl: 'Voorbelasting (5b)',
@@ -5072,12 +5072,12 @@ export const MESSAGES = {
   'brug.conceptBtwBetalen': {
     nl: 'Concept BTW te betalen',
     ar: 'btw المبدئية للدفع',
-    en: 'Provisional BTW to pay',
+    en: 'Provisional VAT to pay',
   },
   'brug.conceptBtwTerug': {
     nl: 'Concept BTW terug te ontvangen',
     ar: 'btw المبدئية المستردة',
-    en: 'Provisional BTW to receive back',
+    en: 'Provisional VAT to receive back',
   },
   'brug.downloadKwartaal': {
     nl: 'Download kwartaal',
@@ -5162,7 +5162,7 @@ export const MESSAGES = {
   'brug.kostenExcl': {
     nl: 'Kosten (excl. BTW)',
     ar: 'التكاليف (بدون btw)',
-    en: 'Costs (excl. BTW)',
+    en: 'Costs (excl. VAT)',
   },
   'brug.moetGebeuren': {
     nl: 'Wat moet er nog gebeuren',
@@ -5172,12 +5172,12 @@ export const MESSAGES = {
   'brug.omzetExcl': {
     nl: 'Omzet (excl. BTW)',
     ar: 'الإيراد (بدون btw)',
-    en: 'Turnover (excl. BTW)',
+    en: 'Turnover (excl. VAT)',
   },
   'brug.omzetZonderTarief': {
     nl: '{amount} omzet (contant of via de bank) heeft nog geen BTW-tarief — die BTW zit niet in 5a.',
     ar: '{amount} من الإيرادات (نقداً أو عبر البنك) بلا نسبة btw بعد — هذه الضريبة ليست ضمن 5a.',
-    en: '{amount} of turnover (cash or via the bank) has no BTW rate yet — that BTW is not in 5a.',
+    en: '{amount} of turnover (cash or via the bank) has no VAT rate yet — that VAT is not in 5a.',
   },
   'brug.resultaat': {
     nl: 'Resultaat',
@@ -6118,18 +6118,18 @@ export const MESSAGES = {
   'ink.bedrag.tariefGeheugen': {
     nl: 'De BTW-uitsplitsing stond niet op deze factuur. Deze leverancier rekende {aantal} keer eerder {tarief}% — allemaal hetzelfde.',
     ar: 'لم تكن تفاصيل ضريبة القيمة المضافة على هذه الفاتورة. هذا المورّد احتسب {tarief}% في {aantal} فاتورة سابقة — كلها بالنسبة نفسها.',
-    en: 'The BTW breakdown was not on this invoice. This supplier charged {tarief}% on {aantal} earlier invoices — every one of them.',
+    en: 'The VAT breakdown was not on this invoice. This supplier charged {tarief}% on {aantal} earlier invoices — every one of them.',
   },
   // [LEVERANCIER-STANDAARD] The owner set the rate on the supplier; no count to cite, a decision.
   'ink.bedrag.tariefIngesteld': {
     nl: 'De BTW-uitsplitsing stond niet op deze factuur. Voor deze leverancier heb je {tarief}% ingesteld.',
     ar: 'لم تكن تفاصيل ضريبة القيمة المضافة على هذه الفاتورة. لهذا المورّد ضبطتَ {tarief}%.',
-    en: 'The BTW breakdown was not on this invoice. For this supplier you set {tarief}%.',
+    en: 'The VAT breakdown was not on this invoice. For this supplier you set {tarief}%.',
   },
   'ink.bedrag.vulSplitsing': {
     nl: 'Vul in: excl. {excl} · BTW {btw}',
     ar: 'املأ: بدون ضريبة {excl} · الضريبة {btw}',
-    en: 'Fill in: excl. {excl} · BTW {btw}',
+    en: 'Fill in: excl. {excl} · VAT {btw}',
   },
   'ink.bedrag.exclIs': {
     nl: 'Excl. BTW = {bedrag}',
@@ -8563,7 +8563,7 @@ export const MESSAGES = {
   'inst.btwMethode': {
     nl: 'BTW-methode',
     ar: 'طريقة btw',
-    en: 'BTW method',
+    en: 'VAT method',
   },
   'inst.btwNummer': {
     nl: 'BTW-nummer',
@@ -8633,7 +8633,7 @@ export const MESSAGES = {
   'inst.kasstelselUitleg': {
     nl: 'BTW over je omzet telt op de betaaldatum — voor veel winkels/horeca verplicht. Voorbelasting blijft op de factuurdatum. Gaat in vanaf het huidige kwartaal; eerdere kwartalen blijven ongewijzigd.',
     ar: 'ضريبة إيرادك تُحتسب بتاريخ الدفع — إلزامي لكثير من المتاجر والمطاعم. أمّا ضريبة المشتريات فتبقى بتاريخ الفاتورة. يسري من الربع الحالي؛ وتبقى الأرباع السابقة دون تغيير.',
-    en: 'BTW on your turnover counts on the payment date — mandatory for many shops and hospitality. Input VAT stays on the invoice date. Takes effect from the current quarter; earlier quarters stay unchanged.',
+    en: 'VAT on your turnover counts on the payment date — mandatory for many shops and hospitality. Input VAT stays on the invoice date. Takes effect from the current quarter; earlier quarters stay unchanged.',
   },
   // [KOR-AANGIFTE-UIT] What the switch does now: the return screen goes off, like Moneybird and Exact.
   'inst.korUitleg': {
@@ -8779,7 +8779,7 @@ export const MESSAGES = {
   'inst.toelichtingUitleg': {
     nl: 'Deze zin komt onder het totaal op elke factuur zonder BTW, zodat de boekhouder van je klant weet waarom er geen BTW op staat. Bijvoorbeeld:',
     ar: 'تظهر هذه الجملة تحت المجموع في كل فاتورة بلا btw، ليعرف محاسب عميلك لماذا لا توجد ضريبة. مثلاً:',
-    en: 'This sentence appears under the total on every invoice without BTW, so your client’s accountant knows why there is none. For example:',
+    en: 'This sentence appears under the total on every invoice without VAT, so your client’s accountant knows why there is none. For example:',
   },
   'inst.uitnodigen': {
     nl: 'Uitnodigen',
@@ -8824,7 +8824,7 @@ export const MESSAGES = {
   'inst.vrijgesteldUitleg': {
     nl: 'Voor werk dat is vrijgesteld van BTW (art. 11), zoals zorg of onderwijs; je kiest dan per factuurregel "Vrijgesteld". Vrijgesteld is niet 0%: BTW op inkopen hiervoor vraag je niet terug.',
     ar: 'للعمل المُعفى من الضريبة (المادة 11) كالرعاية أو التعليم؛ تختار حينها «Vrijgesteld» لكل سطر فاتورة. المُعفى ليس 0٪: ضريبة المشتريات له لا تُستردّ.',
-    en: 'For work exempt from BTW (art. 11), such as care or education; you then choose "Vrijgesteld" per invoice line. Exempt is not 0%: BTW on purchases for it is not reclaimed.',
+    en: 'For work exempt from VAT (art. 11), such as care or education; you then choose "Vrijgesteld" per invoice line. Exempt is not 0%: VAT on purchases for it is not reclaimed.',
   },
   'inst.vulEmail': {
     nl: 'Vul een e-mailadres in',
@@ -9764,7 +9764,7 @@ export const MESSAGES = {
   'lijst.btw': {
     nl: 'BTW',
     ar: 'الضريبة',
-    en: 'BTW',
+    en: 'VAT',
   },
   'lijst.btwNummer': {
     nl: 'BTW-nummer',
@@ -9774,7 +9774,7 @@ export const MESSAGES = {
   'lijst.btwPct': {
     nl: 'BTW ({pct}%)',
     ar: 'الضريبة ({pct}%)',
-    en: 'BTW ({pct}%)',
+    en: 'VAT ({pct}%)',
   },
   'lijst.bundel.deel': {
     nl: 'Deel deze link met je klant: ze betalen {amount} in één overboeking, met kenmerk',
@@ -9864,7 +9864,7 @@ export const MESSAGES = {
   'kas.dubbel.watNu': {
     nl: 'Dezelfde aankoop? Verwijder dan de kasregel — de factuur blijft staan en houdt de btw aftrekbaar. Echt twee aankopen? Dan laat je het zo.',
     ar: 'نفس المشتريات؟ إذاً احذف سطر الصندوق — تبقى الفاتورة وتحفظ حق خصم الضريبة. عمليتا شراء مختلفتان فعلاً؟ فاتركه كما هو.',
-    en: 'The same purchase? Then remove the cash line — the invoice stays and keeps the BTW deductible. Genuinely two purchases? Then leave it.',
+    en: 'The same purchase? Then remove the cash line — the invoice stays and keeps the VAT deductible. Genuinely two purchases? Then leave it.',
     tr: 'Aynı alım mı? Öyleyse kasa satırını silin — fatura kalır ve KDV indirilebilir olmayı sürdürür. Gerçekten iki ayrı alım mı? O zaman öyle bırakın.',
   },
   'kas.dubbel.naarFactuur': {
@@ -9943,7 +9943,7 @@ export const MESSAGES = {
   'lijst.exclBtw': {
     nl: 'Excl. BTW',
     ar: 'بدون btw',
-    en: 'Excl. BTW',
+    en: 'Excl. VAT',
   },
   'lijst.factuurBetaald': {
     nl: 'Factuur {number} betaald ✓',
@@ -10081,7 +10081,7 @@ export const MESSAGES = {
   'lijst.inclBtw': {
     nl: 'Incl. BTW',
     ar: 'شامل btw',
-    en: 'Incl. BTW',
+    en: 'Incl. VAT',
   },
   'lijst.klaar': {
     nl: 'Klaar',
@@ -13268,7 +13268,7 @@ export const MESSAGES = {
   'gl.uitleg': { nl: 'Deze facturen zette je opzij toen we ze niet konden lezen. Inmiddels lezen we ze wel.', en: 'You set these aside when we could not read them. We can read them now.', ar: 'نحّيت هذه الفواتير حين عجزنا عن قراءتها. صرنا نقرأها الآن.' },
   'gl.samen': { nl: '{n} facturen · {bedrag}', en: '{n} invoices · {bedrag}', ar: '{n} فاتورة · {bedrag}' },
   'gl.samenEen': { nl: '1 factuur · {bedrag}', en: '1 invoice · {bedrag}', ar: 'فاتورة واحدة · {bedrag}' },
-  'gl.leerBtw': { nl: 'we lezen nu de BTW-uitsplitsing per tarief', en: 'we now read the per-rate BTW breakdown', ar: 'صرنا نقرأ تفصيل الضريبة لكل تعرفة' },
+  'gl.leerBtw': { nl: 'we lezen nu de BTW-uitsplitsing per tarief', en: 'we now read the per-rate VAT breakdown', ar: 'صرنا نقرأ تفصيل الضريبة لكل تعرفة' },
   'gl.leerStatiegeld': { nl: 'we vinden nu het statiegeld terug', en: 'we now find the deposit line', ar: 'صرنا نجد سطر الوديعة' },
   'gl.terug': { nl: 'Terugzetten', en: 'Put back', ar: 'إرجاع' },
   'gl.terugFout': { nl: 'Terugzetten mislukt. Probeer het nog een keer.', en: 'Putting back failed. Please try again.', ar: 'فشلت الإعادة. حاول مرة أخرى.' },
@@ -13755,7 +13755,7 @@ export const MESSAGES = {
   // De knop zegt WELKE prijs er in het veld staat, niet wat de app ermee doet. Opgeslagen wordt
   // altijd de prijs excl. btw — zie de kop van price-mode.ts.
 
-  'art.prijsIncl': { nl: 'Prijs (incl. BTW)', en: 'Price (incl. BTW)', ar: 'السعر (شامل الضريبة)' },
+  'art.prijsIncl': { nl: 'Prijs (incl. BTW)', en: 'Price (incl. VAT)', ar: 'السعر (شامل الضريبة)' },
   'art.modus.excl': { nl: 'Excl. btw', en: 'Excl. btw', ar: 'بدون الضريبة' },
   'art.modus.incl': { nl: 'Incl. btw', en: 'Incl. btw', ar: 'شامل الضريبة' },
   'art.modus.aria': {
@@ -14888,11 +14888,11 @@ export const MESSAGES = {
   'bh.fact.ariaEenheid': { nl: 'Eenheid regel {n}', ar: 'وحدة السطر {n}', en: 'Unit, line {n}' },
   'bh.fact.phPrijs': { nl: 'Prijs', ar: 'السعر', en: 'Price' },
   'bh.fact.ariaPrijs': { nl: 'Prijs regel {n}', ar: 'سعر السطر {n}', en: 'Price, line {n}' },
-  'bh.fact.ariaBtw': { nl: 'BTW regel {n}', ar: 'btw السطر {n}', en: 'BTW, line {n}' },
-  'bh.fact.btwTarief': { nl: '{tarief}% BTW', ar: '{tarief}% btw', en: '{tarief}% BTW' },
+  'bh.fact.ariaBtw': { nl: 'BTW regel {n}', ar: 'btw السطر {n}', en: 'VAT, line {n}' },
+  'bh.fact.btwTarief': { nl: '{tarief}% BTW', ar: '{tarief}% btw', en: '{tarief}% VAT' },
   'bh.fact.regelErbij': { nl: '+ Regel erbij', ar: '+ سطر إضافي', en: '+ Add a line' },
   'bh.fact.subtotaal': { nl: 'Subtotaal', ar: 'المجموع الفرعي', en: 'Subtotal' },
-  'bh.fact.btw': { nl: 'BTW', ar: 'الضريبة', en: 'BTW' },
+  'bh.fact.btw': { nl: 'BTW', ar: 'الضريبة', en: 'VAT' },
   'bh.fact.totaal': { nl: 'Totaal', ar: 'الإجمالي', en: 'Total' },
   'bh.fact.bezig': { nl: 'Bezig met versturen…', ar: 'جارٍ الإرسال…', en: 'Sending…' },
   'bh.fact.verstuurNamens': { nl: 'Verstuur namens {naam}', ar: 'أرسل نيابةً عن {naam}', en: 'Send on behalf of {naam}' },
@@ -15653,7 +15653,7 @@ export const MESSAGES = {
   'kwo.intro': {
     nl: 'BTW-aangifte, totalen en export per kwartaal',
     ar: 'إقرار btw والإجماليات والتصدير لكل ربع سنة',
-    en: 'BTW return, totals and export per quarter',
+    en: 'VAT return, totals and export per quarter',
   },
 
   // ─── [BEHEER] The operator's screen ─────────────────────────────────────────────────────────
