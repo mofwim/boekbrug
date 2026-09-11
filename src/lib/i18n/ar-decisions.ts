@@ -92,8 +92,8 @@ export const AR_SETTLED: ReadonlyArray<readonly [nl: string, ar: string]> = [
   ["Omzet (excl. BTW)", "الإيراد (بدون btw)"],
   ["Omzet", "الإيراد"],
   ["Ongedaan maken", "تراجع"],
-  ["Ontkoppelen mislukt", "فشل فكّ الربط"],
-  ["Ontkoppelen mislukt.", "فشل فكّ الربط."],
+  ["Ontkoppelen mislukt", "فشل إلغاء الربط"],
+  ["Ontkoppelen mislukt.", "فشل إلغاء الربط."],
   ["Open in Mijn bestanden", "افتح في «ملفاتي»"],
   ["Openstaand", "مستحق"],
   ["Openstaande facturen", "الفواتير غير المسدَّدة"],
@@ -193,6 +193,23 @@ export const AR_RETIRED: Readonly<Record<string, string>> = {
   "احذف": "حذف",
   "زَامن": "مزامنة",
   "زامن": "مزامنة",
+};
+
+/**
+ * The retired wordings that must not survive INSIDE a sentence either, because they are the NAME
+ * of a control rather than an ordinary verb. A sentence that points at a button names the button
+ * as it is written (AGENTS.md); «فشل فكّ الربط» above a button reading «إلغاء الربط» sends the
+ * owner hunting for a word that is nowhere in the interface.
+ *
+ * This list is short on purpose, and the reason is worth writing down once. Most of AR_RETIRED is
+ * retired AS A LABEL only, and is perfectly good Arabic inside prose: «حاول مرة أخرى» closes 85
+ * error messages correctly, «أعد المحاولة» closes 35 more. Checking AR_RETIRED by substring would
+ * condemn all 120 and force them into a register the reviewer did not ask for. So the substring
+ * rule holds only for wordings that name a thing, and each entry earns its place by being one.
+ */
+export const AR_RETIRED_EVERYWHERE: Readonly<Record<string, string>> = {
+  "فكّ الربط": "إلغاء الربط",
+  "فكّ ربط": "إلغاء ربط", // the same name in construct state: «فكّ ربط دفعة جماعية»
 };
 
 /** Dutch forms retired in favour of one form per action, so the source cannot re-teach a split. */

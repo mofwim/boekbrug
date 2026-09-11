@@ -21,7 +21,7 @@ import { LOCALE_BOOT_SCRIPT } from "./i18n/locale-boot";
 // [TAAL] The catalogue as a VALUE. An entity in a message survives every source-level check
 // there is; only the shipped string shows it.
 import { MESSAGES } from "./i18n/messages";
-import { AR_SETTLED, AR_DELIBERATE_SPLITS, AR_RETIRED, NL_RETIRED } from "./i18n/ar-decisions";
+import { AR_SETTLED, AR_DELIBERATE_SPLITS, AR_RETIRED, AR_RETIRED_EVERYWHERE, NL_RETIRED } from "./i18n/ar-decisions";
 import { DOCUMENT_REFERRERS } from "./document-references";
 // [PAY-KEY-SCOPE] The triage this gate checks against is a function now, so the gate asks it
 // instead of parsing it out of source — see the test.
@@ -7311,6 +7311,24 @@ test("[AR-TERMEN] the retired Arabic forms cannot come back", () => {
   assert.deepEqual(fouten, [], "the reviewed Arabic vocabulary has drifted:\n  " + fouten.join("\n  "));
 });
 
+test("[AR-TERMEN] a control's retired name cannot hide inside a sentence", () => {
+  // The exact-match rule above stops a retired wording from being a LABEL. It does not stop the
+  // same wording from surviving in the error message ABOVE that label, which is where this one
+  // did: the button read «إلغاء الربط» while four failures reported «فشل فكّ الربط», and the owner
+  // was asked to look for a word the interface does not contain.
+  //
+  // Only the names of controls are checked this way. AR_RETIRED is mostly retired-as-a-label, and
+  // those words are correct Arabic prose — the reason lives with the list in ar-decisions.ts.
+  const fouten: string[] = [];
+  for (const [key, message] of Object.entries(MESSAGES as Record<string, Record<string, string>>)) {
+    const ar = (message.ar ?? "").trim();
+    if (!ar) continue;
+    for (const [oud, nieuw] of Object.entries(AR_RETIRED_EVERYWHERE))
+      if (ar.includes(oud)) { fouten.push(`${key}: «${ar}» still contains «${oud}» — the control is called «${nieuw}»`); break; }
+  }
+  assert.deepEqual(fouten, [], "a sentence names a control by a name it no longer has:\n  " + fouten.join("\n  "));
+});
+
 test("[AR-TERMEN] a settled Dutch source keeps its one settled Arabic wording", () => {
   // Section ب of the review: 102 Dutch strings the interface had been saying two or three ways in
   // Arabic. Each was ruled once. This asserts the ruling still holds everywhere the Dutch appears,
@@ -7326,6 +7344,25 @@ test("[AR-TERMEN] a settled Dutch source keeps its one settled Arabic wording", 
     if (ar !== wil) fouten.push(`${key}: «${nl}» must read «${wil}», not «${ar}»`);
   }
   assert.deepEqual(fouten, [], "a settled wording drifted:\n  " + fouten.join("\n  "));
+});
+
+test("[AR-TERMEN] the decision lists do not contradict each other", () => {
+  // AR_SETTLED prescribes wordings; AR_RETIRED_EVERYWHERE forbids them. Nothing stops one list
+  // from prescribing what the other forbids, and that is not hypothetical: AR_SETTLED carried
+  // «فشل فكّ الربط» while «فكّ الربط» was already retired, and no test saw it because the retired
+  // check matched whole labels only. A rule that contradicts another rule is worse than no rule —
+  // whichever one the next reader obeys, a test goes red and the reason is two files away.
+  const fouten: string[] = [];
+  for (const [nl, ar] of AR_SETTLED)
+    for (const [oud, nieuw] of Object.entries(AR_RETIRED_EVERYWHERE))
+      if (ar.includes(oud)) fouten.push(`AR_SETTLED «${nl}» → «${ar}» prescribes the retired «${oud}» (now «${nieuw}»)`);
+  for (const s of AR_DELIBERATE_SPLITS)
+    for (const [oud, nieuw] of Object.entries(AR_RETIRED_EVERYWHERE))
+      if (s.ar.includes(oud)) fouten.push(`AR_DELIBERATE_SPLITS ${s.key} → «${s.ar}» prescribes the retired «${oud}» (now «${nieuw}»)`);
+  for (const vervanger of Object.values(AR_RETIRED))
+    for (const oud of Object.keys(AR_RETIRED_EVERYWHERE))
+      if (vervanger.includes(oud)) fouten.push(`AR_RETIRED replaces something with «${vervanger}», which is itself retired`);
+  assert.deepEqual(fouten, [], "one decision list contradicts another:\n  " + fouten.join("\n  "));
 });
 
 test("[AR-TERMEN] the deliberate splits stay split", () => {

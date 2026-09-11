@@ -166,6 +166,14 @@ And `[KNOP-IN-ZIN]`: a sentence that names a button names what the button curren
 broke three times — twice from a rename, once from a button that was removed while the sentence
 telling people to press it stayed, in all three languages.
 
+One trap worth naming, because it cost a round: a retired wording is normally retired **as a
+label**, and most of them are perfectly good Arabic inside a sentence — «حاول مرة أخرى» closes 85
+error messages correctly. So the retired list is matched on the WHOLE value, and a wording that
+names a control has to be listed a second time, in `AR_RETIRED_EVERYWHERE`, to be refused inside
+sentences as well. Until that existed, four failures reported «فشل فكّ الربط» above a button
+reading «إلغاء الربط» — and `AR_SETTLED` was prescribing the retired wording while `AR_RETIRED`
+forbade it, with no test able to see the contradiction. The lists now check each other.
+
 # A lifecycle gate must not mark its own bounds with a comment
 
 Many gates in `src/lib/lifecycle-gates.test.ts` read a file through `code()` and then cut a window
