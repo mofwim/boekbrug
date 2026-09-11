@@ -30636,6 +30636,17 @@ test("[WACHTKOPPELING] the waiting link holds an intention, and never books one"
 
   // ── And a read that could not run is not rendered as "nothing is waiting".
   assert.match(route, /bankUnavailable = true;/);
+
+  // ── THE DOOR. A table on production, an API with tests, and no screen is not a feature — it is
+  //    the failure this session diagnosed five times and then committed four times. The panel must
+  //    be mounted, it must be able to RECORD (a panel that can only show leaves the capability as
+  //    unreachable as no panel at all), and the booking must still go through /api/bank/confirm.
+  const paneel = code("src/components/bank/WachtkoppelingPanel.tsx");
+  assert.match(code("src/app/dashboard/bank/BankClient.tsx"), /<WachtkoppelingPanel/,
+    "the waiting-payment panel is not mounted on any screen");
+  assert.match(paneel, /method: 'POST'/, "the panel cannot record a payment, so nothing ever reaches the table");
+  assert.match(paneel, /'\/api\/bank\/confirm'/, "the booking must go through the one money door");
+  assert.doesNotMatch(paneel, /amount_applied|bank_tx_invoices/, "the panel may not book anything itself");
 });
 
 // ─── [VAKWOORD] The profession's words, and the ones this app must NOT answer ─────────────────

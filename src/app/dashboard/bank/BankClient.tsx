@@ -36,6 +36,7 @@ import { openAmount } from "@/lib/partial-payment"
 // [ENABLEBANKING] De bankkoppeling staat BOVEN de uploadkaart, niet in de plaats ervan: een
 // koppeling kan verlopen of geweigerd worden, en dan moet uploaden er gewoon nog staan.
 import BankConnectPanel from './BankConnectPanel'
+import WachtkoppelingPanel from '@/components/bank/WachtkoppelingPanel'
 // [DESIGN] Palette and radius come from the shared source now
 // (src/lib/design/tokens.ts). This file used to declare its own copy; see the
 // header of tokens.ts for why the copies had to go — two of the values in them
@@ -2030,6 +2031,11 @@ export default function BankClient() {
           </button>
         </div>
       )}
+
+      {/* [WACHTKOPPELING] Betalingen die de eigenaar al deed en die de bank nog niet liet zien.
+          Hier, omdat dit het scherm is waar je kijkt of geld al binnen is — en omdat een voorstel,
+          als er een komt, over een regel op dit scherm gaat. */}
+      <WachtkoppelingPanel onChanged={() => { void runMatch() }} />
 
       {/* [ENABLEBANKING] De bankkoppeling. Verbergt zichzelf als de server er niet voor is ingesteld. */}
       {setupZichtbaar && (
