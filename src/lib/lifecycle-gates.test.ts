@@ -30123,6 +30123,83 @@ test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, an
 //   · 4000 is untouched. Adding accounts beside it makes an export more precise; renaming or
 //     renumbering it silently moves history.
 // And the third that makes it safe: it suggests, it never books.
+// ─── [FACTUURSTAAT] One status field, twelve different readings of it ─────────────────────────
+//
+// Measured before this module existed: 69 places in this app decide "is this invoice paid?" for
+// themselves, using 12 different sets of status strings. Two of those sets are the SAME set in a
+// different order — ["received","paid"] and ["paid","received"] — so twenty places that agree
+// perfectly cannot be found by one search.
+//
+// The sets SHOULD differ; the questions differ. What is missing is that no answer has a NAME, so
+// ["processing","received"] in one file and ["processing","received","paid"] in another is
+// unreadable as either a considered decision or a slip somebody made once. Neither a reader nor a
+// test can tell them apart, and that cost is paid on every change.
+//
+// This is DERIVED, not migrated, and that is deliberate: `status` is load-bearing — a generated
+// `shared` column reads it, the verwerkt trigger fires on it, RLS policies test it, the auditfile
+// selects on it. Rewriting all of that at once in an app holding real money, to fix a readability
+// problem, is a trade nobody should take.
+//
+// ── THE RATCHET ──
+//
+// A vocabulary nobody adopts is worse than none: it adds a 70th way to ask the question. So this
+// gate does what [RUSTIG] does — it records the count and forbids growth. AGENTS.md forbids a mass
+// rename; this makes the debt fall as files are touched for other reasons, and never rise.
+test("[FACTUURSTAAT] the money decides what is paid, and the anonymous sets may not grow", () => {
+  const staat = code("src/lib/factuurstaat.ts");
+
+  // ── THE RULE THAT IS NOT COSMETIC: payment comes from the amounts, never from the word.
+  assert.match(staat, /const betaald = bedrag\(f\.amount_paid\) \?\? 0;/);
+  assert.doesNotMatch(staat, /stand = .*f\.status === "paid"/,
+    "a row can say 'paid' while carrying a part payment — the status lags, the money does not");
+  // An unreadable total is UNKNOWN. Calling it paid or unpaid would invent a fact about money.
+  assert.match(staat, /if \(totaal == null\) return \{ stand: "onbekend", openstaand: null \};/);
+  // An overpaid invoice never reports a negative debt.
+  assert.match(staat, /if \(rest <= -0\.01\) return \{ stand: "teveel_betaald", openstaand: 0 \};/);
+  // [CENT] and [CREDIT-TEKEN]: the one rounder, and magnitudes on both sides.
+  assert.match(staat, /from ".\/invoice-totals"/);
+  assert.match(staat, /Math\.abs\(round2\(n\)\)/);
+  // Pure — a derivation that reads a database is a second source of truth with extra steps.
+  assert.doesNotMatch(staat, /supabase|createClient|fetch\(|await /);
+  // It must not clock itself: `vandaag` is passed in, or the same invoice is late in one timezone
+  // and not in another ([EEN-KLOK]).
+  assert.match(staat, /export function factuurstaat\(f: FactuurFeiten, vandaag: string\)/);
+  assert.doesNotMatch(staat, /new Date\(\)|Date\.now\(\)/);
+
+  // ── THE RATCHET. It may fall. It may not rise.
+  //
+  //    The number is the one THIS SCAN produces, not the one a shell grep produced while the gate
+  //    was being written: those disagreed by four (different multiline handling, different test
+  //    exclusion), and a baseline four above the truth is four free violations. A ratchet
+  //    calibrated with a different instrument than the one it uses is a gate that passes for the
+  //    wrong reason. It nearly shipped that way twice: first because a shell grep and this scan
+  //    disagreed by four, then because the "clean" reading was taken while the test violation was
+  //    still in the tree. The number below is what this scan reports on a tree with nothing added.
+  const BASELINE = 77;
+  const bestanden: string[] = [];
+  const walk = (dir: string) => {
+    for (const e of readdirSync(dir)) {
+      const full = `${dir}/${e}`;
+      if (statSync(full).isDirectory()) walk(full);
+      else if (/\.(ts|tsx)$/.test(e) && !/\.test\.tsx?$/.test(e)) bestanden.push(full);
+    }
+  };
+  for (const root of ["src/app", "src/lib", "src/components", "src/modules"]) walk(root);
+  const PATROON = /\[\s*"(draft|sent|paid|received|processing|overdue|archived)"(\s*,\s*"(draft|sent|paid|received|processing|overdue|archived)")+\s*\]/g;
+  let anoniem = 0;
+  for (const f of bestanden) anoniem += (readFileSync(f, "utf8").match(PATROON) ?? []).length;
+
+  assert.ok(
+    anoniem <= BASELINE,
+    `anonymous status sets rose from ${BASELINE} to ${anoniem}. Use a named question from ` +
+    "factuurstaat.ts (isUitstaand, isGeboekteInkoop, isInAdministratie, isTeBeoordelen) — or add " +
+    "one there with its reason, so the next reader can tell a decision from a slip.",
+  );
+  // And the ceiling comes down as files are converted: if this is far below the baseline, lower it.
+  assert.ok(anoniem > BASELINE - 25,
+    `the count fell to ${anoniem} — lower BASELINE to ${anoniem} so the ratchet keeps biting`);
+});
+
 // ─── [MERK-KOP] The wordmark, and the one mail it may never appear on ─────────────────────────
 //
 // Not one mail this app sends carried a brand header: every one opened straight into a sentence,
