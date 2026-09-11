@@ -31553,10 +31553,18 @@ test("[WIT-SCHERM] the render list closes itself against the directory, and cann
     "nothing records a render any more, so the closing check below can only pass vacuously");
   assert.match(suite, /no dashboard screen exists that this file never rendered/,
     "the closing check is gone — a new screen can now be added with no render at all");
-  assert.match(suite, /collect\("src\/app\/dashboard"\);/,
+  assert.match(suite, /collect\("src\/app"\);/,
     "the closing check no longer reads the directory, so it can only measure itself");
-  assert.match(suite, /const ghosts = \[\.\.\.elders\]\.filter/,
-    "a renamed screen would take its coverage with it and nothing would notice");
+  // A SCREEN is any client component a person can land on. Narrowing this back to *Client.tsx is
+  // how twenty thousand lines — the invoice screen, login, signup, settings — went unwalked once.
+  assert.match(suite, /\['"\]use client\['"\]/,
+    "the scan no longer recognises a page.tsx that is itself a client component");
+  assert.match(suite, /for \(const f of readdirSync\("tests\/render"\)\)/,
+    "coverage from the other render tests is no longer read, so this can only see its own work");
+  // The single exemption must stay a NAMED one with its reason checked, never a silent skip.
+  assert.match(suite, /const PDF_KNOP = "src\/app\/factuur-maken\/PdfDownloadButton\.tsx";/);
+  assert.match(suite, /ssr: false \\\}\\\)\/,\s*\n?\s*"PdfDownloadButton is exempt/,
+    "the exemption no longer checks that the thing it is exempt for is still true");
 });
 
 // ─── [WIT-SCHERM] …and the one guard a screen leans on from another file ──────────────────────

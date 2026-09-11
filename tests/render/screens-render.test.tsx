@@ -32,8 +32,8 @@ import { mock } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
+import { join, dirname } from "node:path";
 import type { ProfileRow } from "../../src/types/rows";
 
 // DELIBERATELY FAKE — the same reasoning as money-screens.test.tsx: the Supabase client refuses to
@@ -273,6 +273,80 @@ for (const [naam, spec] of SELF_FETCHING) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// The rest of the walk: every other screen a person can land on
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The first pass of this file only looked for `*Client.tsx`, and that definition was too narrow by
+// almost twenty thousand lines: the invoice screen, the invoice detail, its editor, settings, the
+// quarter package an accountant opens, signup and login are all `page.tsx` files that are
+// themselves client components. None of them was ever called by a test.
+
+const REST: readonly [string, string][] = [
+  ["making an invoice", "../../src/app/dashboard/invoice/new/page"],
+  ["the invoice detail", "../../src/app/dashboard/invoice/[id]/page"],
+  ["editing an invoice", "../../src/app/dashboard/invoice/[id]/edit/page"],
+  ["settings", "../../src/app/dashboard/settings/page"],
+  ["the quarter package an accountant opens", "../../src/app/dashboard/clients/[id]/kwartaal/page"],
+  ["a client's dossier", "../../src/app/dashboard/clients/[id]/page"],
+  ["signing up", "../../src/app/register/page"],
+  ["logging in", "../../src/app/login/page"],
+  ["forgot password", "../../src/app/wachtwoord-vergeten/page"],
+  ["resetting a password", "../../src/app/wachtwoord-herstellen/page"],
+  ["accepting an invitation", "../../src/app/invite/accept/page"],
+  ["a team invitation", "../../src/app/team/accepteren/AccepterenClient"],
+  ["e-mail verification", "../../src/app/verificatie/VerificatieClient"],
+  ["the message list", "../../src/app/dashboard/messages/page"],
+  ["one message", "../../src/app/dashboard/messages/[id]/page"],
+  ["the day's truth panel", "../../src/app/dashboard/zzp/DailyTruth"],
+  ["the turnover insights panel", "../../src/app/dashboard/dagomzet/TurnoverInsights"],
+  ["the retention card", "../../src/app/dashboard/kluis/BewaarkluisCard"],
+  ["the subscribe button", "../../src/app/prijzen/SubscribeButton"],
+  ["the manage-subscription button", "../../src/app/dashboard/settings/facturering/ManageSubscriptionButton"],
+  // The public doors. These are what a stranger meets first, and several of them are the reason
+  // anyone arrives at all.
+  ["the free invoice maker", "../../src/app/factuur-maken/GratisFactuur"],
+  ["the invoice scanner", "../../src/app/factuur-scannen/FactuurScanner"],
+  ["the quote a customer opens", "../../src/app/offerte/[token]/OfferteClient"],
+  ["the BTW calculator", "../../src/app/btw-berekenen/BtwCalculator"],
+  ["the BTW-return calculator", "../../src/app/btw-aangifte-berekenen/BtwAangifteCalculator"],
+  ["the statement converter", "../../src/app/bankafschrift-naar-excel/BankConverter"],
+  ["the mileage calculator", "../../src/app/kilometervergoeding/KmCalculator"],
+  ["the net-income calculator", "../../src/app/netto-inkomen-zzp/NettoCalculator"],
+  ["the hourly-rate calculator", "../../src/app/uurtarief-berekenen/UurtariefCalculator"],
+];
+
+for (const [naam, spec] of REST) {
+  test(`[WIT-SCHERM] ${naam} renders`, async () => {
+    const html = await renderScreen(spec);
+    // Two of these are panels that deliberately render nothing until they have something to say,
+    // so the assertion is that the component RAN, not that it drew. A throw is what this catches.
+    assert.ok(typeof html === "string", `${naam} produced no markup at all`);
+  });
+}
+
+// The error boundaries, which are the screens shown when something else has already gone wrong —
+// and were themselves never called. A boundary that throws turns a handled error into a blank tab.
+const BOUNDARIES: readonly [string, string][] = [
+  ["the app-wide error boundary", "../../src/app/global-error"],
+  ["the error boundary", "../../src/app/error"],
+  ["the dashboard error boundary", "../../src/app/dashboard/error"],
+  ["the dashboard not-found page", "../../src/app/dashboard/not-found"],
+];
+
+for (const [naam, spec] of BOUNDARIES) {
+  test(`[WIT-SCHERM] ${naam} renders`, async () => {
+    const html = await renderScreen(spec, { error: new Error("boom"), reset: () => {} });
+    assert.ok(html.length > 20, `${naam} produced no markup at all`);
+  });
+}
+
+// [PDF-LAZY] factuur-maken/PdfDownloadButton is deliberately NOT in the lists above. It imports
+// @react-pdf/renderer, whose PDFDownloadLink is browser-only and throws under react-dom/server —
+// which is exactly why GratisFactuur loads it with dynamic(…, { ssr: false }). Its absence here is
+// the proof that boundary is real; a day it starts rendering on the server is a day it was pulled
+// back into the first download of twelve public pages.
+
+// ─────────────────────────────────────────────────────────────────────────────
 // The list closes itself
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -280,49 +354,73 @@ test("[WIT-SCHERM] no dashboard screen exists that this file never rendered", ()
   // Runs last, so `rendered` holds every screen the tests above actually got through. Comparing it
   // against what is on disk is what keeps this file honest as the app grows: a new screen is a red
   // gate on the day it is written, not a white page discovered in front of an accountant.
+  // A SCREEN is any client component a person can land on: not just `*Client.tsx`, which was the
+  // first and far too narrow definition — it missed the invoice screen, login and signup, twenty
+  // thousand lines of them, because those are `page.tsx` files that carry 'use client' themselves.
   const screens: string[] = [];
   const collect = (dir: string) => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const p = join(dir, e.name);
       if (e.isDirectory()) collect(p);
-      else if (/Client\.tsx$/.test(e.name)) screens.push(p);
+      else if (/\.tsx$/.test(e.name) && !/\.test\.tsx$/.test(e.name)) {
+        const src = readFileSync(p, "utf8");
+        if (/^\s*['"]use client['"]/m.test(src) && /export default function/.test(src)) screens.push(p);
+      }
     }
   };
-  collect("src/app/dashboard");
-  assert.ok(screens.length >= 30, `only ${screens.length} screens found — the scan is broken, not the app`);
+  collect("src/app");
+  // The accountant's own screens count too, and for the sharpest reason: that module is the surface
+  // shown to the accountants this product is sold through. They are all covered today by other
+  // render tests — measured — and without them in this scan a NEW one could be added with none.
+  for (const f of readdirSync("src/modules/accountant/pages")) {
+    if (f.endsWith(".tsx")) screens.push(join("src/modules/accountant/pages", f));
+  }
+  assert.ok(screens.length >= 40, `only ${screens.length} screens found — the scan is broken, not the app`);
 
-  // Screens covered by a render test OTHER than this one. Named individually rather than scanned,
-  // because "some test mentions this path" is not the same as "something renders it", and a gate
-  // that cannot tell those apart passes on the day it matters.
-  const elders = new Set([
-    "src/app/dashboard/incoming/manage/IncomingManageClient.tsx",  // money-screens
-    "src/app/dashboard/incoming/IncomingInvoicesClient.tsx",       // money-screens
-    "src/app/dashboard/bank/BankClient.tsx",                       // money-screens
-    "src/app/dashboard/facturen/FacturenClient.tsx",               // money-screens
-    "src/app/dashboard/aangifte/AangifteClient.tsx",               // tax-screens
-    "src/app/dashboard/jaar/JaarClient.tsx",                       // year-standing
-    "src/app/dashboard/waarheid/WaarheidClient.tsx",               // tax-screens
-    "src/app/dashboard/kas/KasClient.tsx",                         // kassa-screen
-    "src/app/dashboard/klaar/KlaarClient.tsx",                     // tool-screens
-    "src/app/dashboard/brug/BrugClient.tsx",                       // tool-screens
-    "src/app/dashboard/uren/UrenClient.tsx",                       // uren-tarief
-    "src/app/dashboard/artikelen/ArtikelenClient.tsx",             // tool-screens
-    "src/app/dashboard/leveranciers/LeveranciersClient.tsx",       // creditors-screen
-    "src/app/dashboard/verkoop/VerkoopClient.tsx",                 // money-screens
-    "src/app/dashboard/vragen/VragenClient.tsx",                   // tool-screens
-    "src/app/dashboard/beveiliging/BeveiligingClient.tsx",         // security-screens
-    "src/app/dashboard/klanten/[id]/KlantDetailClient.tsx",        // tool-screens
-    "src/app/dashboard/bank/verdelen/[txId]/VerdeelClient.tsx",    // bank-som-klopt
-  ]);
+  // Screens covered by a render test OTHER than this one, found by reading their imports. Only
+  // import POSITIONS count — `from "…"` and `import("…")` with a literal — never any path-shaped
+  // string, because a path in a comment would make this pass for the wrong reason. The one place
+  // that is not enough is this file, which imports through a variable; the `rendered` set above
+  // covers exactly that, and nothing enters it without surviving a render.
+  const resolveImport = (from: string, spec: string): string | null => {
+    const base = spec.startsWith("@/") ? join("src", spec.slice(2))
+      : spec.startsWith(".") ? join(dirname(from), spec)
+        : null;
+    if (!base) return null;
+    for (const ext of ["", ".tsx", ".ts", "/index.tsx", "/index.ts"]) {
+      if (existsSync(base + ext) && statSync(base + ext).isFile()) return base + ext;
+    }
+    return null;
+  };
+  const elders = new Set<string>();
+  const walk = (file: string) => {
+    if (elders.has(file)) return;
+    elders.add(file);
+    let src: string;
+    try { src = readFileSync(file, "utf8"); } catch { return; }
+    for (const m of src.matchAll(/(?:from\s*|import\s*\(\s*)["'`]([^"'`]+)["'`]/g)) {
+      const target = resolveImport(file, m[1]);
+      if (target) walk(target);
+    }
+  };
+  for (const f of readdirSync("tests/render")) {
+    if (/\.tsx?$/.test(f) && f !== "screens-render.test.tsx") walk(join("tests/render", f));
+  }
 
-  const missing = screens.filter((s) => !rendered.has(s) && !elders.has(s));
+  // [PDF-LAZY] The one screen that CANNOT be server-rendered, exempted by name with its reason —
+  // never by quietly dropping it from the scan. @react-pdf's PDFDownloadLink is browser-only and
+  // throws under react-dom/server, which is precisely why GratisFactuur loads this file with
+  // dynamic(…, { ssr: false }). The exemption is only valid while that is still true, so it is
+  // checked here: the day someone imports it statically, the bundle grows by 1,4 MB on twelve
+  // public pages AND the page starts throwing on the server, and this line goes red first.
+  const PDF_KNOP = "src/app/factuur-maken/PdfDownloadButton.tsx";
+  const gratis = readFileSync("src/app/factuur-maken/GratisFactuur.tsx", "utf8");
+  assert.match(gratis, /dynamic\(\(\) => import\('\.\/PdfDownloadButton'\), \{ ssr: false \}\)/,
+    "PdfDownloadButton is exempt from the render walk only because it is loaded with ssr:false");
+
+  const missing = screens.filter((s) => !rendered.has(s) && !elders.has(s) && s !== PDF_KNOP);
   assert.deepEqual(missing, [],
     "these screens are never CALLED by any test, so they could be white pages with every gate " +
     "green:\n  \u00b7 " + missing.join("\n  \u00b7 "));
 
-  // And the elders list may not rot: a path in it that no longer exists is a screen someone renamed,
-  // which silently takes its render coverage with it.
-  const onDisk = new Set(screens);
-  const ghosts = [...elders].filter((e) => !onDisk.has(e));
-  assert.deepEqual(ghosts, [], "these are listed as covered elsewhere but no longer exist: " + ghosts.join(", "));
 });
