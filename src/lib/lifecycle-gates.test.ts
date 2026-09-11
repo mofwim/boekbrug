@@ -4832,6 +4832,22 @@ test("[VOETTEKST-LEESBAAR] the footer is a colour a person can read", () => {
   assert.ok(block.length < 400, `the slice must be the footer block alone — it is ${block.length} chars`);
   assert.doesNotMatch(block, /#dadce0/, "the footer is back to the hairline grey nobody can read");
   assert.match(block, /color: '#5f6368'/, "…it must carry a colour with real contrast on white");
+
+  // [VOETTEKST-MERK] The product's NAME is not the tagline, and is not set like it. This document
+  // is the only thing the app makes that leaves the owner's circle — their customer reads it, that
+  // customer's bookkeeper reads it, and it is kept for seven years. The name sat in the same muted
+  // grey at the same size as the sentence beside it, which is legible and forgettable.
+  assert.match(pdf, /footerBrand: \{ fontSize: 12, fontFamily: 'Helvetica-Bold', color: NAVY \},/,
+    "the name must be set like a name: its own size, weight and colour");
+  assert.match(pdf, /<Text style=\{styles\.footerBrand\}>BoekBrug<\/Text>/,
+    "…and actually rendered that way, not only declared");
+  assert.match(pdf, /De brug tussen jou en je boekhouder · boekbrug\.nl/,
+    "…with an address the reader can act on");
+  // And it stays a CREDIT LINE. 12pt is what "Totaal" gets; the document title is 22pt and the
+  // sender's own company owns the top of the page. An invoice that shouts someone else's brand
+  // reads as if that someone sent it, which would cost the owner more than the mention is worth.
+  const merk = /footerBrand: \{ fontSize: (\d+(?:\.\d+)?)/.exec(pdf);
+  assert.ok(merk && Number(merk[1]) <= 12, `the credit line may not outgrow the totals — ${merk?.[1]}pt`);
 });
 
 // ─── [AFZENDERNAAM] Mail to the owner's customer carries the owner's name and address ──────────

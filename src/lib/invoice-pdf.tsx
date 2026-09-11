@@ -170,9 +170,24 @@ const styles = StyleSheet.create({
     // [VOETTEKST-LEESBAAR] Stond op 8pt in #dadce0 — dezelfde lichtgrijze tint als de scheidslijnen
     // in deze stylesheet. Op wit is dat ongeveer 1,3:1 contrast: op papier vrijwel onzichtbaar, en
     // een regel die niemand kan lezen kan net zo goed weg zijn. #5f6368 haalt ruim 7:1.
-    fontSize: 9,
+    fontSize: 8.5,
     color: '#5f6368',
+    lineHeight: 1.5,
   },
+
+  // [VOETTEKST-MERK] The product's name, at the weight a name needs to be recognised.
+  //
+  // This document is the one thing this app makes that leaves the owner's own circle: it is read by
+  // their customer, by that customer's bookkeeper, and it is kept for seven years. The line at the
+  // bottom was the only place the product was named, and it was set in the same muted grey and the
+  // same size as the sentence beside it — legible, and nothing anyone would remember. A name that
+  // is meant to be recognised is set like a name.
+  //
+  // It stays a CREDIT LINE and never becomes a letterhead: 12pt is the size of "Totaal" and no
+  // more, it sits at the foot of the page below everything the customer needs, and the sender's own
+  // company keeps the top of the document at 22pt. An invoice that shouts someone else's brand
+  // reads as if that someone sent it — which would cost the owner more than the mention is worth.
+  footerBrand: { fontSize: 12, fontFamily: 'Helvetica-Bold', color: NAVY },
 })
 
 // ─── Document title per invoice_type (title-case, matches the reference) ─────
@@ -704,8 +719,11 @@ export function InvoicePDF({
           </Text>
         )}
 
+        {/* [VOETTEKST-MERK] The name on its own line, the promise and the address under it. */}
         <Text style={styles.footer} fixed>
-          BoekBrug — De brug tussen jou en je boekhouder
+          <Text style={styles.footerBrand}>BoekBrug</Text>
+          {'\n'}
+          De brug tussen jou en je boekhouder · boekbrug.nl
         </Text>
       </Page>
     </Document>
