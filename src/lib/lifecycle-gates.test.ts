@@ -31557,3 +31557,59 @@ test("[NUL-BTW-STIL] one zero-BTW rule, and the paid-straight-away door carries 
   assert.match(window, /terugvragen/, "…and what the owner can still do about it");
   assert.match(window, /flags\.arithmetic = true/, "the row lands in the human queue");
 });
+
+// ─── [WIT-SCHERM] A screen that throws on every render passes every other gate ────────────────
+//
+// `tsc` type-checks a closure without knowing WHEN it runs; `eslint` has no rule for it that is
+// not drowned in false positives; `next build` compiles a component without calling it; and the
+// Playwright smoke test sweeps the PUBLIC surface, so /dashboard/* is by definition not on it.
+// [INVOICE-SCAN] proved this: it shipped through the whole set with a const read seventy lines
+// before it was declared, inside a .filter() callback that runs during render.
+//
+// tests/render/ closes that class — but only for the screens it actually calls. Measured before
+// this gate existed: nineteen of thirty-four client screens were rendered and fifteen were not,
+// 5.317 lines including /dashboard/upload, the door every document in this app comes through.
+//
+// This is not a theoretical exposure. The owner demonstrates this app to accountants on his own
+// laptop with no developer in the room, and a screen that breaks there ends the meeting before it
+// starts. So the list is closed: every client screen is rendered by tests/render/, and a new one
+// that is not turns this red.
+// The list is closed inside the render test itself rather than scanned from here, and that is the
+// second design: a scan from this file cannot see a screen pulled in as `await import(spec)` with a
+// variable — measured, and it reported thirteen covered screens as uncovered. Worse, the obvious
+// repair (treat any path-shaped string in a test as coverage) would call a screen covered because
+// its path appears in a comment. So screens-render.test.tsx records what it ACTUALLY rendered and
+// compares that against the directory. Nothing gets into that set without surviving a render.
+//
+// This gate only holds that self-check in place, since deleting it would silently reopen the hole.
+test("[WIT-SCHERM] the render list closes itself against the directory, and cannot be faked", () => {
+  const suite = readFileSync("tests/render/screens-render.test.tsx", "utf8");
+  assert.match(suite, /const rendered = new Set<string>\(\);/,
+    "the set that records what was actually rendered is gone");
+  assert.match(suite, /rendered\.add\(spec\.replace/,
+    "nothing records a render any more, so the closing check below can only pass vacuously");
+  assert.match(suite, /no dashboard screen exists that this file never rendered/,
+    "the closing check is gone — a new screen can now be added with no render at all");
+  assert.match(suite, /collect\("src\/app\/dashboard"\);/,
+    "the closing check no longer reads the directory, so it can only measure itself");
+  assert.match(suite, /const ghosts = \[\.\.\.elders\]\.filter/,
+    "a renamed screen would take its coverage with it and nothing would notice");
+});
+
+// ─── [WIT-SCHERM] …and the one guard a screen leans on from another file ──────────────────────
+//
+// WerkClient does `workSkin(vak)!` — it takes the trade's skin as given. That is safe only because
+// werk/page.tsx redirects before mounting it when the trade has no work layer. The render test
+// therefore walks every trade that HAS a skin and deliberately does not walk one without, which
+// leaves this redirect as the only thing standing between an unknown trade and a white screen.
+// Remove it and the gate above still passes, so it is pinned here instead.
+test("[WIT-SCHERM] the work screen is never mounted for a trade with no work layer", () => {
+  const page = code("src/app/dashboard/werk/page.tsx");
+  assert.match(page, /const skin = workSkin\(vak\);/);
+  assert.match(page, /if \(!skin\) redirect\("\/dashboard"\);/,
+    "without this redirect, a profile carrying a trade this build has no skin for opens a white " +
+    "screen — WerkClient dereferences the skin it was promised");
+  // And the redirect must come BEFORE the screen is mounted, not after it in the file.
+  assert.ok(page.indexOf("if (!skin) redirect") < page.indexOf("<WerkClient"),
+    "the guard runs after the screen is mounted, which is not a guard");
+});
