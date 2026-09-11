@@ -41,6 +41,8 @@
 // other owner-facing mail in this app does.
 
 import { escapeHtml } from "./escape-html";
+// [MERK-KOP] The wordmark and the way home. Text, never an image — see the note in that file.
+import { merkKop, merkVoet } from "./mail-merk";
 import { formatDateNL, formatEuroNL } from "./format-nl";
 // [CENT] The one cent-rounder — a second definition is how two screens disagree about a total.
 import { round2 } from "./invoice-totals";
@@ -291,6 +293,7 @@ export function planOchtendMail(input: OchtendInput): OchtendMail | null {
 
   const html = `
     <div style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 20px;">
+      ${merkKop(input.baseUrl)}
       <h2 style="color: #202124; font-size: 18px; margin: 0 0 12px;">Je administratie, ${formatDateNL(input.gisteren)}</h2>
       <h3 style="color: #5f6368; font-size: 13px; text-transform: uppercase; letter-spacing: 0.4px; margin: 0 0 8px;">Gisteren</h3>
       ${betaalBlok}
@@ -302,9 +305,7 @@ export function planOchtendMail(input: OchtendInput): OchtendMail | null {
           ${knop}
         </a>
       </p>
-      <p style="color: #a0a0a5; font-size: 12px; margin-top: 24px;">
-        Je krijgt dit bericht alleen op dagen dat er iets gebeurde. Uitzetten kan onder Instellingen.
-      </p>
+      ${merkVoet(input.baseUrl, "Je krijgt dit bericht alleen op dagen dat er iets gebeurde. Uitzetten kan onder Instellingen.")}
     </div>`;
 
   return { subject: onderwerp, html, target };

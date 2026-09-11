@@ -30114,6 +30114,57 @@ test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, an
 //   · 4000 is untouched. Adding accounts beside it makes an export more precise; renaming or
 //     renumbering it silently moves history.
 // And the third that makes it safe: it suggests, it never books.
+// ─── [MERK-KOP] The wordmark, and the one mail it may never appear on ─────────────────────────
+//
+// Not one mail this app sends carried a brand header: every one opened straight into a sentence,
+// which is why the morning digest read like a machine note instead of like post from a product the
+// owner pays for, and why it was not recognisable at a glance in a mailbox of forty unread.
+//
+// The decision worth holding is that the wordmark is TEXT. Gmail, Outlook and Apple Mail block
+// remote images by default, and Apple's Mail Privacy Protection suppresses them even when they
+// load — so an <img> logo reaches most readers as a grey box, a hole exactly where the mail's
+// identity should be. Text renders in every client, with images off, in dark mode, at any width,
+// and cannot be mistaken for a tracking pixel on a mail whose deliverability was fought for once
+// already ([BEZORGING]).
+//
+// And the boundary: this header belongs on a mail BoekBrug sends to ITS OWN user. It may never
+// appear on the invoice mail an owner sends their CUSTOMER — that message is the owner's, to their
+// customer, about their money, and our name at the top of it brands someone else's business
+// correspondence. [EIGEN-MARKER] drew the same line on the PDF.
+test("[MERK-KOP] the wordmark is text, links home, and stays off the customer's invoice mail", () => {
+  const merk = code("src/lib/mail-merk.ts");
+  const digest = code("src/lib/ochtend-digest.ts");
+
+  // ── Text, not an image. The whole argument of the module.
+  assert.doesNotMatch(merk, /<img/i, "an image logo is invisible to most readers — that is the bug, not the style");
+  assert.match(merk, /BoekBrug<\/a>/);
+  // ── One brand blue, defined once.
+  assert.match(merk, /export const MERK_BLAUW = "#1A73E8";/);
+  // ── Absolute links: a mail has no origin of its own.
+  assert.match(merk, /const home = `\$\{escapeHtml\(baseUrl\)\}\/dashboard`;/);
+  assert.doesNotMatch(merk, /href="\/dashboard"/, "a root-relative href in an inbox resolves against the mail client");
+
+  // ── The morning mail wears it, top and bottom.
+  assert.match(digest, /\$\{merkKop\(input\.baseUrl\)\}/);
+  assert.match(digest, /\$\{merkVoet\(input\.baseUrl, "/);
+
+  // ── THE BOUNDARY. The customer-facing invoice mail must not carry our header.
+  //    Checked over the whole mail surface rather than one file, because the next mail to a
+  //    customer will be written somewhere this test has never heard of.
+  const klantBestanden = ["src/lib/email-body-invoice.ts", "src/lib/ubl-for-email.ts", "src/lib/mail-text.ts"];
+  for (const f of klantBestanden) {
+    assert.doesNotMatch(code(f), /merkKop\(/,
+      `${f} reaches a customer — our wordmark would brand the owner's own correspondence`);
+  }
+  // sendInvoiceToClient is the door that mails an invoice to a customer; it may not import it.
+  const email = code("src/lib/email.ts");
+  const klantDeur = email.slice(email.indexOf("export async function sendInvoiceToClient"),
+                               email.indexOf("export async function sendMessageNotification"));
+  assert.ok(klantDeur.length > 200, "sendInvoiceToClient moved — this window measures nothing");
+  assert.doesNotMatch(klantDeur, /merkKop\(/,
+    "the invoice mail is the owner's message to their customer, not ours");
+});
+
 // ─── [OCHTEND-TAKEN] Tasks ride along; they never summon ──────────────────────────────────────
 //
 // The morning mail reported what HAPPENED and never what to do, and its own header forbade the
