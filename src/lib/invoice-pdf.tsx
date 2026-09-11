@@ -187,7 +187,7 @@ const styles = StyleSheet.create({
   // more, it sits at the foot of the page below everything the customer needs, and the sender's own
   // company keeps the top of the document at 22pt. An invoice that shouts someone else's brand
   // reads as if that someone sent it — which would cost the owner more than the mention is worth.
-  footerBrand: { fontSize: 12, fontFamily: 'Helvetica-Bold', color: NAVY },
+  footerBrand: { fontSize: 12, fontFamily: 'Helvetica-Bold', color: NAVY, textDecoration: 'none' },
 
   // [VOETTEKST-LINK] The address as a real link, and therefore absolute.
   //
@@ -199,7 +199,7 @@ const styles = StyleSheet.create({
   //
   // So the annotation is written by us, with the scheme, instead of being guessed by the reader.
   // The visible text stays the short form — nobody needs to read "https://" off an invoice.
-  footerLink: { color: '#5f6368', textDecoration: 'none' },
+  footerLink: { color: NAVY, textDecoration: 'none' },
 })
 
 // ─── Document title per invoice_type (title-case, matches the reference) ─────
@@ -733,10 +733,12 @@ export function InvoicePDF({
 
         {/* [VOETTEKST-MERK] The name on its own line, the promise and the address under it. */}
         <Text style={styles.footer} fixed>
-          <Text style={styles.footerBrand}>BoekBrug</Text>
+          {/* [VOETTEKST-LINK] The name itself opens the site — it is the biggest thing down here
+              and the first thing a reader reaches for. Absolute, so no reader can resolve it
+              against its own folder. */}
+          <Link src="https://boekbrug.nl" style={styles.footerBrand}>BoekBrug</Link>
           {'\n'}
           De brug tussen jou en je boekhouder ·{' '}
-          {/* [VOETTEKST-LINK] Absolute, so no reader can resolve it against its own folder. */}
           <Link src="https://boekbrug.nl" style={styles.footerLink}>boekbrug.nl</Link>
         </Text>
       </Page>

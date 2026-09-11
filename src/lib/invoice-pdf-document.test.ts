@@ -137,11 +137,10 @@ test("[VOETTEKST-MERK] the document carries the product's name and where to find
 // check would read the string `boekbrug.nl` and call it correct — which is exactly how it shipped.
 test("[VOETTEKST-LINK] the address in the footer is an absolute link, not a path", async () => {
   const links = await pdfLinks(await renderInvoicePdf(QUOTE, LINES, PROFILE));
-  assert.ok(links.length > 0, "the footer link annotation is missing from the rendered document");
-  assert.ok(
-    links.some((u) => /^https:\/\/boekbrug\.nl\/?$/.test(u)),
-    `the footer must carry an absolute https link — found: ${JSON.stringify(links)}`,
-  );
+  // Two: the name, which is the biggest thing down there and the first a reader reaches for, and
+  // the address under it. Counted, so dropping one shows up here rather than under someone's cursor.
+  const site = links.filter((u) => /^https:\/\/boekbrug\.nl\/?$/.test(u));
+  assert.equal(site.length, 2, `the name and the address must both open the site — found: ${JSON.stringify(links)}`);
   // Nothing relative, ever: that is the whole defect, in the one place it can be measured.
   for (const u of links) {
     assert.match(u, /^https:\/\//, `a link without a scheme resolves against the reader's own folder: ${u}`);

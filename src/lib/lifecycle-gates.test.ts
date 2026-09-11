@@ -4837,10 +4837,14 @@ test("[VOETTEKST-LEESBAAR] the footer is a colour a person can read", () => {
   // is the only thing the app makes that leaves the owner's circle — their customer reads it, that
   // customer's bookkeeper reads it, and it is kept for seven years. The name sat in the same muted
   // grey at the same size as the sentence beside it, which is legible and forgettable.
-  assert.match(pdf, /footerBrand: \{ fontSize: 12, fontFamily: 'Helvetica-Bold', color: NAVY \},/,
+  assert.match(pdf, /footerBrand: \{ fontSize: 12, fontFamily: 'Helvetica-Bold', color: NAVY, textDecoration: 'none' \},/,
     "the name must be set like a name: its own size, weight and colour");
-  assert.match(pdf, /<Text style=\{styles\.footerBrand\}>BoekBrug<\/Text>/,
+  // [VOETTEKST-LINK] And the name IS the link: it is the biggest thing down there and the first
+  // thing a reader reaches for, so a reader who taps it must land on the site rather than nowhere.
+  assert.match(pdf, /<Link src="https:\/\/boekbrug\.nl" style=\{styles\.footerBrand\}>BoekBrug<\/Link>/,
     "…and actually rendered that way, not only declared");
+  assert.match(pdf, /footerLink: \{ color: NAVY, textDecoration: 'none' \},/,
+    "the address reads as a link too — same blue, same destination");
   // [VOETTEKST-LINK] With a SCHEME. Printed as bare text it carried none, so a reader that turns
   // URL-looking text into a link resolved it against the folder the file sat in — the owner's own
   // invoice, opened from the desktop, pointed at …/OneDrive/Desktop/boekbrug.nl.
