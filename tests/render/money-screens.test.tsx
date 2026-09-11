@@ -1493,7 +1493,7 @@ test("[ENABLEBANKING] the bank-connection panel renders in each of its states", 
   const linked = render({ configured: true, connections: [connection()] });
   assert.match(linked, /ING/);
   assert.match(linked, /NL02ABNA0123456789/);
-  assert.match(linked, /Ververs/);
+  assert.match(linked, /Vernieuwen/);
 
   // The two states that MUST still render, because they are what the owner sees when the feed
   // has stopped working — and a crash here would hide the very message telling him to reconnect.
@@ -2486,7 +2486,7 @@ test("[VERSTUURD] the send confirmation renders, and puts the irreversible part 
   assert.ok(html.includes("ligt vast"), "what can no longer be changed must be visible");
   assert.ok(html.includes("creditnota"), "…and how to correct it");
   assert.ok(html.includes("Zo controleer je het zelf"), "the owner's own question, answered here");
-  assert.ok(html.includes("Bekijk de factuur") && html.includes("Nog een factuur"),
+  assert.ok(html.includes("Factuur bekijken") && html.includes("Nog een factuur"),
     "both exits — the panel must never be a dead end on a form that was already submitted");
 
   // A creditnota may never be announced as a factuur: at that moment the number becomes permanent.
@@ -2546,7 +2546,7 @@ test("[TAAL] the send confirmation renders in Arabic, right to left", async () =
     }),
   );
   assert.ok(nl.includes('dir="ltr"'));
-  assert.ok(nl.includes("Factuur verstuurd") && nl.includes("Bekijk de factuur"));
+  assert.ok(nl.includes("Factuur verstuurd") && nl.includes("Factuur bekijken"));
 });
 
 test("[TAAL] the language switch renders, and names each language in its own script", async () => {
