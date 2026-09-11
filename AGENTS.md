@@ -167,7 +167,9 @@ broke three times — twice from a rename, once from a button that was removed w
 telling people to press it stayed, in all three languages.
 
 `btw` stays untranslated — it is what the owner reads on a letter from the Belastingdienst — but it
-is written ONE way inside Arabic, lowercase, and a gate asserts that rather than listing forms. Two
+is written ONE way inside Arabic, lowercase, and a gate asserts that rather than listing forms. The
+English went the other way and says **`VAT`**, because `BTW` there is only a Dutch abbreviation an
+English reader does not know — with one exception, the legal field «BTW number». Two
 things sit either side of it and neither is the other: **«الضريبة»** is the bare label for a tax
 AMOUNT, and **«رقم btw»** is the identification number. One key was labelling both, two rows apart
 in the same panel, because Dutch "BTW" carries both readings.

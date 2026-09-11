@@ -238,6 +238,28 @@ export const AR_RETIRED_EVERYWHERE: Readonly<Record<string, string>> = {
   "رقم الضريبة": "رقم btw",
 };
 
+/**
+ * English says VAT. The reviewer's ruling, in their words: use `VAT` wherever `BTW` is merely the
+ * Dutch abbreviation for it — sentences, headings and ordinary fields alike — and preserve the
+ * legally specific Dutch terms.
+ *
+ * In practice that is ONE exception, and this pattern is it: «BTW number», the name of the Dutch
+ * legal field. An owner who types their btw-nummer into a form labelled "VAT number" has to work
+ * out that the two are the same thing, on the one screen where being wrong is expensive.
+ *
+ * Everything else went: 33 occurrences across 30 values. Before the ruling the app said `VAT` in
+ * 163 values and `BTW` in 38, and one sentence — inst.kasstelselUitleg — used BOTH for the same
+ * tax, two clauses apart. That sentence is why this is a rule and not a preference.
+ *
+ * A named Dutch tax form spelled in Dutch («btw-aangifte») would also stay, per the same ruling.
+ * None exists in an English value today; if one is added, it needs no entry here because it is not
+ * the string this pattern or the gate looks for.
+ *
+ * [TAAL] This English ruling lives in a file named for Arabic on purpose: it is the record of
+ * language decisions, and a second file is one nobody finds when they are about to re-decide.
+ */
+export const EN_VAT_KEEPS_BTW = /BTW[- ](number|nummer)/i;
+
 /** Dutch forms retired in favour of one form per action, so the source cannot re-teach a split. */
 export const NL_RETIRED: Readonly<Record<string, string>> = {
   Ververs: "Vernieuwen", Stuur: "Versturen", "Opnieuw sturen": "Opnieuw versturen",
