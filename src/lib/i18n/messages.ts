@@ -13156,6 +13156,9 @@ export const MESSAGES = {
   'log.invoice.updated': { nl: 'Factuur gewijzigd', en: 'Invoice changed', ar: 'عُدّلت فاتورة' },
   // [VOORSTEL] The accountant's correction proposal and the client's answer.
   'log.invoice.ledger_account_set': { nl: 'Grootboekrekening gekozen', en: 'Ledger account chosen', ar: 'اختير حساب دفتر الأستاذ' },
+  'log.wachtkoppeling.created': { nl: 'Betaling vastgelegd, wacht op de bankregel', en: 'Payment recorded, waiting for the bank line', ar: 'سُجّلت الدفعة، بانتظار سطر البنك' },
+  'log.wachtkoppeling.linked': { nl: 'Wachtende betaling gekoppeld aan de bankregel', en: 'Waiting payment linked to the bank line', ar: 'رُبطت الدفعة المنتظِرة بسطر البنك' },
+  'log.wachtkoppeling.withdrawn': { nl: 'Wachtende betaling ingetrokken', en: 'Waiting payment withdrawn', ar: 'سُحبت الدفعة المنتظِرة' },
   'log.invoice.correction_proposed': { nl: 'Correctie voorgesteld aan de klant', en: 'Correction proposed to the client', ar: 'اقتُرح تصحيح على العميل' },
   'log.invoice.correction_accepted': { nl: 'Correctievoorstel van de boekhouder overgenomen', en: 'Accountant’s correction proposal accepted', ar: 'قُبل اقتراح تصحيح المحاسب' },
   'log.invoice.correction_declined': { nl: 'Correctievoorstel van de boekhouder afgewezen', en: 'Accountant’s correction proposal declined', ar: 'رُفض اقتراح تصحيح المحاسب' },

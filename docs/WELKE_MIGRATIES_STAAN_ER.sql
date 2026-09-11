@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 147 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 148 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 17 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -480,6 +480,12 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('vehicles.sql', 'policy', 'vehicles_update_own', 'vehicles', 'public'),
   ('vehicles.sql', 'table', 'vehicles', null, 'public'),
   ('verwerkt_freeze_level.sql', 'function_body', 'prevent_verwerkt_invoice_changes', '.accountant_status,.amount_paid,.btw_amount,.direction,.discount_type,.discount_value,.document_id,.due_date,.id,.invoice_date,.invoice_number,.invoice_type,.marked_paid_at,.pay_token,.payment_date,.payment_method,.payment_prepared_at,.payment_reference,.receiver_id,.sender_id,.status,.total_ex_btw,.total_inc_btw,.vat_deduction,.vendor_iban', 'public'),
+  ('wachtkoppelingen.sql', 'index', 'wachtkoppelingen_open_idx', null, 'public'),
+  ('wachtkoppelingen.sql', 'index', 'wachtkoppelingen_tx_idx', null, 'public'),
+  ('wachtkoppelingen.sql', 'policy', 'wachtkoppelingen_owner_read', 'wachtkoppelingen', 'public'),
+  ('wachtkoppelingen.sql', 'policy', 'wachtkoppelingen_owner_update', 'wachtkoppelingen', 'public'),
+  ('wachtkoppelingen.sql', 'policy', 'wachtkoppelingen_owner_write', 'wachtkoppelingen', 'public'),
+  ('wachtkoppelingen.sql', 'table', 'wachtkoppelingen', null, 'public'),
   ('work_done_counts.sql', 'function', 'work_done_counts', null, 'public'),
   ('work_items.sql', 'column', 'lines', 'work_items', 'public'),
   ('work_items.sql', 'column', 'work_item_id', 'invoices', 'public'),
@@ -618,7 +624,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 164
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 165
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen

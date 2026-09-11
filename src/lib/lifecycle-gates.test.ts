@@ -30114,6 +30114,85 @@ test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, an
 //   · 4000 is untouched. Adding accounts beside it makes an export more precise; renaming or
 //     renumbering it silently moves history.
 // And the third that makes it safe: it suggests, it never books.
+// ─── [WACHTKOPPELING] A link to a payment that has not arrived yet ────────────────────────────
+//
+// Every attach door in this app requires its object to exist: bank-attachment and
+// bank-attach-invoice both take a transactionId, and bank_tx_attachments carries
+// `REFERENCES public.bank_transactions(id)`. That foreign key is correct for what that table does
+// and is also the reason the schema could not hold the most ordinary intention an owner has — the
+// invoice is in hand, the payment is made, the statement is two days behind.
+//
+// THE MISSING FOREIGN KEY IS THE FEATURE. An intention you can only store once its object exists
+// is not an intention.
+//
+// And the thing this gate exists for above all: THIS ROUTE NEVER MOVES MONEY. /api/bank/confirm
+// carries the whole of this app's money discipline — [BANK-MULTI-CONFIRM]'s "a booking may only
+// spend what the payment still has", the session-client pay so the verwerkt trigger fires, the
+// pinned pipeline update. A second door that also paid would have to reproduce every one of them,
+// and the day it drifted the two would disagree about how much of a payment is still assignable.
+test("[WACHTKOPPELING] the waiting link holds an intention, and never books one", () => {
+  const rule = code("src/lib/wachtkoppeling.ts");
+  const route = code("src/app/api/wachtkoppeling/route.ts");
+  // The header of this migration QUOTES bank_tx_attachments' own `transaction_id uuid NOT NULL …`
+  // to explain what it is departing from. Asserting over the raw file therefore matched the
+  // comment and failed on a line of prose — the mistake AGENTS.md names, and the same one
+  // [GROOTBOEK-OPSLAG] already made. Assert over the DDL only.
+  const sql = readFileSync("supabase/migrations/wachtkoppelingen.sql", "utf8")
+    .split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+
+  // ── The point of the table: nullable, unconstrained until the payment is real.
+  assert.match(sql, /transaction_id uuid REFERENCES public\.bank_transactions\(id\) ON DELETE SET NULL,/);
+  assert.doesNotMatch(sql, /transaction_id uuid NOT NULL/,
+    "a NOT NULL here would delete the entire state this table exists to represent");
+  // A link that claims to be linked must name what to — enforced by the database, not a route.
+  assert.match(sql, /CHECK \(status <> 'gekoppeld' OR transaction_id IS NOT NULL\)/);
+  // Direction lives in one place. Two places carrying the same fact is how a sign error hides.
+  assert.match(sql, /bedrag numeric\(12,2\) NOT NULL CHECK \(bedrag > 0\)/);
+  assert.match(sql, /richting text NOT NULL CHECK \(richting IN \('uit', 'in'\)\)/);
+  assert.match(sql, /ENABLE ROW LEVEL SECURITY/);
+
+  // ── THE RULE. No money verb on any path of this route.
+  for (const verb of ["apply_bank_payment", "amount_applied", "status: \"paid\"", "status: 'paid'", "bank_tx_invoices"]) {
+    assert.doesNotMatch(route, new RegExp(verb),
+      `the waiting-link route touches money (${verb}); the booking belongs to /api/bank/confirm`);
+  }
+  assert.doesNotMatch(route, /from\("invoices"\)\s*\.update/,
+    "this route may read an invoice, never settle one");
+
+  // ── The proposal is DERIVED, never stored: no column holds it and GET computes it live.
+  assert.doesNotMatch(sql, /voorstel|proposed_transaction/,
+    "a stored proposal is a second state that has to be kept true as transactions arrive");
+  assert.match(route, /wachtVoorTransactie\(/);
+
+  // ── One transaction may be offered to one link and one link may take one transaction, or the
+  //    same euros would be proposed twice.
+  assert.match(route, /const takenTx = new Set<string>\(\);/);
+  assert.match(route, /const takenWacht = new Set<string>\(\);/);
+
+  // ── The matching reuses bank-matching.ts. A second answer to "is this the same payment" is a
+  //    second matcher, and the two would disagree on the day it mattered.
+  assert.match(rule, /from ".\/bank-matching"/);
+  assert.match(rule, /amountMatches\(tx\.amount, w\.bedrag, WACHT_EPSILON\)/);
+  assert.doesNotMatch(rule, /supabase|createClient|fetch\(|await /, "pure");
+
+  // ── Strictness, and the one silence. A waiting link is the owner's MEMORY, not a document, so
+  //    direction and amount must both agree — but a counterparty the owner did not name says
+  //    nothing, and refusing on silence would kill the links they most meant to make.
+  assert.match(rule, /return \{ fits: false, reason: "verkeerde_richting" \};/);
+  assert.match(rule, /if \(w\.tegenpartij && tx\.counterpartName\) \{/);
+
+  // ── A tie is reported, never broken. Two identical payments to one supplier in a week is
+  //    exactly where a guess produces a wrong booking that reconciles perfectly.
+  assert.match(rule, /if \(hits\.length > 1\) return \{ ambiguous: hits\.map\(\(h\) => h\.w\) \};/);
+
+  // ── [RITME] It expires. A banner that never goes away is furniture, not a signal.
+  assert.match(rule, /export function isVerlopen\(/);
+  assert.match(route, /isVerlopen\(w, today\)/);
+
+  // ── And a read that could not run is not rendered as "nothing is waiting".
+  assert.match(route, /bankUnavailable = true;/);
+});
+
 // ─── [VAKWOORD] The profession's words, and the ones this app must NOT answer ─────────────────
 //
 // A Dutch accountant opening an unfamiliar package does not browse; they look for the nouns of

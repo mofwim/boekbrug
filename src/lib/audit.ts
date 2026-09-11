@@ -39,6 +39,10 @@ export type AuditAction =
   // [GROOTBOEK] The cost account an invoice was put on. It decides where the money lands in the
   // auditfile, so changing it belongs in the trail like any other booking decision.
   | 'invoice.ledger_account_set'
+  // [WACHTKOPPELING] Een betaling die de eigenaar al deed, vóór de bankregel er was.
+  | 'wachtkoppeling.created'
+  | 'wachtkoppeling.linked'
+  | 'wachtkoppeling.withdrawn'
   | 'invoice.correction_proposed'
   | 'invoice.correction_accepted'
   | 'invoice.correction_declined'
