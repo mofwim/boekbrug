@@ -1329,7 +1329,7 @@ export const MESSAGES = {
   'vandaag.terugbetalen': { nl: 'Terug te betalen aan je klant', ar: 'مبالغ يجب ردّها إلى عميلك', en: 'To refund to your customer' },
   'vandaag.terugbetalenUitleg': {
     nl: 'Een creditnota die je nog moet terugstorten. Daarna: Voldaan! op de facturenlijst.',
-    ar: 'إشعار دائن ما زال عليك ردّ قيمته. بعدها: «سُدّدت!» في قائمة الفواتير.',
+    ar: 'إشعار دائن ما زال عليك ردّ قيمته. بعدها: «مسددة» في قائمة الفواتير.',
     en: 'A credit note you still have to refund. Then: Settled! on the invoice list.',
   },
   'vandaag.terugbetalenEen': { nl: '1 creditnota', ar: 'إشعار دائن واحد', en: '1 credit note' },
@@ -1647,7 +1647,7 @@ export const MESSAGES = {
   'onb.hebBoekhouder': { nl: 'Heb je een boekhouder?', ar: 'ألديك محاسب؟', en: 'Do you have an accountant?' },
   'onb.klantMail': { nl: 'Je klant ontvangt een e-mail om zijn account aan te maken.', ar: 'سيصل عميلك بريد لإنشاء حسابه.', en: 'Your client gets an e-mail to create their account.' },
   'onb.slaOver': { nl: 'Sla over', ar: 'تخطّي', en: 'Skip' },
-  'onb.slaOverLater': { nl: 'Tik op “Sla over” om dit later in te stellen', ar: 'اضغط «تخطَّ» لضبط هذا لاحقاً', en: 'Tap “Skip” to set this up later' },
+  'onb.slaOverLater': { nl: 'Tik op “Sla over” om dit later in te stellen', ar: 'اضغط «تخطّي» لضبط هذا لاحقاً', en: 'Tap “Skip” to set this up later' },
   'onb.volgende': { nl: 'Volgende', ar: 'التالي', en: 'Next' },
   'onb.naarDashboard': { nl: 'Ga naar mijn dashboard', ar: 'اذهب إلى لوحتي', en: 'Go to my dashboard' },
   'onb.autoVerder': { nl: 'Of wacht even, je gaat automatisch verder…', ar: 'أو انتظر قليلاً وستنتقل تلقائياً…', en: 'Or wait a moment — you continue automatically…' },
@@ -10377,9 +10377,9 @@ export const MESSAGES = {
     en: 'No invoices found for “{query}”',
   },
   'nieuw.banner.offerteUitleg': {
-    nl: 'geen factuurnummer. Gebruik “Omzetten naar factuur” als de klant akkoord gaat.',
-    ar: 'بلا رقم فاتورة. استخدم «تحويله إلى فاتورة» عند موافقة العميل.',
-    en: 'no invoice number. Use “Convert to invoice” once the client agrees.',
+    nl: 'geen factuurnummer. Gebruik “Maak factuur aan” als de klant akkoord gaat.',
+    ar: 'بلا رقم فاتورة. استخدم «إنشاء الفاتورة» عند موافقة العميل.',
+    en: 'no invoice number. Use “Create the invoice” once the client agrees.',
   },
   'nieuw.banner.overnemenVraag': {
     nl: 'Wil je hem hier overnemen? Je factuurnummer krijg je van ons — dat loopt door in je eigen reeks.',

@@ -7221,6 +7221,52 @@ test("[TAAL] every message key is real, and every message is used", () => {
   assert.deepEqual(orphans, [], `in the catalogue but never rendered:\n  ${orphans.join("\n  ")}`);
 });
 
+// ─── [KNOP-IN-ZIN] A sentence that names a button names what the button says ──────────────────
+//
+// AGENTS.md states the rule for translation: "a sentence that points at a button names the button
+// as it is written". It is not only a translation rule — it breaks in Dutch too, and it breaks
+// silently. Three sentences were found pointing at words that are nowhere on the screen:
+//
+//   · vandaag.terugbetalenUitleg still said «سُدّدت!» after the sales list's button was renamed;
+//   · onb.slaOverLater said «تخطَّ» where the button says «تخطّي»;
+//   · nieuw.banner.offerteUitleg sent the owner to "Omzetten naar factuur" — a button RETIRED
+//     three weeks earlier, in all three languages at once. The screen no longer had it, and the
+//     sentence had gone on pointing at it, in Dutch as well as in Arabic.
+//
+// A scan over «…» quotes finds candidates but cannot tell a button from a quoted phrase, so the
+// pairs are named here. Each is cheap, and each one that exists is a rename that cannot go quiet.
+test("[KNOP-IN-ZIN] every sentence that quotes a button quotes the living text", () => {
+  const M = MESSAGES as Record<string, Record<string, string>>;
+  // [sentence, button, does the sentence quote the button IN FULL, or a fragment of it?]
+  const PAREN: Array<[string, string, "volledig" | "deel"]> = [
+    ["vandaag.terugbetalenUitleg", "lijst.voldaanActie", "volledig"],
+    ["onb.slaOverLater", "onb.slaOver", "volledig"],
+    ["nieuw.banner.offerteUitleg", "lijst.maak", "volledig"],
+    // The e-mail hint quotes the long link's own words, which is how the Dutch does it too.
+    ["ink.email.nietTussen", "ink.email.ouderOphalen", "deel"],
+  ];
+  const fouten: string[] = [];
+  for (const [zinKey, knopKey, hoe] of PAREN) {
+    const zin = M[zinKey], knop = M[knopKey];
+    if (!zin || !knop) { fouten.push(`${zinKey} or ${knopKey} no longer exists`); continue; }
+    for (const taal of ["nl", "ar", "en"]) {
+      const z = (zin[taal] ?? "").trim(), k = (knop[taal] ?? "").trim();
+      if (!z || !k) continue; // a language that falls back to Dutch quotes the Dutch, correctly
+      if (hoe === "volledig") {
+        // The button's text, minus a trailing "!" the sentence need not carry.
+        const naakt = k.replace(/[!]$/, "");
+        if (!z.includes(naakt)) fouten.push(`${zinKey} [${taal}] does not name «${k}» — it says: ${z}`);
+      } else {
+        // The fragment the sentence quotes must still be part of what the control says.
+        const geciteerd = /[«“"]([^»”"]{3,60})[»”"]/.exec(z)?.[1]?.trim();
+        if (!geciteerd) { fouten.push(`${zinKey} [${taal}] quotes nothing any more`); continue; }
+        if (!k.includes(geciteerd)) fouten.push(`${zinKey} [${taal}] quotes «${geciteerd}», which is not in «${k}»`);
+      }
+    }
+  }
+  assert.deepEqual(fouten, [], "a sentence points at a word that is not on the screen:\n  " + fouten.join("\n  "));
+});
+
 // ─── [AR-TERMEN] One Arabic word per action, and the retired forms stay retired ────────────────
 //
 // The Arabic labels were reviewed term by term against what each BUTTON actually does, not word by
