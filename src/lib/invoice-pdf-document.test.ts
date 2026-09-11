@@ -95,6 +95,25 @@ test("the extractor finds text that IS on the page — control for every asserti
   assert.ok(text.includes("Worstjes"), "and the line descriptions");
 });
 
+// [VOETTEKST-MERK] The product's name on the document that leaves the owner's circle.
+//
+// The invoice PDF is read by the customer and by that customer's bookkeeper, and it is kept for
+// seven years. The credit line at its foot was the only place the product was named, and it was set
+// in the same muted grey at the same size as the sentence beside it. It is now set like a name —
+// and, being style, only the rendered document can say whether it survived.
+test("[VOETTEKST-MERK] the document carries the product's name and where to find it", async () => {
+  const text = await pdfText(await renderInvoicePdf(QUOTE, LINES, PROFILE));
+  assert.ok(text.includes("BoekBrug"), "the name must come out of the rendered PDF");
+  assert.ok(text.includes("boekbrug.nl"), "…with an address a reader can act on");
+  assert.ok(text.includes("De brug tussen jou en je boekhouder"), "…and the promise under it");
+  // It stays a credit line: the SENDER owns the document, and their name is what a customer must
+  // read first. A brand that outgrew the letterhead would read as if BoekBrug sent the invoice.
+  assert.ok(
+    text.indexOf("Kiwi Food Market") < text.indexOf("BoekBrug"),
+    "the owner's own company must still come first on the page",
+  );
+});
+
 test("a quote calls itself an Offerte, not a Pro forma", async () => {
   // A pro-formafactuur is a different document: a preliminary invoice for a prepayment or for
   // customs, which says "this is what you will be billed". The customer got a mail titled Offerte
