@@ -48,6 +48,11 @@ export const AR_SETTLED: ReadonlyArray<readonly [nl: string, ar: string]> = [
   ["Boekhouder", "المحاسب"],
   ["Bon", "إيصال"],
   ["Btw", "الضريبة"],
+  ["BTW-nummer", "رقم btw"],
+  ["Btw-nummer", "رقم btw"],
+  ["BTW nummer", "رقم btw"],
+  ["BTW-nummer (optioneel)", "رقم btw (اختياري)"],
+  ["BTW-nummer klant", "رقم btw للعميل"],
   ["Bevestig", "تأكيد"],
   ["Bevestigen", "تأكيد"],
   ["Btw-tarief", "نسبة btw"],
@@ -171,6 +176,9 @@ export const AR_DELIBERATE_SPLITS: ReadonlyArray<{
     why: "plural; the singular sibling keeps دفعة, because Arabic agrees with number and the app has both keys" },
   { key: "cat.teDoen", ar: "معاملات متبقية",
     why: "plural; cat.teDoenEen is the singular, for the same reason" },
+  { key: "prul.nietVerwijderdActie",
+    ar: "افصل الملف عن ذلك أولًا، أو احذف ذلك القيد. بعدها يمكنك حذفه من هنا — بهذا لا تبقى إدارتك بقيد بلا مستند داعم.",
+    why: "its Dutch is `losmaken` — detaching a file from a booking, not the interface action called «إلغاء الربط». Ruled to keep «افصل»: the unlink wording is scoped to `ontkoppelen`, and «ألغِ ربط الملف عن ذلك» is heavy Arabic for a lighter act" },
   { key: "beh.gezond.nooitGedraaid", ar: "لم يُشغَّل قط",
     why: "nooit gedraaid is about a job that never RAN; nog nooit is a plain never" },
 ];
@@ -224,6 +232,10 @@ export const AR_RETIRED_EVERYWHERE: Readonly<Record<string, string>> = {
   "فكّ الربط": "إلغاء الربط",
   "فكّ ربط": "إلغاء ربط", // the same name in construct state: «فكّ ربط دفعة جماعية»
   "افكك ربط": "ألغِ ربط",
+  "رقم BTW": "رقم btw",
+  "رقم ضريبة القيمة المضافة": "رقم btw", // the BARE «ضريبة القيمة المضافة» is not retired: it
+                                          // names the tax itself in six values and stays there
+  "رقم الضريبة": "رقم btw",
 };
 
 /** Dutch forms retired in favour of one form per action, so the source cannot re-teach a split. */

@@ -172,7 +172,7 @@ export const MESSAGES = {
   'nieuw.klant.stad': { nl: 'Stad', ar: 'المدينة', en: 'City' },
   // [KLANT-LAND] The customer's country as an ISO code; empty reads as the Netherlands.
   'nieuw.klant.land': { nl: 'Land (code, bijv. NL)', ar: 'الدولة (رمز، مثل NL)', en: 'Country (code, e.g. NL)' },
-  'nieuw.klant.btw': { nl: 'BTW-nummer klant', ar: 'رقم ضريبة القيمة المضافة للعميل', en: "Client's VAT number" },
+  'nieuw.klant.btw': { nl: 'BTW-nummer klant', ar: 'رقم btw للعميل', en: "Client's VAT number" },
   'nieuw.klant.btwFormaat': { nl: 'Verwacht formaat: NL123456789B01', ar: 'الصيغة المتوقّعة: NL123456789B01', en: 'Expected format: NL123456789B01' },
   // Het PO-nummer blijft een Nederlands voorbeeldformaat — zie de kop van dit blok.
   'nieuw.klant.extraHint': { nl: 'Afdeling of PO-2026-114', ar: 'القسم أو PO-2026-114', en: 'Department or PO-2026-114' },
@@ -214,8 +214,8 @@ export const MESSAGES = {
   'nieuw.regel.vrijgesteld': { nl: 'Vrijgesteld', ar: 'مُعفى', en: 'Exempt' },
   // [VERLEGD-VERKOOP] The verleggingsregeling on a line, and what the owner must fill in for it.
   'nieuw.regel.verlegd': { nl: 'Btw verlegd', ar: 'الضريبة محوَّلة إلى العميل', en: 'VAT reverse-charged' },
-  'nieuw.regel.verlegdHint': { nl: 'Btw verlegd naar de klant: het btw-nummer van de klant komt op de factuur.', ar: 'الضريبة محوَّلة إلى العميل: يُطبع رقم BTW الخاص بالعميل على الفاتورة.', en: 'VAT shifted to the customer: the customer’s VAT number goes on the invoice.' },
-  'nieuw.fout.verlegdZonderBtw': { nl: 'Een regel met btw verlegd vraagt om het btw-nummer van de klant. Vul het in bij de klant.', ar: 'بند بضريبة محوَّلة يتطلب رقم BTW الخاص بالعميل. أدخله في بيانات العميل.', en: 'A reverse-charged line needs the customer’s VAT number. Enter it on the customer.' },
+  'nieuw.regel.verlegdHint': { nl: 'Btw verlegd naar de klant: het btw-nummer van de klant komt op de factuur.', ar: 'الضريبة محوَّلة إلى العميل: يُطبع رقم btw الخاص بالعميل على الفاتورة.', en: 'VAT shifted to the customer: the customer’s VAT number goes on the invoice.' },
+  'nieuw.fout.verlegdZonderBtw': { nl: 'Een regel met btw verlegd vraagt om het btw-nummer van de klant. Vul het in bij de klant.', ar: 'بند بضريبة محوَّلة يتطلب رقم btw الخاص بالعميل. أدخله في بيانات العميل.', en: 'A reverse-charged line needs the customer’s VAT number. Enter it on the customer.' },
 
   'nieuw.prijsmodus': { nl: 'Prijzen invoeren', ar: 'إدخال الأسعار', en: 'Entering prices' },
   'nieuw.prijsmodus.aria': { nl: 'Prijzen invoeren inclusief of exclusief btw', ar: 'إدخال الأسعار شاملةً الضريبة أو بدونها', en: 'Enter prices including or excluding VAT' },
@@ -293,8 +293,8 @@ export const MESSAGES = {
 
   'nieuw.fout.velden': { nl: 'Vul de rood gemarkeerde velden in', ar: 'املأ الحقول المُعلَّمة بالأحمر', en: 'Fill in the fields marked red' },
   // [KLANT-LAND] A 0% invoice to a business in another member state needs the customer's btw-id.
-  'nieuw.fout.euZonderBtw': { nl: 'Klant in {land} (EU) zonder btw-nummer: vul het in, of reken Nederlandse btw.', ar: 'عميل في {land} (الاتحاد الأوروبي) بلا رقم BTW: أدخله، أو احسب الضريبة الهولندية.', en: 'Customer in {land} (EU) without a VAT number: enter it, or charge Dutch VAT.' },
-  'nieuw.fout.btwKlant': { nl: 'Het BTW-nummer van de klant lijkt onjuist (verwacht: NL123456789B01)', ar: 'رقم ضريبة القيمة المضافة للعميل يبدو غير صحيح (المتوقّع: NL123456789B01)', en: "The client's VAT number looks wrong (expected: NL123456789B01)" },
+  'nieuw.fout.euZonderBtw': { nl: 'Klant in {land} (EU) zonder btw-nummer: vul het in, of reken Nederlandse btw.', ar: 'عميل في {land} (الاتحاد الأوروبي) بلا رقم btw: أدخله، أو احسب الضريبة الهولندية.', en: 'Customer in {land} (EU) without a VAT number: enter it, or charge Dutch VAT.' },
+  'nieuw.fout.btwKlant': { nl: 'Het BTW-nummer van de klant lijkt onjuist (verwacht: NL123456789B01)', ar: 'رقم btw للعميل يبدو غير صحيح (المتوقّع: NL123456789B01)', en: "The client's VAT number looks wrong (expected: NL123456789B01)" },
   // [WAARSCHUWING-GEHOORD] Het concept is opgeslagen zonder de korting, dus de factuur zou voor
   // de volle prijs de deur uit gaan. Gezegd VOORDAT het nummer valt: daarna is de factuur wettelijk
   // uitgegeven en is crediteren de enige weg terug.
@@ -440,7 +440,7 @@ export const MESSAGES = {
   'start.tegel.bank': { nl: 'Bank', ar: 'البنك', en: 'Bank' },
   'start.tegel.kas': { nl: 'Kas', ar: 'الصندوق', en: 'Cash drawer' },
   'start.cijfers': { nl: 'Cijfers & aangifte', ar: 'الأرقام والإقرار', en: 'Figures & filing' },
-  'start.conceptBtw': { nl: 'Concept BTW-aangifte', ar: 'مسودة إقرار BTW', en: 'Draft BTW return' },
+  'start.conceptBtw': { nl: 'Concept BTW-aangifte', ar: 'مسودة إقرار btw', en: 'Draft BTW return' },
   'start.tegel.dagomzet': { nl: 'Dagomzet', ar: 'إيراد اليوم', en: 'Daily turnover' },
   'start.tegel.artikelen': { nl: 'Artikelen', ar: 'المنتجات', en: 'Articles' },
   // [UREN-DEUR] De tegel die er nooit was. Zie ZzpDashboard voor waarom hij in het
@@ -615,7 +615,7 @@ export const MESSAGES = {
   },
   'lev.kvk': { nl: 'KVK-nummer', ar: 'رقم KVK', en: 'KVK number' },
   'lev.kvk.hint': { nl: '8 cijfers. Leeg laten mag.', ar: '٨ أرقام. يمكن تركه فارغاً.', en: '8 digits. May be left empty.' },
-  'lev.btw': { nl: 'Btw-nummer', ar: 'رقم الضريبة', en: 'VAT number' },
+  'lev.btw': { nl: 'Btw-nummer', ar: 'رقم btw', en: 'VAT number' },
   // [LEVERANCIER-LAND] The supplier's country; outside NL their btw is shifted to the owner (4a/4b).
   'lev.land': { nl: 'Land (code)', ar: 'الدولة (رمز)', en: 'Country (code)' },
   'lev.land.hint': { nl: 'Twee letters (NL, DE, US). Buiten Nederland: de btw is naar jou verlegd, rubriek 4a of 4b.', ar: 'حرفان (NL, DE, US). خارج هولندا: الضريبة محوَّلة إليك، البند 4a أو 4b.', en: 'Two letters (NL, DE, US). Outside the Netherlands: the VAT shifts to you, box 4a or 4b.' },
@@ -1623,7 +1623,7 @@ export const MESSAGES = {
   'onb.kantoornaam': { nl: 'Naam van je kantoor', ar: 'اسم مكتبك', en: 'The name of your office' },
   'onb.kvk': { nl: 'Wat is je KVK-nummer? (optioneel)', ar: 'ما رقم KVK الخاص بك؟ (اختياري)', en: 'What is your KVK number? (optional)' },
   'onb.kvkKantoor': { nl: 'KVK-nummer van je kantoor (optioneel)', ar: 'رقم KVK لمكتبك (اختياري)', en: "Your office's KVK number (optional)" },
-  'onb.btw': { nl: 'Wat is je BTW-nummer? (nodig om facturen te versturen)', ar: 'ما رقم ضريبة القيمة المضافة؟ (مطلوب لإرسال الفواتير)', en: 'What is your VAT number? (needed to send invoices)' },
+  'onb.btw': { nl: 'Wat is je BTW-nummer? (nodig om facturen te versturen)', ar: 'ما رقم btw؟ (مطلوب لإرسال الفواتير)', en: 'What is your VAT number? (needed to send invoices)' },
   'onb.iban': { nl: 'Wat is je IBAN? (voor betaalverzoeken)', ar: 'ما هو IBAN الخاص بك؟ (لطلبات الدفع)', en: 'What is your IBAN? (for payment requests)' },
   'onb.adres': { nl: 'Wat is je adres? (nodig om facturen te versturen)', ar: 'ما عنوانك؟ (مطلوب لإرسال الفواتير)', en: 'What is your address? (needed to send invoices)' },
   'onb.alleenNaam': { nl: 'Alleen de naam is nodig — de rest kun je later aanpassen.', ar: 'الاسم وحده يكفي — الباقي يمكن تعديله لاحقاً.', en: 'Only the name is needed — the rest can be changed later.' },
@@ -2145,7 +2145,7 @@ export const MESSAGES = {
   'ublx.klaar': { nl: 'Gedownload ✓', ar: 'تم التنزيل ✓', en: 'Downloaded ✓' },
   'ublx.knop': { nl: 'UBL exporteren', ar: 'تصدير UBL', en: 'Export UBL' },
   'ublx.peppol.knop': { nl: 'Peppol-versie', ar: 'نسخة Peppol', en: 'Peppol version' },
-  'ublx.peppol.tip': { nl: 'Dezelfde factuur als Peppol BIS 3.0-bestand (vereist het BTW-nummer van de klant)', ar: 'الفاتورة نفسها كملف Peppol BIS 3.0 (يتطلب رقم BTW الخاص بالعميل)', en: 'The same invoice as a Peppol BIS 3.0 file (requires the client BTW number)' },
+  'ublx.peppol.tip': { nl: 'Dezelfde factuur als Peppol BIS 3.0-bestand (vereist het BTW-nummer van de klant)', ar: 'الفاتورة نفسها كملف Peppol BIS 3.0 (يتطلب رقم btw الخاص بالعميل)', en: 'The same invoice as a Peppol BIS 3.0 file (requires the client BTW number)' },
   'ublx.tip': {
     nl: 'Exporteer als UBL 2.1 (e-factuur) voor je boekhoudprogramma',
     ar: 'صدّر بصيغة UBL 2.1 (فاتورة إلكترونية) لبرنامج المحاسبة لديك',
@@ -2321,9 +2321,9 @@ export const MESSAGES = {
   'corr.soort.omzetbelasting': { nl: 'Naheffing omzetbelasting (afdracht)', ar: 'ضريبة القيمة المضافة (تسوية)', en: 'VAT assessment (settlement)' },
   'corr.soort.motorrijtuigenbelasting': { nl: 'Motorrijtuigenbelasting (kost, zonder btw)', ar: 'ضريبة المركبات (تكلفة، بدون btw)', en: 'Motor vehicle tax (a cost, no btw)' },
   'corr.soort.overig': { nl: 'Andere brief Belastingdienst', ar: 'رسالة أخرى من مصلحة الضرائب', en: 'Other tax office letter' },
-  'corr.splitUitleg': { nl: 'BTW-specificatie zoals op de factuur — één regel per tarief. Laat alles leeg om de specificatie te wissen.', ar: 'تفصيلة BTW كما على الفاتورة — سطر لكل نسبة. اترك الكل فارغًا لمسح التفصيلة.', en: 'BTW specification as printed — one row per rate. Leave everything empty to clear it.' },
+  'corr.splitUitleg': { nl: 'BTW-specificatie zoals op de factuur — één regel per tarief. Laat alles leeg om de specificatie te wissen.', ar: 'تفصيلة btw كما على الفاتورة — سطر لكل نسبة. اترك الكل فارغًا لمسح التفصيلة.', en: 'BTW specification as printed — one row per rate. Leave everything empty to clear it.' },
   'corr.grondslag': { nl: 'Grondslag', ar: 'الأساس', en: 'Base' },
-  'corr.btwBedrag': { nl: 'BTW-bedrag', ar: 'مبلغ BTW', en: 'BTW amount' },
+  'corr.btwBedrag': { nl: 'BTW-bedrag', ar: 'مبلغ btw', en: 'BTW amount' },
   // [BTW-TARIEF] Eén tik in plaats van hoofdrekenen. Het TARIEF wordt gevraagd, nooit geraden:
   // uit een bedrag exclusief valt geen tarief af te leiden, en een geraden btw is een geraden
   // voorbelasting. Elke zin een eigen sleutel — een getal is een parameter, een woord niet.
@@ -14866,11 +14866,11 @@ export const MESSAGES = {
   'bh.fact.ondertitel': { nl: 'De factuur gaat uit op naam van je klant, niet op die van jou.', ar: 'تصدر الفاتورة باسم عميلك، لا باسمك أنت.', en: 'The invoice goes out in the name of your client, not in yours.' },
   'bh.fact.geenMachtiging': { nl: 'Nog geen enkele klant heeft je hiervoor gemachtigd.', ar: 'لم يفوّضك أي عميل بذلك حتى الآن.', en: 'No client has authorised you for this yet.' },
   'bh.fact.geenMachtigingUitleg': { nl: 'Factureren namens iemand is iets anders dan zijn administratie inzien. Je klant zet het zelf aan bij Instellingen → Mijn boekhouder, en daar ook weer uit.', ar: 'إصدار فواتير نيابةً عن شخص شيء آخر غير الاطّلاع على إدارته. عميلك يفعّل ذلك بنفسه في Instellingen → Mijn boekhouder، ويوقفه هناك أيضاً.', en: 'Invoicing on someone\'s behalf is not the same as viewing their administratie. Your client switches it on themselves under Instellingen → Mijn boekhouder, and off again there.' },
-  'bh.fact.geenMachtigingWet': { nl: 'De factuur komt op zijn naam, in zijn nummerreeks en onder zijn BTW-nummer — hij blijft er zelf verantwoordelijk voor (art. 35a Wet OB). Daarom vraagt de app het hem.', ar: 'تصدر الفاتورة باسمه، ضمن سلسلة أرقامه وتحت رقم BTW الخاص به — وتبقى مسؤوليته هو (art. 35a Wet OB). لذلك يطلبها التطبيق منه.', en: 'The invoice goes out in their name, in their number series and under their BTW number — they stay responsible for it themselves (art. 35a Wet OB). That is why the app asks them.' },
+  'bh.fact.geenMachtigingWet': { nl: 'De factuur komt op zijn naam, in zijn nummerreeks en onder zijn BTW-nummer — hij blijft er zelf verantwoordelijk voor (art. 35a Wet OB). Daarom vraagt de app het hem.', ar: 'تصدر الفاتورة باسمه، ضمن سلسلة أرقامه وتحت رقم btw الخاص به — وتبقى مسؤوليته هو (art. 35a Wet OB). لذلك يطلبها التطبيق منه.', en: 'The invoice goes out in their name, in their number series and under their BTW number — they stay responsible for it themselves (art. 35a Wet OB). That is why the app asks them.' },
   'bh.fact.namensLabel': { nl: 'Namens welke klant?', ar: 'نيابةً عن أي عميل؟', en: 'On behalf of which client?' },
   'bh.fact.kiesKlantOptie': { nl: 'Kies een klant…', ar: 'اختر عميلًا…', en: 'Choose a client…' },
   'bh.fact.mandaat': { nl: 'Deze factuur komt op naam van {naam}, met zijn nummerreeks. Hij krijgt bericht zodra hij verstuurd is en kan de machtiging altijd zelf intrekken.', ar: 'تصدر هذه الفاتورة باسم {naam}، ضمن سلسلة أرقامه. يصله إشعار فور إرسالها ويمكنه سحب التفويض بنفسه في أي وقت.', en: 'This invoice goes out in the name of {naam}, in their number series. They are notified as soon as it is sent and can withdraw the mandate themselves at any time.' },
-  'bh.fact.mandaatBtw': { nl: 'Deze factuur komt op naam van {naam}, met zijn nummerreeks en BTW-nummer {btw}. Hij krijgt bericht zodra hij verstuurd is en kan de machtiging altijd zelf intrekken.', ar: 'تصدر هذه الفاتورة باسم {naam}، ضمن سلسلة أرقامه وتحت رقم BTW‏ {btw}. يصله إشعار فور إرسالها ويمكنه سحب التفويض بنفسه في أي وقت.', en: 'This invoice goes out in the name of {naam}, in their number series and under BTW number {btw}. They are notified as soon as it is sent and can withdraw the mandate themselves at any time.' },
+  'bh.fact.mandaatBtw': { nl: 'Deze factuur komt op naam van {naam}, met zijn nummerreeks en BTW-nummer {btw}. Hij krijgt bericht zodra hij verstuurd is en kan de machtiging altijd zelf intrekken.', ar: 'تصدر هذه الفاتورة باسم {naam}، ضمن سلسلة أرقامه وتحت رقم btw‏ {btw}. يصله إشعار فور إرسالها ويمكنه سحب التفويض بنفسه في أي وقت.', en: 'This invoice goes out in the name of {naam}, in their number series and under BTW number {btw}. They are notified as soon as it is sent and can withdraw the mandate themselves at any time.' },
   'bh.fact.aanWie': { nl: 'Aan wie stuurt {naam} deze factuur?', ar: 'إلى من يرسل {naam} هذه الفاتورة؟', en: 'Who is {naam} sending this invoice to?' },
   'bh.fact.jeKlant': { nl: 'je klant', ar: 'عميلك', en: 'your client' },
   'bh.fact.labelNaam': { nl: 'Naam', ar: 'الاسم', en: 'Name' },
@@ -14878,7 +14878,7 @@ export const MESSAGES = {
   'bh.fact.labelAdres': { nl: 'Adres', ar: 'العنوان', en: 'Address' },
   'bh.fact.labelPostcode': { nl: 'Postcode', ar: 'الرمز البريدي', en: 'Postcode' },
   'bh.fact.labelPlaats': { nl: 'Plaats', ar: 'المدينة', en: 'City' },
-  'bh.fact.labelBtw': { nl: 'BTW-nummer (optioneel)', ar: 'رقم BTW (اختياري)', en: 'BTW number (optional)' },
+  'bh.fact.labelBtw': { nl: 'BTW-nummer (optioneel)', ar: 'رقم btw (اختياري)', en: 'BTW number (optional)' },
   'bh.fact.labelDatum': { nl: 'Factuurdatum', ar: 'تاريخ الفاتورة', en: 'Invoice date' },
   'bh.fact.watGeleverd': { nl: 'Wat is er geleverd?', ar: 'ما الذي تم تسليمه؟', en: 'What was delivered?' },
   'bh.fact.phOmschrijving': { nl: 'Omschrijving', ar: 'الوصف', en: 'Description' },
@@ -14888,8 +14888,8 @@ export const MESSAGES = {
   'bh.fact.ariaEenheid': { nl: 'Eenheid regel {n}', ar: 'وحدة السطر {n}', en: 'Unit, line {n}' },
   'bh.fact.phPrijs': { nl: 'Prijs', ar: 'السعر', en: 'Price' },
   'bh.fact.ariaPrijs': { nl: 'Prijs regel {n}', ar: 'سعر السطر {n}', en: 'Price, line {n}' },
-  'bh.fact.ariaBtw': { nl: 'BTW regel {n}', ar: 'BTW السطر {n}', en: 'BTW, line {n}' },
-  'bh.fact.btwTarief': { nl: '{tarief}% BTW', ar: '{tarief}% BTW', en: '{tarief}% BTW' },
+  'bh.fact.ariaBtw': { nl: 'BTW regel {n}', ar: 'btw السطر {n}', en: 'BTW, line {n}' },
+  'bh.fact.btwTarief': { nl: '{tarief}% BTW', ar: '{tarief}% btw', en: '{tarief}% BTW' },
   'bh.fact.regelErbij': { nl: '+ Regel erbij', ar: '+ سطر إضافي', en: '+ Add a line' },
   'bh.fact.subtotaal': { nl: 'Subtotaal', ar: 'المجموع الفرعي', en: 'Subtotal' },
   'bh.fact.btw': { nl: 'BTW', ar: 'الضريبة', en: 'BTW' },
@@ -15283,7 +15283,7 @@ export const MESSAGES = {
   'reg.bedrijf': { nl: 'Bedrijfsnaam (optioneel)', ar: 'اسم الشركة (اختياري)', en: 'Company name (optional)' },
   'reg.bedrijfVoorbeeld': { nl: 'Jouw Bedrijf BV', ar: 'Jouw Bedrijf BV', en: 'Jouw Bedrijf BV' },
   'reg.kvk': { nl: 'KVK-nummer (optioneel)', ar: 'رقم KVK (اختياري)', en: 'KVK number (optional)' },
-  'reg.btw': { nl: 'BTW-nummer (optioneel)', ar: 'رقم BTW (اختياري)', en: 'BTW number (optional)' },
+  'reg.btw': { nl: 'BTW-nummer (optioneel)', ar: 'رقم btw (اختياري)', en: 'BTW number (optional)' },
   'reg.laterInvullen': { nl: 'Kun je later invullen.', ar: 'يمكنك إدخاله لاحقاً.', en: 'You can fill this in later.' },
   // De akkoordregel, in stukken die elk een hele zin of een hele knopnaam zijn — de twee links
   // staan er middenin, en een taal met een andere woordvolgorde zet ze op een andere plek.
@@ -15372,7 +15372,7 @@ export const MESSAGES = {
   // moet begrijpen: onder wiens naam en BTW-nummer zijn facturen uitgaan.
   'vk.namensUitleg': {
     nl: 'Ze gaan uit op hun naam en BTW-nummer, met hun doorlopende factuurnummers. Hieronder staat alleen wat jij zelf hebt gemaakt.',
-    ar: 'تصدر باسمهم ورقم BTW الخاص بهم، وبأرقام فواتيرهم المتسلسلة. وفي الأسفل يظهر ما أنشأتَه أنت فقط.',
+    ar: 'تصدر باسمهم ورقم btw الخاص بهم، وبأرقام فواتيرهم المتسلسلة. وفي الأسفل يظهر ما أنشأتَه أنت فقط.',
     en: 'They go out under their name and BTW number, in their continuous invoice series. Below is only what you created yourself.',
   },
 
@@ -15652,7 +15652,7 @@ export const MESSAGES = {
 
   'kwo.intro': {
     nl: 'BTW-aangifte, totalen en export per kwartaal',
-    ar: 'إقرار BTW والإجماليات والتصدير لكل ربع سنة',
+    ar: 'إقرار btw والإجماليات والتصدير لكل ربع سنة',
     en: 'BTW return, totals and export per quarter',
   },
 
