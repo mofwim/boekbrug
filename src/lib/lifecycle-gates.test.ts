@@ -15,6 +15,7 @@ import { test } from "node:test";
 import { SELF_ACTIONS as ZIEL_SELF_ACTIONS } from "./zelfstandig";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { join } from "node:path";
 // [BOOT-STUB] The emitted pre-paint script, asserted as a value rather than as source text — the
 // bug this guards was that the STRING contained a stub, which reading the file could never show.
 import { LOCALE_BOOT_SCRIPT } from "./i18n/locale-boot";
@@ -31744,4 +31745,55 @@ test("[TAAL-SCHERM] the screens are walked in every language, and no key may rea
   // And it must keep rendering rather than merely importing: a file that imports every screen and
   // asserts nothing is the shape this repo has been burned by twice this session.
   assert.match(suite, /renderToStaticMarkup\(/);
+});
+
+// ─── [SHEET-LAAT] 820 kB of spreadsheet parser on a page meant to convert a stranger ──────────
+//
+// Measured twice, because the first measurement was wrong and the second is the one that counts:
+// in the built chunks SheetJS is 266 kB, and served it is 88 kB. Exactly one CLIENT entry point in
+// this app reaches it — /bankafschrift-naar-excel, a PUBLIC page — and it needed it for one thing:
+// the .xlsx download button at the very end of the flow, beside a CSV button that needs none of it.
+// So every visitor paid for a writer most of them never press, on the page whose whole job is to
+// earn a stranger's trust in the first seconds.
+//
+// (The first reading blamed a pair of 820 kB chunks. Those are not SheetJS at all — they are this
+// app's own four-language message catalogue, which is a separate and larger finding recorded in
+// docs/BUNDEL.md. Grepping a minified chunk for "xlsx" finds every .xlsx MIME type and file
+// extension in the UI copy; the library has to be identified by its own symbols.)
+//
+// This is the trap PdfDownloadButton.tsx already documents, with a different library, and its
+// lesson is the one that matters here: a deferral is worth nothing unless the IMPORT moves. A
+// dynamic() wrapper with a static import twelve lines up defers nothing at all.
+test("[SHEET-LAAT] the spreadsheet writer is never in a public page's first download", () => {
+  const converter = code("src/app/bankafschrift-naar-excel/BankConverter.tsx");
+
+  // The import is inside the handler, and there is no static one anywhere in the file.
+  assert.match(converter, /await import\('@\/lib\/xlsx-adapter'\)/,
+    "the xlsx writer is no longer loaded on demand");
+  assert.doesNotMatch(converter, /^import .*xlsx-adapter/m,
+    "a static import is back, which makes the dynamic one below decorative");
+
+  // And a failed load must say so. A download button that silently does nothing is the worst
+  // possible answer on a page built to be trusted.
+  assert.match(converter, /setError\('De Excel-schrijver kon niet worden geladen/);
+
+  // The rule this protects, stated where it can be checked: ONE client entry may reach SheetJS,
+  // and it must reach it lazily. Every other importer is a server route, where size costs nothing.
+  const clientImporters: string[] = [];
+  const sweep = (dir: string) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) sweep(p);
+      else if (/\.tsx$/.test(e.name)) {
+        const src = readFileSync(p, "utf8");
+        if (!/^\s*['"]use client['"]/m.test(src)) continue;
+        // A STATIC import only — `await import(...)` is exactly what this gate is asking for.
+        if (/^import\s[^\n]*from\s*['"]@?[^'"]*xlsx[^'"]*['"]/m.test(src)) clientImporters.push(p);
+      }
+    }
+  };
+  sweep("src/app");
+  assert.deepEqual(clientImporters, [],
+    "these client screens pull SheetJS into their first download; move the import into the handler " +
+    "that needs it:\n  · " + clientImporters.join("\n  · "));
 });
