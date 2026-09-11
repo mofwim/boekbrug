@@ -24298,6 +24298,47 @@ test("[HANDMATIG-OVERGENOMEN] ontkoppelen en handmatig bevestigen wissen auto_ma
 //     en aan de Belastingdienst, en een verkoopregel die stilzwijgend één mengtarief draagt waar de
 //     factuur er twee heeft is een onware uitspraak over de administratie.
 
+// ─── [XAF-OMSCHRIJVING] A bank entry says what it is, not what the bank called it ──────────────
+//
+// Every other journal in the auditfile describes itself in words an accountant reads:
+// "Verkoopfactuur 20260005", "Inkoopfactuur F2", "Dagomzet 2026-08-21". The bank journal — by far
+// the largest, 1525 mutations in a live year — passed the bank's raw remittance text through, so
+// the ledger read `USTD//Factuur:20260005`. That is ING's marker for unstructured remittance
+// information followed by whatever the payer typed; it is not a sentence anyone wrote.
+//
+// This is how it was found: the owner opened their own grootboek, pointed at that row and asked
+// what it was. It was the receipt of their own invoice 20260005 — the app knew the invoice, the
+// customer and the amount, and printed none of the three.
+test("[XAF-OMSCHRIJVING] the bank journal names the invoice it settles, and keeps the bank's text", () => {
+  const xaf = code("src/lib/xaf-export.ts");
+
+  // 1. Neither the entry nor its lines may take the raw bank text as their description.
+  assert.doesNotMatch(xaf, /clip\(tx\.description \?\? "Bankmutatie"/,
+    "the bank's own code is the description again — that is the defect this gate exists for");
+  assert.match(xaf, /const desc = clip\(bankLineDescription\(tx\), 200\);/, "both trLines");
+  assert.match(xaf, /push\("BNK", tx\.date \?\? "", clip\(bankLineDescription\(tx\), 100\), buildBank\(tx\), "bank", tx\.id\);/,
+    "…and the journal entry above them");
+
+  // 2. What the app knows goes FIRST, because the entry description is clipped at 100.
+  assert.match(xaf, /label = `\$\{werkwoord\} \$\{soort\}\$\{nummer \? ` \$\{nummer\}` : ""\}`;/,
+    "the document and its number lead the sentence");
+  // The verb follows the SIGN: a refund on a sales invoice is money going out, not an "Ontvangst".
+  assert.match(xaf, /\? \(tx\.amount >= 0 \? "Ontvangst" : "Terugbetaling"\)/);
+  assert.match(xaf, /: \(tx\.amount <= 0 \? "Betaling" : "Terugontvangst"\);/);
+
+  // 3. The bank's own text is KEPT, behind it. An accountant traces a line back to the statement
+  //    by exactly that string, so an improvement that dropped it would cost more than it gives.
+  assert.match(xaf, /return raw && raw !== zin \?/, "the raw text stays, and is not repeated");
+
+  // 4. The two handles the sentence needs are carried from the fetch, not re-derived.
+  const fetch = code("src/lib/xaf-fetch.ts");
+  assert.match(fetch, /\.select\("id, direction, receiver_id, invoice_number"\)/,
+    "the linked invoice's number must be read, or every bank entry is anonymous again");
+  assert.match(fetch, /linkedInvoiceNumber: b\.invoice_id \? linkedNumber\.get\(b\.invoice_id\) \?\? null : null,/);
+  assert.match(fetch, /counterpartName: b\.counterpart_name,/,
+    "counterpart_name was selected all along and dropped on the way to the builder");
+});
+
 test("[XAF-STELSEL] the auditfile declares which VAT scheme its dates must be read under", () => {
   const src = code("src/lib/xaf-fetch.ts");
 
