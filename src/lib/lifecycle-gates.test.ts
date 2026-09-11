@@ -45,6 +45,7 @@ import { decide as decideAutonomy } from "./autonomy-scope";
 import { workDoneLedger as workDoneLedgerFor, estimateMinutes as estimateMinutesFor } from "./work-done";
 // [SEGMENT-VOORDEUR] De drie deuren, en alles wat ze beloven.
 import { SEGMENT_PAGES, claimedRoutes } from "./segment-pages";
+import { VAKWOORDEN, NOT_A_DOOR } from "./vakwoorden";
 import { execSync } from "node:child_process";
 import { parseVak, sellsOverCounter } from "./vak-profile";
 import { demoRefusalFor } from "./demo-tenant";
@@ -5030,10 +5031,18 @@ test("[EIGEN-FACTUUR] every door that reads a document asks it", () => {
 test("[EIGEN-NUMMER] every door hands the reader the own-invoice lookup", () => {
   const ai = code("src/lib/ai.ts");
   assert.match(ai, /matchesOwnInvoiceNumber\(/, "the reader must ask the pure matcher");
-  assert.match(
-    ai, /lookupOwnInvoice\(parsed\.invoice_number\)\.catch\(\(\) => null\)/,
-    "a lookup failure answers null — it may never take a real supplier invoice down",
-  );
+  // [EIGEN-CONTROLE-ONBEKEND] This used to pin `.catch(() => null)` verbatim, for a rule that is
+  // still exactly right: a lookup failure may never take a real supplier invoice down. What the
+  // shape ALSO did was erase the failure — a hiccup and "not your own invoice" left here as the
+  // same answer, and the silent one at that. The rule is now asserted as what it means: the read
+  // continues past a failure, and the failure is recorded rather than forgotten.
+  assert.match(ai, /ownRow = await opts\.lookupOwnInvoice\(parsed\.invoice_number\);/,
+    "the lookup is awaited in its own try, so failure and absence are distinguishable");
+  assert.match(ai, /let ownLookupFailed = false;/);
+  assert.match(ai, /_own_check_unavailable: true,/,
+    "a failure that is not recorded is a check that reports itself clean");
+  assert.doesNotMatch(ai, /ownLookupFailed[\s\S]{0,200}?is_invoice: false/,
+    "it may never take a real supplier invoice down");
   for (const [door, call] of [
     ["src/app/api/intake/route.ts", /lookupOwnInvoice: makeOwnInvoiceLookup\(supabase, user\.id\)/],
     ["src/app/api/email/upload/route.ts", /lookupOwnInvoice: makeOwnInvoiceLookup\(supabase, user\.id\)/],
@@ -21081,7 +21090,12 @@ test("[DEUR] every dashboard screen resolves a name, so the bar has something to
   assert.ok(patterns.length >= 5, `the PATTERN_TITLES parse found only ${patterns.length} entries`);
 
   /** Screens that carry their own chrome, or never render at all. Each with the reason. */
-  const EXEMPT = new Map([
+  const EXEMPT = new Map<string, string>([
+    // [VAKWOORD] The profession's words are redirects onto screens that already exist, so they
+    // never render and have no title of their own. Read out of VAKWOORDEN rather than listed here:
+    // a word removed from the map while its directory stays behind then goes red, which is the
+    // only way this list and that one can be kept saying the same thing.
+    ...VAKWOORDEN.map((v) => [`/dashboard/${v.woord}`, `[VAKWOORD] redirect to ${v.naar} — never renders`] as [string, string]),
     ["/dashboard", "the owner's home — DashboardHeader, not the sub-page bar"],
     ["/dashboard/accountant", "the accountant's home — same header"],
     ["/dashboard/bestanden", "draws its own file-manager header (breadcrumbs, not a back button)"],
@@ -26001,6 +26015,18 @@ test("[LEVERANCIER-SAMENVOEGEN] a name is never evidence, and the vetoes are ask
   // (an archived invoice must still move, and is not on the screen's list).
   assert.match(deur, /plan\.survivorId !== askedSurvivor && plan\.mergedAwayId !== askedSurvivor/,
     "the asked pair must be the pair the plan approved");
+
+  // [SAMENVOEGEN-EIGENAAR] The owner may name a pair the app cannot prove — and ONLY that. The
+  // two vetoes are facts, and a door that let byOwner past one of them would be the BALKIP merge
+  // with a checkbox in front of it.
+  const beslissingEigenaar = code("src/lib/supplier-merge.ts");
+  assert.match(beslissingEigenaar, /if \(!proven\.ok && proven\.reason !== 'no-evidence'\) return proven/,
+    "planOwnerMerge no longer forwards a veto — a KVK or account refusal must survive the owner's word");
+  assert.match(beslissingEigenaar, /const proven = planSupplierMerge\(survivor, mergedAway\)/,
+    "…and it asks the proven planner first rather than re-implementing the vetoes beside it");
+  assert.match(deur, /if \(!\(byOwner && plan\.reason === 'no-evidence'\)\) \{/,
+    "the route overrules exactly one refusal, and only for a pair the owner named");
+  assert.match(deur, /by_owner: byOwner/, "the trail records that this merge rested on the owner's word");
   assert.match(deur, /const survivor = found\.find\(\(s\) => s\.id === askedSurvivor\)!/,
     "…and the name that survives is the one the owner read, not one re-picked after they confirmed");
   const planAt = deur.indexOf("const plan = planSupplierMerge");
@@ -28776,7 +28802,9 @@ test("[AANSLAG] both cost legs withhold a tax letter, and the auditfile books it
   assert.match(code("src/lib/export.ts"), /effectiveTaxKind\(inv\) \? `aanslag \$\{effectiveTaxKind\(inv\)\}`/);
   // The selects carry the column, and the assembler hands both handles to the engine.
   assert.match(code("src/lib/compute-result-range.ts"), /client_name, tax_kind"\)/);
-  assert.match(code("src/lib/xaf-fetch.ts"), /supplier_id, tax_kind"\)/);
+  // The column has to be SELECTED, which is the rule; being the last one in the list is not.
+  // [GROOTBOEK] appended ledger_account after it and broke a gate that was pinning punctuation.
+  assert.match(code("src/lib/xaf-fetch.ts"), /supplier_id, tax_kind[,"]/);
   assert.match(code("src/lib/result-range-assemble.ts"), /tax_kind: i\.tax_kind \?\? null,\s*client_name: i\.client_name \?\? null,/);
   assert.match(code("src/lib/result-range-assemble.ts"), /taxKindByInvoice: new Map\(/);
   // The auditfile: the whole gross to the kind's account, nothing to 1400.
@@ -29160,6 +29188,76 @@ test("[OPDRACHTGEVER] the year's clients are added up, and the app judges nothin
   // The owner's own year only: no clientId, so an accountant's view of a client never carries it.
   assert.doesNotMatch(route, /clientId/);
   assert.match(code("src/app/dashboard/jaar/JaarClient.tsx"), /\{!clientId && <OpdrachtgeversPanel year=\{year\} \/>\}/);
+});
+
+// ─── [DBA-DOSSIER] The three things a year's totals cannot say ─────────────────────────────────
+//
+// opdrachtgeverYear answers "how many, and how big is the biggest" INSIDE one year. An
+// opdrachtgever running unbroken for four years and one that billed twice and stopped are the
+// same row in that answer, and they are not the same fact about a working relationship. So the
+// dossier adds three, each from invoices this app already holds: since when, won this year, and
+// the rate the owner agreed.
+//
+// The rate is READ, never derived. Revenue ÷ hours folds in every product line and every unbilled
+// hour and would print a price nobody ever quoted, while looking like the price they did.
+//
+// Same refusal as the panel it extends: no threshold, no colour, no verdict.
+test("[DBA-DOSSIER] since, acquisition and the agreed rate — read, never derived, never judged", () => {
+  const pure = code("src/lib/opdrachtgevers.ts");
+  const lines = code("src/lib/dba-lines.ts");
+  const route = code("src/app/api/opdrachtgevers/route.ts");
+  const panel = code("src/components/dba/OpdrachtgeversPanel.tsx");
+
+  // ── The verdict ban covers the new surface too, or it only covers the old one.
+  assert.doesNotMatch(lines, /\b(70|0\.7|drie opdrachtgevers|schijnzelfstandig)\b/i,
+    "a threshold or a verdict reached the dossier's own copy");
+
+  // ── The history is read, so the query may no longer be cut at 1 January.
+  assert.doesNotMatch(route, /\.gte\("invoice_date", start\)/,
+    "a query cut at the year cannot answer 'since when' — that is the whole point of this batch");
+  assert.match(route, /opdrachtgeverDossier\(\{ year, invoices, hours, rates \}\)/);
+  // …and the YEAR'S own totals must be unchanged by that: the cut moves into the module, on the
+  // same rule the query used — an invoice with no readable date belongs to no year.
+  assert.match(pure, /const prefix = `\$\{args\.year\}-`;/);
+  assert.match(pure, /args\.invoices\.filter\(\(iv\) => \(iv\.invoice_date \?\? ""\)\.startsWith\(prefix\)\)/);
+  assert.match(pure, /opdrachtgeverYear\(\{ year: args\.year, invoices: ofYear, hours: args\.hours \}\)/,
+    "the year's figures must still come from the gated function, not from a second copy of it");
+
+  // ── The rate is read off the klant and nothing else.
+  assert.match(route, /\.select\("client_id:id, default_hourly_rate"\)/);
+  assert.doesNotMatch(pure + lines, /revenue \s*\/\s*(r\.)?hours/,
+    "an effective rate would answer a different question while looking like the same one");
+  // A rate that is not recorded is not a rate of zero — a claim about the owner's own pricing.
+  assert.match(pure, /if \(r\.default_hourly_rate === null \|\| r\.default_hourly_rate === undefined\) continue;/);
+  assert.match(pure, /if \(!Number\.isFinite\(value\) \|\| value <= 0\) continue;/);
+  // A spread over one figure is not a range.
+  assert.match(pure, /recorded\.length >= 2/);
+
+  // ── Nothing is invented for a row that does not know.
+  assert.match(pure, /wonThisYear: since !== null && since\.startsWith\(prefix\)/,
+    "an opdrachtgever with no dated invoice is not 'new' — we simply do not know");
+
+  // ── [TAAL] The choices live apart from the screen, and the screen renders keys it is handed.
+  //     The panel renders NOTHING until its read answers ([NO-SILENT-EMPTY]), so a render test can
+  //     never reach these branches — deciding here is what makes the empty cases testable at all.
+  assert.match(lines, /export function dossierRowPhrases/);
+  assert.match(lines, /export function dossierSummaryPhrases/);
+  assert.match(panel, /dossierRowPhrases\(r, formatEuroNL\)\.map\(\(p\) => t\(p\.key, p\.params\)\)/);
+  assert.match(panel, /dossierSummaryPhrases\(data, formatEuroNL\)/);
+  // No sentence may be assembled inside the component: one hard-coded branch there is how a
+  // translation stays permanently half-finished.
+  assert.doesNotMatch(panel, /t\('dba\.(sinds|nieuw|maanden|maandEen|tarief|gewonnen|gewonnenEen|tariefBereik|tariefGelijk)'/,
+    "the panel chose a word — that choice belongs in dba-lines.ts");
+
+  // ── Every key the module can emit exists and carries Dutch, the source language.
+  const copy = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  for (const key of ["dba.sinds", "dba.nieuw", "dba.maanden", "dba.maandEen", "dba.tarief",
+                     "dba.gewonnen", "dba.gewonnenEen", "dba.tariefBereik", "dba.tariefGelijk"]) {
+    assert.match(lines, new RegExp(`"${key.replace(".", "\\.")}"`), `${key} is declared but never emitted`);
+    const line = copy.split("\n").find((l) => l.includes(`'${key}':`));
+    assert.ok(line, `${key} is missing from the catalogue`);
+    assert.match(line as string, /nl: '[^']+'/, `${key} has no Dutch`);
+  }
 });
 
 // ── [VERLEGD-AFTREK] What of 2a returns in 5b is the owner's right of deduction, on every surface ──
@@ -29783,4 +29881,1023 @@ test("[RITTEN-EENMALIG] the server builds travel lines from the log, stamps them
   // This file imports no app module, so the unit is checked where it is DECLARED: units.ts maps
   // 'km' to KMT, and without that row the e-factuur would call a kilometre a "piece".
   assert.match(code("src/lib/units.ts"), /\{ name: "km", code: "KMT" \}/);
+});
+
+// ─── [AL-BETAALD-NUMMER] The double-booking guard reads the number the line PRINTS ────────────
+//
+// The guard stops a bank line being coded as a cost when a paid invoice already carries that
+// money. It decided that on the amount and a fortnight's window — and it READ the paid invoices
+// keyed on the amount too, so an invoice whose number is printed on the line but whose amount
+// differs by a bank charge was never even fetched. Amount-keyed end to end.
+//
+// Measured on the production database: 53 unlinked outgoing payments print the number of exactly
+// one purchase invoice; 49 of those invoices were already settled; together € 34.858,79.
+//
+// So identity became the first handle. What this gate holds:
+//
+//   · The number is asked FIRST, and through the app's ONE reference matcher. referenceMatches
+//     already refuses a bare year, a digit-flanked fragment and a needle under four characters —
+//     every one of those rules paid for by a real mis-booking. A second copy here would be a
+//     second set of scars.
+//   · Direction still decides. A sales invoice cannot explain money leaving the account, however
+//     its number reads on the line.
+//   · The read fetches by number as well as by amount, in its OWN try/catch — the number read is
+//     an addition, and its hiccup must leave the amount rule standing rather than take it down.
+test("[AL-BETAALD-NUMMER] identity is the first handle, it comes from the one matcher, and its read cannot take the amount rule down", () => {
+  const guard = code("src/lib/bank-double-booking.ts");
+
+  // One matcher, imported — never re-implemented here.
+  assert.match(guard, /import \{ referenceMatches, isReferenceNumberToken \} from "\.\/bank-matching";/,
+    "the guard must ask the app's own reference matcher, not a second copy of its rules");
+  assert.doesNotMatch(guard, /function referenceMatches/, "a second copy of the number rules is a second set of scars");
+
+  // Identity is asked before arithmetic, and direction gates it.
+  assert.match(guard, /for \(const inv of paidRows\) \{\s*if \(\(inv\.direction \?\? ""\) !== wantDir\) continue;\s*if \(referenceMatches\(text, inv\.invoice_number \?\? null\)\) return inv;\s*\}/,
+    "the printed number must be the FIRST handle, and a sales invoice must never explain a debit");
+
+  // The read is keyed on the numbers too, or the handle above can never fire.
+  assert.match(guard, /\.in\("invoice_number", chunk\)/,
+    "amount-keyed reading is what made the number handle unreachable in the first place");
+  assert.match(guard, /isReferenceNumberToken\(part\)/, "the tokens come from the app's own parser");
+  assert.match(guard, /\.slice\(0, MAX_NUMBER_KEYS\)/, "a statement import must not grow the read with its own noise");
+  // Its own catch: the addition may fail without taking the original rule with it.
+  assert.match(guard, /\[AL-BETAALD-NUMMER\] paid-invoice read by number failed — the amount rule still stands/);
+
+  // The amount rule itself is unchanged, including the deliberate err-toward-held on an
+  // undatable pair: holding a line for a human is recoverable, a doubled cost in the aangifte
+  // is not.
+  assert.match(guard, /if \(!settled \|\| Number\.isNaN\(txMs\)\) return inv;/);
+  assert.match(guard, /if \(Math\.abs\(txMs - Date\.parse\(settled\)\) <= SETTLEMENT_WINDOW_MS\) return inv;/);
+  // The old three-argument signature still exists, so every caller that knows only the amount
+  // keeps the guard it always had.
+  assert.match(guard, /txText\?: Pick<GuardLine, "description"> & \{ reference\?: string \| null \}/);
+});
+
+// ─── [EIGEN-CONTROLE-ONBEKEND] A check that could not run never passes for a clean one ────────
+//
+// The reader has one guard that catches the owner's OWN sales invoice coming back through the
+// intake as a supplier bill. Getting that wrong costs twice over: the turnover is booked as a
+// cost, and the BTW the owner OWES on it is claimed back as voorbelasting. It has a measured
+// production instance (Kiwi, € 394,99).
+//
+// The lookup behind it was `.catch(() => null)`, which made a database hiccup and "no such own
+// invoice" the same answer — the silent one.
+//
+// The fix is NOT a refusal. This layer may only ADD recognition; rejecting on a hiccup would take
+// a real supplier invoice down with the database. So the failure is CARRIED, in the register the
+// app already uses for [IBAN-CHECK-HONEST] and [ONE-INVOICE-UNVERIFIED]: the row lands in the
+// human queue with a sentence that says the check could not run, and never claims it ran clean.
+test("[EIGEN-CONTROLE-ONBEKEND] a failed own-invoice lookup is carried, never swallowed and never a refusal", () => {
+  const reader = code("src/lib/ai.ts");
+  const health = code("src/lib/import-health.ts");
+
+  // The swallow is gone: failure and absence are told apart.
+  assert.doesNotMatch(reader, /lookupOwnInvoice\(parsed\.invoice_number\)\.catch\(\(\) => null\)/,
+    "a database hiccup and 'not your own invoice' must not be the same answer");
+  assert.match(reader, /let ownLookupFailed = false;/);
+  assert.match(reader, /ownRow = await opts\.lookupOwnInvoice\(parsed\.invoice_number\);/);
+  assert.match(reader, /_own_check_unavailable: true,/);
+
+  // Still not a refusal — the reading continues and the row is only flagged.
+  assert.doesNotMatch(reader, /ownLookupFailed[\s\S]{0,200}?is_invoice: false/,
+    "a failed lookup must never reject a genuine purchase invoice");
+
+  // The flag reaches the owner as a sentence, and it lands the row in the human queue.
+  assert.match(health, /if \(fc\?\._own_check_unavailable === true\) \{/,
+    "only an explicit true speaks — an absent flag is not an admission");
+  assert.match(health, /konden niet nagaan of dit je eigen verkoopfactuur is/);
+  assert.match(health, /flags\.vendor = true/);
+});
+
+// ─── [BLIND-GEMATCHT] A matcher that lost a signal says so ────────────────────────────────────
+//
+// Two reads feed the bank page's suggestions and neither is load-bearing enough to fail the
+// request: the memory of what the owner already CONFIRMED, and the list of suggestions they
+// REFUSED. Both were best-effort with a console line, which is the right call for the request and
+// the wrong one for the owner:
+//
+//   · Without the memory, a counterparty they identify every month goes manual again.
+//   · Without the refusals, a suggestion they explicitly said no to comes back.
+//
+// Both make the app look like it forgot, and an app that seems to forget is one nobody teaches
+// twice. The loss now travels with the answer and the screen says which one it was — once, above
+// the list it affects, and never claiming that nothing was remembered.
+test("[BLIND-GEMATCHT] a lost match memory or refusal list reaches the owner, and is absent when nothing was lost", () => {
+  const route = code("src/app/api/bank/match/route.ts");
+  const screen = code("src/app/dashboard/bank/BankClient.tsx");
+
+  // The route records both losses rather than only logging them.
+  assert.match(route, /refusalsUnavailable = true;/);
+  assert.match(route, /memoryUnavailable = true;/);
+  // …and carries them ONLY when there is something to admit: no key on the ordinary day, so the
+  // screen has nothing to render and says nothing.
+  // The rule, not the literal: the key is SPREAD in behind a condition, so it is absent on the
+  // ordinary day. [BLIND-LEVERANCIER] later added a third loss to the same object, which is exactly
+  // what this channel is for — pinning the two-key literal would have made growing it look like
+  // breaking it.
+  assert.match(route, /\.\.\.\(memoryUnavailable \|\| refusalsUnavailable[^?]*\?\s*\{ degraded: \{[^}]*memory: memoryUnavailable[^}]*refusals: refusalsUnavailable[^}]*\} \}\s*: \{\}\),/,
+    "an admission that is always present is a banner, not an admission");
+
+  // The screen renders one sentence, chosen by which signal was lost.
+  assert.match(screen, /\{data\?\.degraded && \(/);
+  // [RUSTIG] Two losses, two sentences. A third key for "both" would say the same thing a second
+  // time — the exact duplication the ratchet exists to refuse, and it caught this one.
+  assert.match(screen, /\{data\.degraded\.memory && t\('bank\.blind\.geheugen'\)\}/);
+  assert.match(screen, /\{data\.degraded\.refusals && t\('bank\.blind\.geweigerd'\)\}/);
+  assert.doesNotMatch(screen, /bank\.blind\.beide/, "one thought, one place");
+
+  // The sentences may not claim the app forgot — only that it could not look right now.
+  const copy = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  for (const key of ["bank.blind.geheugen", "bank.blind.geweigerd"]) {
+    const line = copy.split("\n").find((l) => l.includes(`'${key}'`));
+    assert.ok(line, `${key} is missing from the catalogue`);
+    assert.match(line as string, /konden nu niet ophalen/,
+      `${key} must say the read failed, never that nothing was remembered`);
+  }
+});
+
+// ─── [BLIND-LEVERANCIER] A matching signal that could not be read must not read as absent ──────
+//
+// The registry has known which account a supplier bills from since it first resolved that vendor,
+// and the matcher's IBAN tier needs it: `invoices.vendor_iban` is null far more often than the
+// supplier is unknown. Without it, an MT940 line carrying a counterpart IBAN, no invoice number
+// and no counterparty name is unbookable by construction.
+//
+// The lookup was best-effort and returned an empty map on failure. Safe for the MONEY — it removes
+// evidence, never invents it — and silent for the OWNER, which is a different question: an empty
+// map has two causes that look identical from outside, and under the wrong one "Probeer alles
+// opnieuw" reports that it examined everything and found nothing new. That reads as a fact about
+// the administratie when it is a fact about a database.
+//
+// Same channel and same rule as [BLIND-GEMATCHT]: carried with the answer, present only when there
+// is something to admit.
+test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, and both screens say so", () => {
+  const lookup = code("src/lib/supplier-known-iban.ts");
+  const match = code("src/app/api/bank/match/route.ts");
+  const rematch = code("src/app/api/bank/rematch/route.ts");
+  const auto = code("src/lib/bank-auto-confirm.ts");
+  const screen = code("src/app/dashboard/bank/BankClient.tsx");
+
+  // ── The lookup answers with the map AND whether it got one.
+  assert.match(lookup, /export interface SupplierIbanLookup/);
+  assert.match(lookup, /Promise<SupplierIbanLookup>/);
+  assert.match(lookup, /unavailable = true;/, "the catch must record the loss, not only log it");
+  assert.match(lookup, /return \{ ibans: out, unavailable \};/);
+  // An ordinary empty result is NOT a failure — a caller that renders this must be able to trust
+  // that `true` means something went wrong, or the warning becomes wallpaper.
+  assert.match(lookup, /if \(ids\.length === 0\) return \{ ibans: out, unavailable: false \};/,
+    "nothing to ask about must never be reported as a lost read");
+  // And it still degrades the same way: no map, no signal, never an invented one.
+  assert.doesNotMatch(lookup, /throw (new )?[A-Za-z]/, "a failed read must not become a failed request");
+
+  // ── Both owner-facing entry points read the new shape…
+  for (const [name, route] of [["match", match], ["rematch", rematch]] as const) {
+    assert.match(route, /fetchSupplierIbans\(pipeline, user\.id, rawInvoices\)/, `${name} still asks`);
+    assert.match(route, /supplierIbans\.ibans/, `${name} passes the map, not the wrapper`);
+  }
+  // …and each carries the loss, only when there is one.
+  assert.match(match, /supplierIbans: supplierIbansUnavailable \}/);
+  assert.match(match, /memoryUnavailable \|\| refusalsUnavailable \|\| supplierIbansUnavailable/,
+    "the third loss joins the same admission — a second channel would drift from the first");
+  assert.match(rematch, /\.\.\.\(supplierIbans\.unavailable \? \{ supplierIbansUnavailable: true \} : \{\}\),/,
+    "absent on the ordinary run, so the sweep's report stays as short as it was");
+
+  // ── The automatic pass needs no screen, and must not gain a refusal it never had: a missing
+  //     signal can only LOWER a score, so this pass confirms less, never wrongly.
+  assert.match(auto, /\(await fetchSupplierIbans\(pipeline, userId, rawInvoices\)\)\.ibans/);
+  assert.doesNotMatch(auto, /supplierIbansUnavailable/,
+    "an automatic pass has no owner watching it — inventing a refusal there stalls booking");
+
+  // ── One sentence, in the family the owner already reads on this screen.
+  assert.match(screen, /degraded\?: \{ memory\?: boolean; refusals\?: boolean; supplierIbans\?: boolean \}/);
+  assert.match(screen, /\{data\.degraded\.supplierIbans && t\('bank\.blind\.leverancier'\)\}/);
+  // The rematch report says it BESIDE the count, never instead of it: the number is still true.
+  assert.match(screen, /\{rematchInfo\.supplierIbansUnavailable && \(/);
+  assert.match(screen, /t\('bank\.rematch\.alles', \{ count: rematchInfo\.examined \}\)/,
+    "the examined count must survive — the admission adds to it, it does not replace it");
+
+  // The sentence may not claim the app has no such knowledge — only that it could not look now.
+  const copy = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  const line = copy.split("\n").find((l) => l.includes("'bank.blind.leverancier'"));
+  assert.ok(line, "bank.blind.leverancier is missing from the catalogue");
+  assert.match(line as string, /konden nu niet ophalen/,
+    "it must say the read failed, never that the accounts are unknown");
+});
+
+// ─── [GROOTBOEK] Which cost account, not just "a cost" ─────────────────────────────────────────
+//
+// The auditfile carries ONE cost account: 4000 "Kosten", on the GROUP code WBed. xaf-export.ts
+// says why in its own words — "the group-level WOmz / WBed where the leaf depends on facts the app
+// does not hold". Every purchase invoice, whatever it was for, lands on that same line, which is
+// the first thing an accountant notices and the difference between an export they can import and
+// one they re-code by hand.
+//
+// This gate holds the two rules that make the chart worth having:
+//   · an RGS code is a VERIFIED one or it is null — inherited verbatim from xaf-export.ts, where
+//     "a missing code is a lookup, a wrong code is a misfiled administration";
+//   · 4000 is untouched. Adding accounts beside it makes an export more precise; renaming or
+//     renumbering it silently moves history.
+// And the third that makes it safe: it suggests, it never books.
+// ─── [VAKWOORD] The profession's words, and the ones this app must NOT answer ─────────────────
+//
+// A Dutch accountant opening an unfamiliar package does not browse; they look for the nouns of
+// their trade. BoekBrug has debiteuren, crediteuren, saldibalans and journaalposten — under the
+// names the ENTREPRENEUR uses, which are the right names and are not changing. So the word becomes
+// a door onto the screen that already answers it.
+//
+// The half that needs a gate is the other half. A redirect is a CLAIM: it says "you asked for X,
+// here is X". Pointing `memoriaal` at the grootboek would be worse than a 404, because the 404 is
+// true — the accountant would hunt for a memoriaalboeking on a page that has none and conclude the
+// screen is broken rather than the feature absent. The list of what this app does not have is part
+// of what it has.
+test("[VAKWOORD] every word has a real door, and every absence stays a 404", () => {
+  const rule = code("src/lib/vakwoorden.ts");
+  assert.ok(VAKWOORDEN.length >= 10, `the vocabulary bridge parsed only ${VAKWOORDEN.length} words`);
+  assert.ok(NOT_A_DOOR.length >= 3, "the deliberate absences are gone from the module");
+
+  // ── Every word has a route, and every route is in the map. Both directions: a directory left
+  //    behind after a word is removed is a door nothing describes.
+  const dirs = readdirSync("src/app/dashboard").filter((d) =>
+    existsSync(`src/app/dashboard/${d}/page.tsx`)
+    && readFileSync(`src/app/dashboard/${d}/page.tsx`, "utf8").includes("vakwoordNaar"));
+  assert.deepEqual(
+    [...dirs].sort(), VAKWOORDEN.map((v) => v.woord).sort(),
+    "the map and the routes on disk disagree about which words have a door",
+  );
+
+  // ── Each door resolves its target THROUGH the map, never from a string of its own. A door that
+  //    keeps its own destination drifts from the list that says where it goes.
+  for (const v of VAKWOORDEN) {
+    const page = readFileSync(`src/app/dashboard/${v.woord}/page.tsx`, "utf8");
+    assert.match(page, /redirect\(vakwoordNaar\("[a-z]+"\) \?\? "\/dashboard"\);/,
+      `${v.woord} hard-codes its own destination`);
+  }
+
+  // ── Every target is a screen that actually exists. A door onto a 404 is the failure this whole
+  //    bridge was built to remove, reintroduced one level down.
+  for (const v of VAKWOORDEN) {
+    const target = v.naar.replace(/^\/dashboard/, "src/app/dashboard");
+    assert.ok(existsSync(`${target}/page.tsx`), `${v.woord} opens onto ${v.naar}, which has no page`);
+  }
+
+  // ── And the absences have NO route. This is the assertion that keeps the bridge honest.
+  for (const n of NOT_A_DOOR) {
+    assert.ok(!existsSync(`src/app/dashboard/${n.woord}/page.tsx`),
+      `${n.woord} was given a door, but ${n.waarom}`);
+    assert.ok(!rule.includes(`woord: "${n.woord}", naar:`), `${n.woord} is in both lists`);
+  }
+
+  // ── Nothing here renames the owner's app into accountancy vocabulary: the doors are redirects,
+  //    and the screens they land on keep the names the entrepreneur reads.
+  assert.match(code("src/components/nav/DashboardChrome.tsx"), /\["\/dashboard\/facturen", "chrome\.mijnFacturen"\]/);
+  assert.match(code("src/components/nav/DashboardChrome.tsx"), /\["\/dashboard\/incoming", "chrome\.inkomend"\]/);
+});
+
+// ─── [RITME] The expectation half, and the four ways it stays quiet ───────────────────────────
+//
+// supplier-cadence.ts answers "which invoice did NOT arrive". It has had unit tests since it was
+// written; what it has not had is a gate, and it is the module in this repo where that matters
+// most — because everything it does is DECIDE NOT TO SPEAK. A regression here does not produce a
+// wrong number; it produces a banner on half the suppliers in the administration, and an alarm
+// that is wrong often enough teaches the owner to dismiss the one that is right.
+//
+// Its own header names the three silences and the window. This pins them, and pins that the
+// endpoint stays honest about a read it could not perform.
+test("[RITME] the missing-invoice signal keeps its four silences and never invents a rhythm", () => {
+  const rule = code("src/lib/supplier-cadence.ts");
+  const route = code("src/app/api/incoming/missing/route.ts");
+
+  // ── Enough history. Two invoices are a coincidence, not a habit.
+  assert.match(rule, /const MIN_INVOICES = 4/);
+  // ── A REAL rhythm: every gap close to the median, not merely an average that looks monthly.
+  assert.match(rule, /const GAP_TOLERANCE = 0\.4/);
+  // ── A recognised cadence, or nothing. A median in no bucket is not a rhythm.
+  assert.match(rule, /const BUCKETS: \{ cadence: Cadence; min: number; max: number \}\[\]/);
+  for (const c of ["wekelijks", "maandelijks", "per kwartaal", "jaarlijks"]) {
+    assert.ok(rule.includes(`cadence: '${c}'`), `the ${c} bucket is gone`);
+  }
+
+  // ── Pure, and never its own clock: today is passed in, or the same administration would answer
+  //    differently in Amsterdam and in the region the server happens to run in.
+  assert.match(rule, /todayIso: string/);
+  assert.doesNotMatch(rule, /new Date\(\)|Date\.now\(\)/,
+    "a module that clocks itself cannot be tested and answers differently per timezone");
+  assert.doesNotMatch(rule, /supabase|createClient|fetch\(/, "pure");
+
+  // ── The route uses the owner's day, and a truncated read is never rendered as "nothing missing".
+  assert.match(route, /amsterdamToday\(\)/);
+  assert.match(route, /fetchAllRows</, "[RITME-AFKAP] a capped read goes quiet on exactly the longest histories");
+  assert.match(route, /tag: "RITME",/, "'we could not look' and 'nothing is missing' render identically");
+});
+
+// ─── [BETAALD-GEEN-STUK] The observation beside the expectation ───────────────────────────────
+//
+// [RITME] (supplier-cadence.ts) already asks "which invoice did not arrive", from a supplier's own
+// rhythm. That answer is an EXPECTATION and is stated as one — the subscription may simply have
+// ended. This is the half that guesses nothing: the bank line exists, the counterparty is a
+// supplier this administration HAS invoices from, and nothing is linked to it. Money left and the
+// paperwork is not here.
+//
+// It lives behind the same endpoint on purpose. "What is missing" must have ONE door, or the owner
+// finds one list and never the other — which is the failure this session named four times over.
+test("[BETAALD-GEEN-STUK] a payment with no document is observed, narrowly, behind the one door", () => {
+  const rule = code("src/lib/betaling-zonder-stuk.ts");
+  const route = code("src/app/api/incoming/missing/route.ts");
+  const screen = code("src/app/dashboard/incoming/IncomingInvoicesClient.tsx");
+
+  // ── Pure, and it invents no supplier key of its own: there is exactly one in this app.
+  assert.doesNotMatch(rule, /supabase|createClient|fetch\(|await /, "pure");
+  assert.match(rule, /keyOf: \(name: string\) => string;/,
+    "a second answer to 'is this the same company' is a second supplier registry");
+  assert.doesNotMatch(rule, /supplierNameKey|counterpartKey/, "…so it must not import one either");
+
+  // ── The four silences. Each one is a class of false alarm, and a false alarm here teaches the
+  //    owner to dismiss the true one — the lesson creditnota-signal.ts already paid for.
+  assert.match(rule, /if \(!\(line\.amount < 0\)\) continue;/, "money coming in is not a missing purchase invoice");
+  assert.match(rule, /if \(line\.invoiceId != null\) continue;/);
+  assert.match(rule, /if \(line\.status != null && ANSWERED\.has\(line\.status\)\) continue;/);
+  assert.match(rule, /const known = input\.knownSuppliers\.get\(input\.keyOf\(name\)\);\s*if \(!known\) continue;/,
+    "a shop we have never had an invoice from is the ordinary bon case, answered elsewhere");
+
+  // ── It reports positive euros: a screen must never have to flip a sign to show what left.
+  assert.match(rule, /amount: Math\.abs\(line\.amount\),/);
+
+  // ── And it claims only what it knows. The invoice may be unread in the mailbox.
+  assert.match(rule, /er is geen factuur aan gekoppeld/);
+  assert.doesNotMatch(rule, /factuur ontbreekt|bestaat niet/,
+    "we know nothing is linked — not that no invoice exists");
+
+  // ── One door for "what is missing", carrying both kinds of evidence.
+  assert.match(route, /paymentsWithoutDocument\(\{/);
+  assert.match(route, /assessSupplierCadence\(/, "the expectation stays where it was");
+  assert.match(route, /return NextResponse\.json\(\{ missing, unpaired/);
+
+  // ── A read that could not run is never rendered as "nothing is wrong". That confusion is the
+  //    entire reason this endpoint exists, and it must not reappear inside it.
+  assert.match(route, /unpairedUnavailable = true;/);
+  assert.match(route, /tag: "BETAALD-GEEN-STUK",/);
+
+  // ── The owner meets it where they already look for what is missing.
+  assert.match(screen, /ink\.betaaldGeenStuk\.regel/);
+  assert.match(screen, /unpaired\.length > 0/);
+});
+
+// ─── [JOURNAAL-BRON] One journal, two renderings — never two journals ─────────────────────────
+//
+// BoekBrug has had a complete double-entry journal since the auditfile was built: buildJournalEntries
+// turns every sales invoice, purchase invoice, bank line, cash row, day turnover and depreciation
+// step into a balanced entry, and REFUSES one that does not balance. What it never had was a
+// screen — the journal existed only as XML addressed to the Belastingdienst, so an accountant
+// opening this app found no grootboek and no journaalposten at all, and concluded the obvious
+// thing about a bookkeeping package that appears to have neither.
+//
+// The dangerous fix is the natural one: give the ledger screen its own computation over the same
+// rows. That is how an administration acquires two sets of books — the screen and the auditfile
+// drift on the first rule changed in one and not the other, nothing anywhere compares them, and
+// the accountant ends up reconciling BoekBrug against BoekBrug.
+//
+// So: exactly one builder, and both renderings downstream of it.
+test("[JOURNAAL-BRON] the ledger and the auditfile are two renderings of ONE journal", () => {
+  const xaf = code("src/lib/xaf-export.ts");
+  const kaart = code("src/lib/grootboekkaart.ts");
+  const route = code("src/app/api/grootboek/kaart/route.ts");
+
+  // ── The builder is exported, and the XML writer CONSUMES it rather than repeating it.
+  assert.match(xaf, /export function buildJournalEntries\(input: XafInput\): JournalResult \{/);
+  assert.match(xaf, /buildJournalEntries\(input\);/,
+    "buildXafFile must call the one builder, not keep a copy of the loop");
+  // The entry-building loops must appear ONCE in the file. Two copies is the failure this gate is
+  // named for, and it would look like a harmless duplication until the day one of them is edited.
+  for (const loop of ["for (const inv of input.sales)", "for (const inv of input.purchases)", "for (const tx of input.bank)"]) {
+    const first = xaf.indexOf(loop);
+    assert.ok(first >= 0, `the journal no longer builds ${loop} — has it moved?`);
+    assert.equal(xaf.indexOf(loop, first + 1), -1, `${loop} appears twice: two journals, one administration`);
+  }
+
+  // ── The ledger DERIVES. It may read the journal; it may not compute money from documents.
+  assert.match(kaart, /import \{ XAF_ACCOUNTS, type Entry, type Line \} from ".\/xaf-export";/);
+  assert.doesNotMatch(kaart, /total_ex_btw|btw_amount|total_inc_btw|invoices|bank_transactions/,
+    "a grootboek that computes its own amounts from documents is a second set of books");
+  assert.doesNotMatch(kaart, /supabase|createClient|fetch\(|await /, "pure");
+
+  // ── The screen's route uses the SAME reads as the auditfile, for the same reason.
+  assert.match(route, /import \{ buildJournalEntries \} from "@\/lib\/xaf-export";/);
+  assert.match(route, /import \{ buildXafInputForOwner \} from "@\/lib\/xaf-fetch";/);
+  assert.match(route, /resolveQuarterOwner\(/, "an accountant opens a client's ledger through the same door as their auditfile");
+
+  // ── An entry that does not balance is refused, and the balance is STATED rather than trusted.
+  assert.match(xaf, /if \(!balanced\(built\.lines\)\) \{ skipped\.push/);
+  assert.match(kaart, /balanced: totalDebitC === totalCreditC,/);
+  // …and a document the journal refused must reach the screen, because a short ledger looks
+  // exactly like a complete one — the argument the auditfile already makes in its own header.
+  assert.match(route, /skipped: journal\.skipped,/);
+  assert.match(code("src/lib/grootboek-kaart-lines.ts"), /staat niet in dit overzicht|staan niet in dit overzicht/);
+
+  // ── The column carries the sign. A ledger prints an amount in one of two columns and never a
+  //    minus; the render test asserts the rendered page, this asserts the rule it comes from.
+  assert.match(code("src/lib/grootboek-kaart-lines.ts"), /return debitC >= 0 \? \{ debet: euro, credit: "" \} : \{ debet: "", credit: euro \};/);
+
+  // ── And the door exists. Three features in a row were built, gated and reached nobody because
+  //    the capability existed and the LIST did not; a grootboek nobody can navigate to is the
+  //    same failure with a bigger surface.
+  assert.match(code("src/lib/nav-destinations.ts"), /href: "\/dashboard\/grootboek"/);
+  assert.match(code("src/app/dashboard/zzp/ZzpDashboard.tsx"), /router\.push\('\/dashboard\/grootboek'\)/);
+  assert.match(code("src/components/nav/DashboardChrome.tsx"), /\["\/dashboard\/grootboek", "chrome\.grootboek"\]/);
+});
+
+// ─── [BESLISMATRIX] The census is checked against the repository, not written about it ─────────
+//
+// docs/BoekBrug_Accounting_Decision_Matrix.md names every decision the pipeline makes on a real
+// document, and cites for each one the module that decides and the gate that holds it. That is
+// only worth anything if the citations resolve: a matrix that names four modules which were
+// renamed away last spring reads exactly like one that is right, and is worse than no matrix,
+// because it is the document someone consults instead of the code.
+//
+// Four rows were wrong the first time it was written. This is why that was found.
+test("[BESLISMATRIX] every decision in the census cites a module and a gate that exist", () => {
+  const doc = readFileSync("docs/BoekBrug_Accounting_Decision_Matrix.md", "utf8");
+  const suite = readFileSync("src/lib/lifecycle-gates.test.ts", "utf8");
+
+  // Rows look like: | Decision | `module.ts` | `[TAG]` | Dutch sentence |
+  const rows = [...doc.matchAll(/^\| ([^|]+?) \| `([a-z0-9./-]+\.ts)` \| `\[([A-Z0-9-]+)\]` \| ([^|]+?) \|$/gm)];
+  assert.ok(rows.length >= 50, `expected the full census, parsed ${rows.length} rows`);
+
+  const missingModule: string[] = [];
+  const missingGate: string[] = [];
+  const noOwnerColumn: string[] = [];
+  for (const [, decision, mod, tag, owner] of rows) {
+    if (!existsSync(`src/lib/${mod}`)) missingModule.push(`${mod} (${decision.trim()})`);
+    if (!suite.includes(`test("[${tag}]`)) missingGate.push(`${tag} (${decision.trim()})`);
+    // The seventh column is the point of the document. A row that cannot say where the owner
+    // meets this decision is a feature that was measured reaching nobody three times over.
+    if (owner.trim().length < 20) noOwnerColumn.push(decision.trim());
+  }
+  assert.deepEqual(missingModule, [], `the census names modules that do not exist: ${missingModule.join(", ")}`);
+  assert.deepEqual(missingGate, [], `the census names gates that do not exist: ${missingGate.join(", ")}`);
+  assert.deepEqual(noOwnerColumn, [], `no answer to "how does the owner learn this applies": ${noOwnerColumn.join(", ")}`);
+
+  // And the "not built" half must stay honest about being a claim of ABSENCE. Each line there
+  // carries how it was verified; without that it is a memory, and a memory of what a repository
+  // does not contain is the least reliable sentence anybody writes about it.
+  const notBuilt = doc.slice(doc.indexOf("| Not built |"), doc.indexOf("## The table"));
+  assert.ok(notBuilt.length > 200, "the not-built table must still be there");
+  for (const line of notBuilt.split("\n").filter((l) => l.startsWith("| ") && !l.startsWith("| Not built") && !l.startsWith("|---"))) {
+    const verifiedBy = line.split("|")[2]?.trim() ?? "";
+    assert.ok(verifiedBy.length > 5, `an absence claimed with no way it was checked: ${line.slice(0, 60)}`);
+  }
+});
+
+// ─── [ZELFFACTUUR] The one document class where the second line of defence cannot fire ─────────
+//
+// Self-billing inverts who wrote the invoice: the BUYER draws it up for the seller. When the owner
+// is the seller, that document is their own turnover arriving in the incoming pile — the
+// [EIGEN-FACTUUR] damage exactly, counted twice and in opposite directions.
+//
+// own-document.ts catches it whenever the paper carries the owner's KVK, btw number or IBAN. What
+// CANNOT catch it is [EIGEN-NUMMER], and not by accident: a self-billed invoice carries the
+// customer's number series, from a run this app has never issued. So on precisely this class the
+// fallback for "the reader named the wrong party" is structurally absent, and an owner with a
+// half-filled profile has nothing left.
+//
+// The printed word is the third handle. It decides nothing — which side the owner is on is not on
+// the paper — and it holds the document for one look.
+test("[ZELFFACTUUR] the printed word holds the document, names nothing, and reaches every door", () => {
+  const rule = code("src/lib/zelffacturering.ts");
+  const reader = code("src/lib/ai.ts");
+  const queue = code("src/lib/auto-advance.ts");
+  const health = code("src/lib/import-health.ts");
+
+  // ── Pure, and it never concludes which side the owner is on.
+  assert.doesNotMatch(rule, /supabase|createClient|fetch\(|await /, "pure");
+  assert.doesNotMatch(rule, /is_invoice|isOwn|direction|omzet|revenue/,
+    "this module reports a word; it must not decide whose document it is");
+  // A denial is not an announcement — the same rule [CREDIT-WOORD] carries.
+  assert.match(rule, /const DENIED = /);
+  assert.match(rule, /if \(DENIED\.test\(text\)\) return false;/);
+  // No text layer is not evidence of the opposite.
+  assert.match(rule, /if \(!text\) return false;/);
+
+  // ── It reads the WHOLE document, unlike creditWordInHeader, which is capped at a header window.
+  //    That difference is the point: the legal formula is normally a footer line, and these words
+  //    have no innocent second life in payment terms the way "creditnota" does.
+  assert.doesNotMatch(rule, /slice\(0, *[0-9]+\)/,
+    "the legal statement is usually printed at the bottom — a header window would miss it");
+  assert.match(code("src/lib/creditnota-signal.ts"), /const kop = text\.slice\(0, KOPLENGTE\);/,
+    "…while the credit word stays capped, for the opposite reason");
+
+  // ── It lives in the READER, not at one door. Five doors call the reader; a check at one door is
+  //    a check the other four do not have — the lesson own-document.ts already paid for.
+  assert.match(reader, /if \(selfBilledWordInDocument\(statementText\)\) \{/);
+  assert.match(reader, /_zelffactuur: true \}/);
+
+  // ── And it refuses to auto-book, under its own reason, with its sentence in both lists.
+  assert.match(queue, /if \(s\.health\?\.field_confidence\?\._zelffactuur === true\) \{/);
+  assert.match(queue, /return \{ advance: false, reason: "self_billed" \};/);
+  assert.match(code("src/lib/hold-reasons.ts"), /self_billed: "/);
+  assert.match(code("src/lib/why-waiting.ts"), /self_billed: "wacht\.zelffactuur",/);
+
+  // ── The row asks the question rather than answering it. A sentence that claimed "this is your
+  //    own sale" would be wrong every time the owner is the buyer, which is the other half of the
+  //    cases and the half where the invoice is a perfectly ordinary cost.
+  assert.match(health, /_zelffactuur\?: boolean/);
+  assert.match(health, /controleer of dit jouw eigen verkoop is en geen inkoop/);
+});
+
+// ─── [VREEMDE-VALUTA] Every amount in this administration is a euro amount ─────────────────────
+//
+// Nothing in the pipeline states that assumption, which is exactly why it is dangerous: it is
+// simply true of every invoice this app has ever seen, until the day a supplier bills in dollars.
+// On that day the base, the btw, the deduction and the aangifte are all wrong by the exchange
+// rate, and NOT ONE gate downstream fires — the arithmetic on the document is perfectly
+// consistent, in dollars.
+//
+// The guard is two rules, and the second is the one worth writing down: we act only on a currency
+// we READ (an absent one is not USD and not EUR — it is not a reason to do anything, which is how
+// 100 % of the documents on this database behave), and we NEVER convert. A conversion needs the
+// rate on the invoice date, which this app does not have; and a converted figure, once stored, is
+// indistinguishable from a read one. So the answer is a hold and a name.
+test("[VREEMDE-VALUTA] a currency is read, never assumed, and a foreign one holds instead of converting", () => {
+  const rule = code("src/lib/vreemde-valuta.ts");
+  const reader = code("src/lib/ai.ts");
+  const queue = code("src/lib/auto-advance.ts");
+  const health = code("src/lib/import-health.ts");
+
+  // ── Nothing in this module may convert. No rate, no multiplication, no "approximately".
+  assert.doesNotMatch(rule, /rate|koers|exchange|convert|\* *rate/i,
+    "a converted amount is indistinguishable from a read one — that is the whole danger");
+  assert.doesNotMatch(rule, /supabase|createClient|fetch\(|await /, "pure");
+
+  // ── Absent is not a reading. This is the rule that keeps every existing document behaving
+  //    exactly as it does today; break it and the entire queue stops on documents that said
+  //    nothing about a currency, which is nearly all of them.
+  assert.match(rule, /if \(raw == null\) return null;/);
+  assert.match(rule, /return code != null && code !== HOME_CURRENCY;/,
+    "foreign means READ and not-euro — never merely not-euro");
+  assert.match(rule, /if \(code == null \|\| code === HOME_CURRENCY\) return \{ hold: false, code \};/);
+
+  // ── A symbol that means more than one currency is not a reading either. Naming the wrong money
+  //    on the owner's screen is a guess wearing the clothes of a fact.
+  assert.doesNotMatch(rule, /"\$": "USD"/, "a bare dollar sign is USD, CAD, AUD, NZD, SGD…");
+  assert.doesNotMatch(rule, /"kr":/, "kr is Swedish, Norwegian AND Danish");
+
+  // ── The reader asks for it and is told, in the prompt itself, not to fill in the euro.
+  assert.match(reader, /"currency": string or null,/);
+  assert.match(reader, /do NOT fill in "EUR" because the invoice looks Dutch/);
+  // …and only a positive foreign reading writes the key.
+  assert.match(reader, /if \(valuta\.hold && valuta\.code != null\) \{/);
+  assert.match(reader, /_valuta: \{ code: valuta\.code \},/);
+
+  // ── The queue refuses to auto-book it, under its own reason.
+  assert.match(queue, /if \(foreignCurrencyHold\(s\.health\?\.field_confidence\?\._valuta\?\.code\)\.hold\) \{/);
+  assert.match(queue, /return \{ advance: false, reason: "foreign_currency" \};/);
+  // Every refusal owes the owner a sentence — both lists, or the card says a tag out loud.
+  assert.match(code("src/lib/hold-reasons.ts"), /foreign_currency: "/);
+  assert.match(code("src/lib/why-waiting.ts"), /foreign_currency: "wacht\.vreemdeValuta",/);
+
+  // ── The OTHER euro rule stays a separate rule, deliberately. [EURO-ALLEEN] (e-invoice.ts) reads
+  //    a machine-readable XML field that is a currency code by construction, so it refuses
+  //    anything that is not EUR. This one reads a picture, so it acts only on a symbol it can
+  //    resolve. Collapsing either into the other breaks the door it came from: the XML side would
+  //    start accepting an unrecognised code as euros, and the read side would hold an invoice on
+  //    an OCR artefact.
+  const einv = code("src/lib/e-invoice.ts");
+  assert.match(einv, /export function isEuroDocument\(/);
+  assert.match(einv, /return String\(currency\)\.trim\(\)\.toUpperCase\(\) === "EUR";/,
+    "the XML door refuses everything that is not EUR, an unrecognised code included");
+  assert.doesNotMatch(rule, /isEuroDocument/, "the read door does not borrow the XML door's rule");
+
+  // ── And the row itself says so, because nothing else on it would: a dollar invoice adds up.
+  assert.match(health, /_valuta\?: \{ code\?: string \| null \}/);
+  assert.match(health, /niet in euro's/);
+});
+
+// ─── [REGELS] The lines give back the constraint a mixed-rate invoice loses ────────────────────
+//
+// btw-split.ts states the problem exactly: on a single-rate invoice two independent constraints
+// hold — the sum identity AND the fact that btw/excl must be exactly 9 % or 21 %. On a mixed-rate
+// invoice the second "does not fail — it stops existing, without saying so". Its answer was the
+// per-rate summary block, when the supplier prints one. 28 booked invoices have none.
+//
+// But a document without a block still prints its LINES, and every line states its own rate. Group
+// them, apply the rate, and the result has to reproduce what the paper says. That IS the second
+// constraint, rebuilt from the goods rather than from a block the supplier chose to print — and it
+// is the only way a receipt with 9 % groceries and 21 % office supplies can ever be read.
+test("[REGELS] the split from the lines is derived, then verified against BOTH anchors, and never repairs", () => {
+  const rule = code("src/lib/factuurregels.ts");
+  const reader = code("src/lib/ai.ts");
+  const route = code("src/app/api/readiness/route.ts");
+
+  // ── Both printed anchors are checked, and a mismatch is a REFUSAL, not a correction.
+  assert.match(rule, /reason: "base_mismatch"/);
+  assert.match(rule, /reason: "btw_mismatch"/);
+  assert.match(rule, /if \(Math\.abs\(summedBase - base\) > TOLERANCE\) return \{ ok: false, reason: "base_mismatch" \};/);
+  assert.doesNotMatch(rule, /parsed\.|totalExBtw =|btwAmount =/,
+    "this module may not write back a repaired figure — that is how a misread becomes invisible");
+  // All-or-nothing per document: one line without a rate makes the grouping a guess.
+  assert.match(rule, /return \{ ok: false, reason: "rate_missing" \};/);
+  assert.match(rule, /return \{ ok: false, reason: "amount_missing" \};/);
+  // Only the legal rates. A line at 6 % is a misread of the layout, not a rate.
+  assert.match(rule, /const LEGAL_RATES = new Set\(\[0, 9, 21\]\);/);
+  // Pure.
+  assert.doesNotMatch(rule, /supabase|createClient|fetch\(|await /);
+
+  // ── The reader asks for the lines AND the rate on each, and refuses to spread rates by guessing.
+  assert.match(reader, /"invoice_lines": \[\{ "description": string/);
+  assert.match(reader, /Do NOT spread the document's rates over the lines by guessing/);
+  assert.match(reader, /leave\s*\n?\s*"amount" null rather than dividing it yourself/,
+    "a computed line is not a read one");
+
+  // ── The derivation runs ONLY when the supplier printed no block, and never on a creditnota —
+  //    the same exclusion the printed block carries, for the same sign reason.
+  assert.match(reader, /if \(clean\.length === 0 && parsed\.is_credit_note !== true\) \{/);
+  // …and it lands under its OWN key. Merging it into _btw_rows would claim the supplier printed
+  // something they did not.
+  assert.match(reader, /_btw_rows_uit_regels: fromLines\.rows\.slice\(0, 6\),/);
+  assert.doesNotMatch(reader, /_btw_rows: fromLines/, "two kinds of evidence must not share one key");
+
+  // ── And it counts as a witness where it matters: an invoice whose lines reproduced both anchors
+  //    is no longer one that nothing has checked.
+  assert.match(route, /Array\.isArray\(marks\._btw_rows_uit_regels\) && marks\._btw_rows_uit_regels\.length > 0/);
+});
+
+// ─── [BTW-ONGECONTROLEERD] The one case no arithmetic gate can see ─────────────────────────────
+//
+// Every arithmetic check this app owns rests on one of two constraints: the identity
+// (excl + btw = incl) or the RATE — 0, 9 or 21, the only ones that exist here. A MIXED-RATE
+// invoice satisfies the first by construction and escapes the second, because with 9 % and 21 %
+// on one document the blended rate may legally be anything between them. The per-rate block is
+// then the only witness left, and without it the voorbelasting has been checked by nothing at all
+// while every screen shows the row as clean.
+//
+// Measured: 31 booked purchase invoices carry a blended rate, 28 hold no block, € 2.635,83 of
+// voorbelasting rests on them.
+//
+// [SPLIT-ALSNOG] already built the way back — a re-read that checks and overwrites nothing, on the
+// invoice's own sheet. What was missing is that nothing said WHICH of 608 invoices needed it. So
+// this is a readiness item beside [GEEN-BTW-SOORT], its sibling in kind, and not a third panel.
+test("[BTW-ONGECONTROLEERD] the blend with no block is named where the owner asks if the quarter can go", () => {
+  const rule = code("src/lib/btw-ongecontroleerd.ts");
+  const board = code("src/lib/readiness.ts");
+  const route = code("src/app/api/readiness/route.ts");
+
+  // ── The rule only speaks about the GAP between the legal rates.
+  assert.match(rule, /const LEGAL_RATES = \[0, 9, 21\] as const;/);
+  assert.match(rule, /if \(rate > 21 \+ RATE_TOLERANCE\) return false;/,
+    "above the top rate is WRONG, not unverifiable — the arithmetic gates own that");
+  // The block IS the check; with it there is nothing to say.
+  assert.match(rule, /if \(input\.hasRateBlock === true\) return false;/);
+  // A reverse charge is a different mechanism, and a zero BTW has its own question.
+  assert.match(rule, /if \(input\.shifted === true\) return false;/);
+  assert.match(rule, /if \(Math\.abs\(btw\) < 0\.005\) return false;/);
+  // Rounding drift is still that rate: a supplier who rounds per line has not become unverifiable.
+  assert.match(rule, /RATE_TOLERANCE = 0\.6/);
+  // Pure: a rule that reads is a rule that can fail.
+  assert.doesNotMatch(rule, /supabase|createClient|fetch\(|await /);
+
+  // ── It is a readiness RISK, never a verdict: a blended rate is normal at a wholesaler.
+  assert.match(board, /severity: "risk",/);
+  assert.match(board, /BTW terug die we niet hebben kunnen nakijken/);
+  assert.match(board, /er wordt niets overschreven/,
+    "the way back must be named as safe, or nobody takes it");
+  // The amount is what makes it worth reading, and the names give the number an address.
+  assert.match(board, /aan voorbelasting/);
+  assert.match(board, /const rest = \(s\.uncheckedVatNames \?\? \[\]\)\.length - namen\.length;/,
+    "a list of forty names is not a sentence anybody reads");
+
+  // ── The route asks the shared rule, over the rows where the deduction was actually claimed.
+  assert.match(route, /btwUncheckable\(\{/);
+  assert.match(route, /\["received", "paid"\]\.includes\(String\(i\.status \?\? ""\)\)/);
+  // Both witnesses are allowed (the printed block, and the split rebuilt from the lines), and each
+  // one has to be non-empty to count.
+  assert.match(route, /Array\.isArray\(marks\._btw_rows\) && marks\._btw_rows\.length > 0/,
+    "an empty block is no block — it proves nothing and must not silence the risk");
+  assert.match(route, /Array\.isArray\(marks\._btw_rows_uit_regels\) && marks\._btw_rows_uit_regels\.length > 0/,
+    "an empty line-split is no witness either");
+  assert.match(route, /shifted: marks\._btw_verlegd != null,/);
+  // [CENT] one rounding.
+  assert.match(route, /const uncheckedVatAmount = round2\(/);
+});
+
+// ─── [GELEERD-SINDSDIEN] The app improving in silence is the app failing in silence ────────────
+//
+// Measured: 58 incoming invoices sit at Genegeerd and 45 were held on the same arithmetic flag,
+// stamped 8–24 July 2026. The reader learned to read a mixed-rate BTW summary block on 18 August
+// and to find a dropped statiegeld line on 26 August. Forty of them were held before that and
+// still have their file: € 44.749,74 of purchase invoices the owner threw away, correctly, on the
+// evidence they had — and nobody ever told them the evidence changed.
+//
+// What this gate holds is the honesty of the offer, because the failure mode is not a crash:
+//   · Only invoices held BEFORE the capability landed. Five of the 45 were held after, which means
+//     the reader already knew and still could not do it; offering those promises what we cannot do.
+//   · A hold with no date claims nothing — the same rule this app keeps about checks that could
+//     not run.
+//   · It never un-archives by itself. The owner set these aside on purpose, and putting one back
+//     goes through the restore door that already exists.
+test("[GELEERD-SINDSDIEN] only what the reader was blind for, and the owner still decides", () => {
+  const rule = code("src/lib/geleerd-sindsdien.ts");
+  const route = code("src/app/api/geleerd/route.ts");
+  const panel = code("src/components/grootboek/GeleerdPanel.tsx");
+  const words = code("src/lib/geleerd-lines.ts");
+
+  // ── The capability table is dated, and the comparison is strictly BEFORE.
+  assert.match(rule, /\{ key: "btw_split", since: "2026-08-18", explains: \["sum_mismatch"\] \}/);
+  assert.match(rule, /\{ key: "statiegeld", since: "2026-08-26", explains: \["sum_mismatch"\] \}/);
+  assert.match(rule, /heldDay < c\.since/,
+    "an invoice held AFTER the reader learned must not be offered a second read");
+
+  // ── Every conservative refusal is present. Each of these being wrong sends the owner back to an
+  //    invoice that will fail exactly as it did, which is worse than never being asked.
+  assert.match(rule, /if \(\(invoice\.status \?\? ""\) !== "archived"\) return NOTHING;/);
+  assert.match(rule, /if \(\(invoice\.direction \?\? ""\) !== "incoming"\) return NOTHING;/);
+  assert.match(rule, /if \(invoice\.hasFile !== true\) return NOTHING;/);
+  assert.match(rule, /if \(!\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\/\.test\(held\)\) return NOTHING;/,
+    "a hold with no date must claim nothing");
+
+  // ── It decides nothing and writes nothing: read-only route, restore through the existing door.
+  assert.doesNotMatch(route, /\.update\(|\.insert\(|\.delete\(/,
+    "this route may not un-archive — the owner set these aside on purpose");
+  assert.match(panel, /fetch\(`\/api\/email\/confirm\/\$\{id\}`, \{ method: 'PATCH' \}\)/,
+    "putting an invoice back goes through the restore door that already exists");
+  // …and it does not run an AI re-read behind the owner's back.
+  assert.doesNotMatch(panel, /\/api\/email\/reimport/,
+    "the re-read is the next tap, where it already lives");
+
+  // ── [NO-SILENT-EMPTY] on both sides, and no nagging when there is nothing to offer.
+  assert.match(route, /status: 503/);
+  assert.match(panel, /if \(!failed && \(!items \|\| items\.length === 0\)\) return null/);
+
+  // ── [TAAL] The words name what CHANGED, which is the difference between an offer and an
+  //    accusation — and never a generic "we improved", which the owner cannot check.
+  assert.match(words, /btw_split: "gl\.leerBtw"/);
+  assert.match(words, /statiegeld: "gl\.leerStatiegeld"/);
+  assert.match(words, /if \(!key \|\| seen\.has\(key\)\) continue;/,
+    "an unknown capability must be skipped, not rendered as its own key");
+  const copy = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  for (const key of ["gl.kop", "gl.uitleg", "gl.samen", "gl.samenEen", "gl.leerBtw",
+                     "gl.leerStatiegeld", "gl.terug", "gl.daarna"]) {
+    const line = copy.split("\n").find((l) => l.includes(`'${key}':`));
+    assert.ok(line, `${key} is missing from the catalogue`);
+    assert.match(line as string, /nl: '[^']+'/, `${key} has no Dutch`);
+  }
+});
+
+// ─── [GROOTBOEK-OPSLAG] The account is stored, exported, and only ever what a human said ───────
+//
+// The chart is only worth having if a decision on it survives into the auditfile. Three rules hold
+// that together, and each has a way of going wrong that this pins:
+//
+//   · NULL is not 4000. "Nobody has said yet" and "decided on 4000" are different facts, and a
+//     screen that asks the owner what is left cannot tell them apart if the migration backfills or
+//     the column defaults. There is no backfill: it would be a migration deciding somebody's
+//     bookkeeping, silently, for every invoice they ever imported.
+//   · A stored value never reaches the XML unchecked. An accID that is not in the rekeningschema
+//     makes the whole auditfile invalid — so the export falls back rather than exporting it.
+//   · The asset and tax-letter branches outrank it. An invoice registered as a bedrijfsmiddel books
+//     to 0100 and a Belastingdienst letter to the account its kind names; a cost account stored on
+//     either may not overrule that.
+test("[GROOTBOEK-OPSLAG] null is not 4000, an unknown account never reaches the XML, and only a human writes it", () => {
+  // [POORT-GRENS] Read the SQL, not the prose around it. The first draft of this gate matched the
+  // word "default" in the migration's own comment explaining that NULL is the honest default —
+  // exactly the mistake AGENTS.md warns about, one file over.
+  const migrationSql = readFileSync("supabase/migrations/invoices_ledger_account.sql", "utf8")
+    .split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+  const migration = migrationSql;
+  const xaf = code("src/lib/xaf-export.ts");
+  const fetchSrc = code("src/lib/xaf-fetch.ts");
+  const route = code("src/app/api/grootboek/route.ts");
+  const panel = code("src/components/grootboek/GrootboekPanel.tsx");
+
+  // ── The column is additive, nullable, shape-checked, and NOT backfilled.
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS ledger_account text/);
+  assert.match(migration, /ledger_account ~ '\^\[0-9\]\{4\}\$'/, "any string could reach the auditfile");
+  assert.doesNotMatch(migration, /\bDEFAULT\b/i, "a default would make every old invoice claim a decision");
+  assert.doesNotMatch(migration, /\bUPDATE\b/i, "a backfill decides somebody's bookkeeping for them");
+  assert.doesNotMatch(migration, /NOT NULL/, "null is the honest state of an invoice nobody has answered");
+
+  // ── The export uses it, and refuses what it does not recognise.
+  assert.match(xaf, /accID: isLedgerAccount\(inv\.ledgerAccount\) \? \(inv\.ledgerAccount as string\)\.trim\(\) : ACC\.kosten,/,
+    "an unknown account must fall back, not travel into the XML");
+  // Every account a booking can name is in the schema, or the auditfile does not validate.
+  assert.match(xaf, /\.\.\.LEDGER_ACCOUNTS\.filter\(\(a\) => a\.id !== "4000"\)\.map\(/);
+  // …and the asset / tax-letter branches still decide first: both return before this line.
+  const from = xaf.indexOf("const lines: Line[] = inv.asset");
+  const to = xaf.indexOf("isLedgerAccount(inv.ledgerAccount)");
+  assert.ok(from > 0 && to > from, "the cost branch moved — check it still sits under asset and taxKind");
+  assert.match(xaf, /accID: ACC\.activa, debitC: exC, desc: `Bedrijfsmiddel/,
+    "a bedrijfsmiddel books to 0100 whatever cost account is stored on it");
+
+  // ── It travels null as null, so the export keeps writing 4000 for the undecided.
+  assert.match(fetchSrc, /ledgerAccount: \(r as \{ ledger_account\?: string \| null \}\)\.ledger_account \?\? null,/);
+
+  // ── The route accepts only a real account, and refuses at the door.
+  assert.match(route, /if \(raw !== null && !isLedgerAccount\(raw\)\)/);
+  assert.match(route, /code: "unknown_account"/);
+  // Guarded on BOTH the owner and the direction: the column means nothing on a sales invoice.
+  assert.match(route, /\.eq\("receiver_id", user\.id\)\s*\n\s*\.eq\("direction", "incoming"\)/);
+  // Clearing an answer is allowed — a wrong pick must be undoable without picking a second one.
+  assert.match(route, /body\?\.account === null \? null :/);
+
+  // ── [GROOTBOEK-PER-LEVERANCIER] The unit is the SUPPLIER, and that is a measurement: 550 open
+  //    invoices across 101 suppliers, 511 of them in the 62 suppliers with more than one, the
+  //    largest 102 on its own. Per invoice that is 550 decisions about the same few questions —
+  //    a list nobody finishes, and an unfinished list means the auditfile keeps writing 4000.
+  assert.match(route, /const groups = new Map<string, \{/);
+  assert.match(route, /\.sort\(\(a, b\) => b\.count - a\.count/, "the biggest group is the tap worth most");
+  // One answer covers a set, and the set is written in chunks: the id list travels in the URL and
+  // a 414 halfway would leave the supplier half-decided.
+  assert.match(route, /for \(const chunk of chunkIds\(ids\)\)/);
+  assert.match(route, /\.in\("id", chunk\)/);
+  // A partial write says how much landed, or the owner re-answers what is already answered.
+  assert.match(route, /changed: changed\.length/);
+  // A ceiling on the REQUEST, never on the feature.
+  assert.match(route, /if \(ids\.length > MAX_PER_CALL\)/);
+  // The screen may never hide the size of the decision it is asking for.
+  assert.match(panel, /groupSizePhrase\(g\.count, formatEuroNL\(g\.gross\)\)/);
+  assert.match(code("src/lib/grootboek-lines.ts"), /export function groupSizePhrase/);
+  // …and the count line names both numbers, because the second one is the actual work.
+  assert.match(code("src/lib/grootboek-lines.ts"),
+    /key: "gb\.open", params: \{ n: openInvoices, lev: suppliers \}/,
+    "an owner told only the invoice count reads a backlog they will never start");
+  // The suggestion is computed and never written: only PATCH writes, and it writes what it is told.
+  assert.match(route, /suggestLedgerAccount\(\{/);
+  assert.doesNotMatch(route, /ledger_account: suggestion|ledger_account: [a-z]+\.accountId/,
+    "a suggestion that writes itself is a booking, which this module is not allowed to be");
+  // [NO-SILENT-EMPTY] A failed read is said, never rendered as a finished administration.
+  assert.match(route, /status: 503/);
+  assert.match(panel, /failed \|\| !data \? \(/);
+  assert.match(panel, /if \(!failed && !data\) return null/,
+    "a heading with a zero count under it reads as finished before the answer arrives");
+});
+
+test("[GROOTBOEK] a verified chart, an untouched 4000, and a suggestion that never books", () => {
+  const chart = code("src/lib/grootboek.ts");
+
+  // ── 4000 stays exactly what the export already writes. The unit test compares the two tables
+  //    value by value; this pins that the export's own entry was not edited to make them agree.
+  assert.match(code("src/lib/xaf-export.ts"), /\{ accID: "4000", accDesc: "Kosten", accTp: "P", rgs: "WBed" \}/,
+    "4000 was renamed or renumbered — that moves every cost already exported");
+  assert.match(chart, /export const DEFAULT_LEDGER_ACCOUNT = "4000"/);
+
+  // ── No RGS code may be invented. Every code in the file is one of the verified set.
+  const codes = [...chart.matchAll(/rgs: "([A-Za-z]+)"/g)].map((m) => m[1]);
+  assert.ok(codes.length >= 7, "the chart lost its RGS references");
+  const VERIFIED = new Set(["WBed", "WBedHui", "WBedVkk", "WBedVkkRep", "WBedKan", "WBedKanOka", "WKprInh"]);
+  for (const c of codes) {
+    assert.ok(VERIFIED.has(c), `${c} is not a code this repo has verified — a wrong code misfiles an administration`);
+  }
+  // …and the accounts that could not be verified say so rather than borrowing a neighbour's code.
+  assert.match(chart, /\{ id: "4400", name: "Vervoerskosten", rgs: null \}/);
+  assert.match(chart, /\{ id: "4500", name: "Verzekeringen", rgs: null \}/);
+  assert.match(chart, /\{ id: "4600", name: "Algemene kosten", rgs: null \}/);
+
+  // ── It suggests. Nothing in it writes, and nothing in it reaches for a client.
+  assert.doesNotMatch(chart, /supabase|createClient|fetch\(|await /,
+    "the chart must stay pure — a suggester that reads is a suggester that can fail");
+  // The default is an unmade decision, not a decision for 4000.
+  assert.match(chart, /return \{ accountId: DEFAULT_LEDGER_ACCOUNT, confidence: 0, basis: "default" \};/,
+    "an unmade decision must carry no confidence for anything downstream to act on");
+  // No suggestion is ever certain: the owner has always been able to move it.
+  assert.doesNotMatch(chart, /confidence: 1(\D|$)/, "certainty about somebody else's bookkeeping");
+
+  // ── The owner's own history outranks our word list, and only when it is UNANIMOUS. A supplier
+  //    split across accounts is a supplier whose invoices differ; a majority guess there is wrong
+  //    exactly on the invoices worth getting right.
+  assert.match(chart, /if \(distinct\.size === 1\)/);
+  assert.doesNotMatch(chart, /majority|mostCommon|sort\(\(a, b\) => b\[1\] - a\[1\]\)/,
+    "a split supplier history must decide nothing");
+
+  // ── And it is a different axis from the bank vocabulary, which answers "is it a cost".
+  assert.doesNotMatch(chart, /from "\.\/bank-categories"/,
+    "one may not be derived from the other — they answer different questions");
+});
+
+// ─── [NUL-GRONDSLAG] An amount that was not read is not a zero ─────────────────────────────────
+//
+// Three ingestion doors wrote `total_ex_btw: verification.total_ex_btw ?? 0` — the Number(null)
+// trap this repo warns about everywhere, at the one place it costs the most. An unread base is
+// stored as a real zero, and a real zero on a purchase invoice is a CLAIM: this bill cost nothing.
+// financial-result.ts books kosten from that field.
+//
+// Measured on the live administration before this was written: 46 incoming invoices carrying
+// € 56.262,32 of gross stood at total_ex_btw = 0 and btw_amount = 0, across eleven wholesale and
+// horeca suppliers — the mixed-rate 9 %/21 % invoices with a statiegeld line. All 46 were held by
+// the arithmetic gate, correctly, and the owner archived 45 of them.
+//
+// The fallback is the one the bank-attach door already argued for: the gross becomes the net cost,
+// nothing is claimed back. And it must not go quiet — the fallback makes the identity hold BY
+// CONSTRUCTION, so without a mark it would trade a number that lies for one that merely says
+// nothing. The mark is the [NUL-BTW-STIL] register, which also keeps the row out of auto-booking.
+test("[NUL-GRONDSLAG] no door stores an unread base as zero, and the fallback is never silent", () => {
+  const rule = code("src/lib/read-amounts.ts");
+  const doors = {
+    upload: code("src/app/api/email/upload/route.ts"),
+    intake: code("src/app/api/intake/route.ts"),
+    sync: code("src/lib/email-integration.ts"),
+  };
+
+  // ── One rule, and it never invents what it could not read.
+  assert.match(rule, /export function amountsToStore/);
+  assert.match(rule, /export function markUnexplainedZeroBtw/);
+  assert.match(rule, /import \{ zeroBtwUnexplained \} from "\.\/zero-btw"/,
+    "the zero-BTW question must be asked, not restated");
+  // The fallback is gross-as-net with nothing deducted. A derived split would put a figure in the
+  // voorbelasting column that no document supports.
+  assert.match(rule, /total_ex_btw: gross,\s*\n\s*btw_amount: 0,/);
+  assert.doesNotMatch(rule, /(0\.21|0\.09|\/ 1\.21|\/ 1\.09)/,
+    "a rate applied to a gross is a deduction no paper backs");
+  // A base that WAS read is kept exactly as read — this module repairs nothing.
+  assert.match(rule, /if \(base !== null\) \{/);
+
+  // ── Every door goes through it, and none of them keeps the old `?? 0`.
+  for (const [name, src] of Object.entries(doors)) {
+    assert.match(src, /amountsToStore\(\{/, `${name}: the door no longer decides this itself`);
+    assert.match(src, /total_ex_btw: storedAmounts\.total_ex_btw,/, `${name}: the base is the stored one`);
+    assert.match(src, /markUnexplainedZeroBtw\(/, `${name}: the fallback would land silent`);
+    assert.doesNotMatch(src, /total_ex_btw: (verification|v|classification)\.total_?[eE]x_?[bB]tw \?\? 0/,
+      `${name}: an unread base is stored as a real zero again`);
+  }
+
+  // ── The health verdict must judge the SAME figures the row will carry, or the queue and the
+  //    books disagree about one invoice. Both doors that compute a verdict pass the stored ones.
+  for (const name of ["intake", "sync"] as const) {
+    const src = doors[name];
+    const from = src.indexOf("health: {");
+    assert.ok(from > 0, `${name}: the health input was not found`);
+    const window = src.slice(from, from + 400);
+    assert.match(window, /total_ex_btw: storedAmounts\.total_ex_btw,/,
+      `${name}: the verify queue judges a different base than the row stores`);
+  }
+
+  // ── And the engine still reads cost off that field, which is why any of this matters.
+  assert.match(code("src/lib/financial-result.ts"), /const ex = inv\.total_ex_btw \?\? 0;/,
+    "if cost stops coming from total_ex_btw, this gate is arguing about the wrong field");
+});
+
+// ─── [NUL-BTW-STIL] A zero BTW that the document does not explain must not book in silence ─────
+//
+// One rule, asked in one place. `btw_amount = 0` on a vrijgestelde or verlegde factuur is the
+// truth; `btw_amount = 0` because the split was never read is voorbelasting the owner is entitled
+// to and will never see again. The two are indistinguishable in the stored row, and the second one
+// is INVISIBLE by construction: the gross-as-net fallback every ingestion door uses makes ex equal
+// incl, so the arithmetic identity holds, import health reads clean, and nothing anywhere mentions
+// it. On a € 121 supplier bill that is € 21.
+//
+// The verify queue already refused this shape ([BTW-GATE] in auto-advance.ts). The attach-invoice
+// door does not pass through that queue — it books straight to 'paid' — so it never got the
+// benefit. The question therefore moved out of auto-advance into zero-btw.ts, where both can ask
+// it, and the door CARRIES the answer instead of refusing on it: the payment happened and the cost
+// is real, so the conservative number still books; it just no longer books silently.
+test("[NUL-BTW-STIL] one zero-BTW rule, and the paid-straight-away door carries its answer", () => {
+  const rule = code("src/lib/zero-btw.ts");
+  const queue = code("src/lib/auto-advance.ts");
+  const door = code("src/app/api/bank/attach-invoice/route.ts");
+  const health = code("src/lib/import-health.ts");
+
+  // ── The rule is one function, and every escape from it is an EXPLANATION the document gives.
+  assert.match(rule, /export function zeroBtwUnexplained/);
+  // An immaterial total has nothing to lose.
+  assert.match(rule, /Math\.abs\(gross\) < 0\.005\) return false/);
+  // A BTW that is actually there is not a hole.
+  assert.match(rule, /Math\.abs\(btw\) >= 0\.005\) return false/);
+  // An explicit 0 %-tarief, and a reverse charge, each explain the zero. An ABSENT rate does not —
+  // that is the misread the rule exists for, so it must never be treated as 0 %.
+  assert.match(rule, /input\.btwRate === 0\) return false/);
+  assert.match(rule, /input\.shifted === true\) return false/);
+  assert.doesNotMatch(rule, /btwRate\s*!==\s*0/,
+    "the rate must be tested for BEING zero, never for differing from it — absent is not 0 %");
+
+  // ── The verify queue asks the shared question instead of restating it.
+  assert.match(queue, /import \{ zeroBtwUnexplained \} from "\.\/zero-btw"/);
+  assert.match(queue, /if \(zeroBtwUnexplained\(\{/);
+  assert.match(queue, /reason: "zero_btw_not_explicit_zero_rate"/,
+    "the machine tag is read by why-waiting.ts and must not drift");
+  assert.doesNotMatch(queue, /Math\.abs\(btw\) < 0\.005 && s\.btwRate !== 0/,
+    "the inline copy is gone — two copies of a money rule drift apart");
+
+  // ── The door that skips the queue asks the same question…
+  assert.match(door, /import \{ zeroBtwUnexplained \} from "@\/lib\/zero-btw"/);
+  assert.match(door, /const btwZeroUnexplained =/);
+  // …on the number it is about to BOOK, not on the raw read (btwAmount is reassigned by the
+  // [ATTACH-REKENT] fallback above it, and it is that final figure the owner loses).
+  assert.match(door, /zeroBtwUnexplained\(\{\s*totalIncBtw,\s*btwAmount,/,
+    "the question must be asked of the amounts being written to the row");
+  // …and CARRIES it. Never a refusal: the bank payment is real and the cost must still book.
+  assert.doesNotMatch(door, /btwZeroUnexplained[\s\S]{0,300}?status: 422/,
+    "an unreadable BTW must not reject a payment that actually happened");
+  assert.match(door, /\.\.\.\(btwZeroUnexplained \? \{ _btw_zero_unexplained: true \} : \{\}\),/,
+    "the key is present only when there is something to admit");
+
+  // ── And it reaches the owner as one Dutch sentence that names the money.
+  assert.match(health, /if \(fc\?\._btw_zero_unexplained === true\) \{/,
+    "only an explicit true speaks — an absent flag is not an admission");
+  // [POORT-GRENS] Both cut marks are real CODE, and both are proven found before the slice —
+  // an indexOf of -1 silently widens the window to the rest of the file.
+  const from = health.indexOf("fc?._btw_zero_unexplained === true");
+  const to = health.indexOf("if (fc?._ex_corrected)");
+  assert.ok(from > 0, "the zero-BTW branch was not found");
+  assert.ok(to > from, "the branch that bounds it was not found after it");
+  const window = health.slice(from, to);
+  assert.match(window, /voorbelasting/, "the sentence must name what is lost");
+  assert.match(window, /terugvragen/, "…and what the owner can still do about it");
+  assert.match(window, /flags\.arithmetic = true/, "the row lands in the human queue");
 });

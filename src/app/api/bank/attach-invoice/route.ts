@@ -53,6 +53,8 @@ import { escapeLikeValue } from "@/lib/sanitize";
 import { trashedDuplicateCleared } from "@/lib/trashed-dedup";
 // [TZ] The owner's day, not the server's — see amsterdamToday().
 import { amsterdamToday } from "@/lib/format-nl";
+// [NUL-BTW-STIL] The zero-BTW question, shared with the verify queue that this door skips.
+import { zeroBtwUnexplained } from "@/lib/zero-btw";
 
 // Amount agreement tolerance between the AI-read invoice total and the bank
 // transaction. Within this → link silently. Outside → still allow, but flag a
@@ -362,6 +364,30 @@ async function runAttachInvoice(req: NextRequest) {
     }
   }
   const amountWarning = (aiTotal != null && !amountAgrees) || totalFromBank;
+
+  // [NUL-BTW-STIL] A zero BTW that the document does not explain. This door is the one place where
+  // that zero is invisible: it books straight to 'paid' with no verify queue, so the [BTW-GATE] in
+  // auto-advance.ts — which holds exactly this shape for a human — never gets to run. And every
+  // other signal reads clean, by construction: the gross-as-net fallback above makes ex equal incl,
+  // so the arithmetic identity holds, classifyImportHealth is silent, and the row lands looking
+  // perfect with the voorbelasting at 0. On a EUR 121 supplier bill that is EUR 21 the owner is
+  // entitled to and will never be told about.
+  //
+  // Not a refusal — the payment happened and the cost is real, and the conservative fallback is
+  // still the right number to book. It is carried instead, in the same register as
+  // [EIGEN-CONTROLE-ONBEKEND] and [IBAN-CHECK-HONEST], so import health says it in Dutch.
+  //
+  // The question comes from zeroBtwUnexplained, the same one the verify queue asks, so a document
+  // that explains its zero (an explicit 0 %-tarief, a verlegde factuur) is silent here too.
+  // Incoming only: an outgoing document with an untrustworthy split was already refused above.
+  const btwZeroUnexplained =
+    direction === "incoming" &&
+    zeroBtwUnexplained({
+      totalIncBtw,
+      btwAmount,
+      btwRate: verification.btw_rate,
+      shifted: verification.field_confidence?._btw_verlegd != null,
+    });
 
   // [OUTGOING-BTW TRUTH] A bank CREDIT is booked as omzet from total_ex_btw. The gross-as-net fallback
   // above is SAFE only for an incoming COST (understating our own VAT reclaim to 0 is conservative).
@@ -734,8 +760,15 @@ async function runAttachInvoice(req: NextRequest) {
       // coverage all mean a human must look. amount < 0.7 is the existing channel:
       // classifyImportHealth turns it into needs-review on every list this row appears on.
       field_confidence:
-        splitDropped || amountWarning || !fullySettled
-          ? { ...(verification.field_confidence ?? {}), amount: Math.min(verification.field_confidence?.amount ?? 1, 0.4) }
+        splitDropped || amountWarning || !fullySettled || btwZeroUnexplained
+          ? {
+              ...(verification.field_confidence ?? {}),
+              // [NUL-BTW-STIL] The fact travels with the row; import-health turns it into the
+              // Dutch sentence. A boolean, not a number, because there is nothing to compare —
+              // the figure we would have shown is precisely the one we never had.
+              ...(btwZeroUnexplained ? { _btw_zero_unexplained: true } : {}),
+              amount: Math.min(verification.field_confidence?.amount ?? 1, 0.4),
+            }
           : (verification.field_confidence ?? null),
     })
     .select("id")

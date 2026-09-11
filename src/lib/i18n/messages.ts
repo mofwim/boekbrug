@@ -91,6 +91,7 @@ export const MESSAGES = {
   'chrome.uploaden': { nl: 'Uploaden', ar: 'رفع ملف', en: 'Upload' },
   'chrome.artikelen': { nl: 'Artikelen', ar: 'المنتجات', en: 'Items' },
   'chrome.jaaroverzicht': { nl: 'Jaaroverzicht', ar: 'ملخّص السنة', en: 'Year overview' },
+  'chrome.grootboek': { nl: 'Grootboek', ar: 'دفتر الأستاذ (Grootboek)', en: 'Grootboek' },
   // [DEUR] Kassa, Voertuigen, Team en Uren staan óók in deze balk — maar met hun eigen
   // schermtitel (kassa.titel, vtg.titel, team.titel, uren.titel) en niet met een tweede
   // chrome.*-sleutel ernaast. Eén scherm, één naam: twee sleutels met hetzelfde woord erin is
@@ -449,6 +450,14 @@ export const MESSAGES = {
   // allebei de dingen die het scherm oplevert — een label alleen zegt niet waarom je er heen zou
   // gaan, en "jaaroverzicht" kan alles betekenen.
   'start.jaar': { nl: 'Jaaroverzicht', ar: 'ملخّص السنة', en: 'Year overview' },
+  // [GROOTBOEK-KAART] Grootboek is the accountant's own word, in every language — the same rule
+  // btw and kvk follow. A translation would send them looking for a screen that is not there.
+  'start.grootboek': { nl: 'Grootboek', ar: 'دفتر الأستاذ (Grootboek)', en: 'Grootboek' },
+  'start.grootboek.sub': {
+    nl: 'Saldibalans, grootboekkaart en journaalposten',
+    ar: 'ميزان المراجعة وبطاقة الحساب والقيود',
+    en: 'Trial balance, ledger card and journal entries',
+  },
   'start.jaar.sub': {
     nl: 'Cijfers voor je IB-aangifte en je auditfile',
     ar: 'أرقام إقرار الدخل وملف التدقيق',
@@ -845,6 +854,33 @@ export const MESSAGES = {
     en: 'The supplier could not be removed. Try again in a moment.',
     ar: 'تعذّر حذف المورّد. أعد المحاولة بعد قليل.',
   },
+  // [SAMENVOEGEN-EIGENAAR] The owner names the pair and the row that stays.
+  'lev.samenvoeg.kop': { nl: 'Samenvoegen met een andere leverancier', en: 'Merge with another supplier', ar: 'دمج مع مورّد آخر' },
+  'lev.samenvoeg.uitleg': {
+    nl: 'Alleen als dit echt hetzelfde bedrijf is. De facturen gaan naar de gekozen rij; deze rij verdwijnt.',
+    en: 'Only if this really is the same company. The invoices go to the chosen row; this row disappears.',
+    ar: 'فقط إن كانت هذه الشركة نفسها حقاً. الفواتير تنتقل إلى الصف المختار، وهذا الصف يختفي.',
+  },
+  'lev.samenvoeg.kies': { nl: 'Kies de leverancier die blijft', en: 'Pick the supplier that stays', ar: 'اختر المورّد الذي يبقى' },
+  'lev.samenvoeg.geen': { nl: 'Kies een leverancier…', en: 'Pick a supplier…', ar: 'اختر مورّداً…' },
+  'lev.samenvoeg.vraag': {
+    nl: 'De facturen van {dit} komen onder {ander}. Doorgaan?',
+    en: 'The invoices of {dit} will be filed under {ander}. Continue?',
+    ar: 'فواتير {dit} ستُسجَّل تحت {ander}. هل تتابع؟',
+  },
+  'lev.samenvoeg.bevestig': { nl: 'Ja, samenvoegen', en: 'Yes, merge', ar: 'نعم، ادمج' },
+  // [LEVERANCIER-ZOEKEN] The filter over the registry list. Same matcher as the name picker.
+  'leveranciers.zoek': { nl: 'Zoek een leverancier', en: 'Search a supplier', ar: 'ابحث عن مورّد' },
+  'leveranciers.zoek.niets': {
+    nl: 'Geen leverancier gevonden voor "{term}".',
+    en: 'No supplier found for "{term}".',
+    ar: 'لم يُعثر على مورّد لـ "{term}".',
+  },
+  'leveranciers.zoek.aantal': {
+    nl: '{n} van {totaal} leveranciers',
+    en: '{n} of {totaal} suppliers',
+    ar: '{n} من {totaal} مورّدين',
+  },
   'lev.fout.opslaan': {
     nl: 'De leverancier kon niet worden opgeslagen. Probeer het zo meteen opnieuw.',
     ar: 'تعذّر حفظ المورّد. حاول مرة أخرى بعد قليل.',
@@ -1198,6 +1234,11 @@ export const MESSAGES = {
   'bank.fout.algemeen': { nl: 'Er ging iets mis.', ar: 'حدث خطأ ما.', en: 'Something went wrong.' },
   'bank.fout.bevestigen': { nl: 'Bevestigen mislukt.', ar: 'فشل التأكيد.', en: 'Confirming failed.' },
   'bank.fout.bijwerken': { nl: 'Bijwerken mislukt.', ar: 'فشل التحديث.', en: 'Updating failed.' },
+  // [BLIND-GEMATCHT] Wat deze suggestielijst NIET heeft kunnen gebruiken. Nooit beweren dat er
+  // niets is onthouden — alleen dat we het nu niet konden lezen.
+  'bank.blind.geheugen': { nl: 'We konden nu niet ophalen wat je eerder bevestigde — deze suggesties zijn daardoor voorzichtiger dan normaal.', en: 'We could not fetch what you confirmed before — these suggestions are more cautious than usual.', ar: 'تعذّر جلب ما أكّدته سابقًا — لذلك هذه الاقتراحات أكثر تحفّظًا من المعتاد.' },
+  'bank.blind.leverancier': { nl: 'We konden nu niet ophalen van welke rekening je leveranciers factureren — een betaling met alleen een IBAN herkennen we daardoor minder goed.', en: 'We could not fetch which account your suppliers bill from — a payment carrying only an IBAN is harder for us to recognise.', ar: 'تعذّر جلب الحسابات التي يُفوتر منها مورّدوك — لذلك نتعرّف بصعوبة أكبر على دفعة لا تحمل سوى IBAN.' },
+  'bank.blind.geweigerd': { nl: 'We konden nu niet ophalen welke suggesties je hebt afgewezen — een afgewezen suggestie kan terugkomen.', en: 'We could not fetch which suggestions you rejected — a rejected one may come back.', ar: 'تعذّر جلب الاقتراحات التي رفضتها — قد يعود اقتراح رفضته.' },
   'bank.fout.matchen': { nl: 'Matchen mislukt.', ar: 'فشلت المطابقة.', en: 'Matching failed.' },
   'bank.fout.negeren': { nl: 'Negeren mislukt.', ar: 'فشل التجاهل.', en: 'Ignoring failed.' },
   'bank.fout.ontkoppelen': { nl: 'Ontkoppelen mislukt.', ar: 'فشل فكّ الربط.', en: 'Unlinking failed.' },
@@ -7589,6 +7630,24 @@ export const MESSAGES = {
     ar: 'يبدو أن ثمة فاتورة ناقصة',
     en: 'An invoice seems to be missing',
   },
+  // [BETAALD-GEEN-STUK] De waarneming: het geld is weg en er hangt geen factuur aan. De zin
+  // beweert NIET dat de factuur niet bestaat — hij kan ongelezen in de mailbox zitten. Wat we
+  // weten is dat er niets aan gekoppeld is, en dat is wat er staat.
+  'ink.betaaldGeenStuk.een': {
+    nl: 'Er is 1 betaling aan een bekende leverancier zonder factuur',
+    ar: 'هناك دفعة واحدة إلى مورّد معروف بلا فاتورة',
+    en: 'There is 1 payment to a known supplier with no invoice',
+  },
+  'ink.betaaldGeenStuk.meer': {
+    nl: 'Er zijn {n} betalingen aan bekende leveranciers zonder factuur',
+    ar: 'هناك {n} دفعات إلى موردين معروفين بلا فاتورة',
+    en: 'There are {n} payments to known suppliers with no invoice',
+  },
+  'ink.betaaldGeenStuk.regel': {
+    nl: '{bedrag} betaald aan {leverancier} — er is geen factuur aan gekoppeld',
+    ar: 'دُفع {bedrag} إلى {leverancier} — لا توجد فاتورة مرتبطة به',
+    en: '{bedrag} paid to {leverancier} — no invoice is linked to it',
+  },
   'ink.ontbreekt.meer': {
     nl: 'Er lijken {n} facturen te ontbreken',
     ar: 'يبدو أن ثمة {n} فاتورة ناقصة',
@@ -13096,6 +13155,7 @@ export const MESSAGES = {
   'log.invoice.created': { nl: 'Factuur aangemaakt', en: 'Invoice created', ar: 'أُنشئت فاتورة' },
   'log.invoice.updated': { nl: 'Factuur gewijzigd', en: 'Invoice changed', ar: 'عُدّلت فاتورة' },
   // [VOORSTEL] The accountant's correction proposal and the client's answer.
+  'log.invoice.ledger_account_set': { nl: 'Grootboekrekening gekozen', en: 'Ledger account chosen', ar: 'اختير حساب دفتر الأستاذ' },
   'log.invoice.correction_proposed': { nl: 'Correctie voorgesteld aan de klant', en: 'Correction proposed to the client', ar: 'اقتُرح تصحيح على العميل' },
   'log.invoice.correction_accepted': { nl: 'Correctievoorstel van de boekhouder overgenomen', en: 'Accountant’s correction proposal accepted', ar: 'قُبل اقتراح تصحيح المحاسب' },
   'log.invoice.correction_declined': { nl: 'Correctievoorstel van de boekhouder afgewezen', en: 'Accountant’s correction proposal declined', ar: 'رُفض اقتراح تصحيح المحاسب' },
@@ -13168,6 +13228,38 @@ export const MESSAGES = {
   'dba.uren': { nl: '{uren} uur', en: '{uren} hours', ar: '{uren} ساعة' },
   'dba.geen': { nl: 'Nog geen facturen in dit jaar.', en: 'No invoices in this year yet.', ar: 'لا فواتير في هذه السنة بعد.' },
   'dba.leesfout': { nl: 'We konden je opdrachtgevers nu niet ophalen.', en: 'We could not fetch your clients right now.', ar: 'تعذّر جلب عملائك الآن.' },
+  'gl.kop': { nl: 'Opnieuw bekijken', en: 'Worth a second look', ar: 'يستحقّ نظرة ثانية' },
+  'gl.uitleg': { nl: 'Deze facturen zette je opzij toen we ze niet konden lezen. Inmiddels lezen we ze wel.', en: 'You set these aside when we could not read them. We can read them now.', ar: 'نحّيت هذه الفواتير حين عجزنا عن قراءتها. صرنا نقرأها الآن.' },
+  'gl.samen': { nl: '{n} facturen · {bedrag}', en: '{n} invoices · {bedrag}', ar: '{n} فاتورة · {bedrag}' },
+  'gl.samenEen': { nl: '1 factuur · {bedrag}', en: '1 invoice · {bedrag}', ar: 'فاتورة واحدة · {bedrag}' },
+  'gl.leerBtw': { nl: 'we lezen nu de BTW-uitsplitsing per tarief', en: 'we now read the per-rate BTW breakdown', ar: 'صرنا نقرأ تفصيل الضريبة لكل تعرفة' },
+  'gl.leerStatiegeld': { nl: 'we vinden nu het statiegeld terug', en: 'we now find the deposit line', ar: 'صرنا نجد سطر الوديعة' },
+  'gl.terug': { nl: 'Terugzetten', en: 'Put back', ar: 'أعِدها' },
+  'gl.terugFout': { nl: 'Terugzetten mislukt. Probeer het nog een keer.', en: 'Putting back failed. Please try again.', ar: 'فشلت الإعادة. حاول مرة أخرى.' },
+  'gl.leesfout': { nl: 'We konden je genegeerde facturen nu niet nakijken.', en: 'We could not check your ignored invoices right now.', ar: 'تعذّر فحص فواتيرك المتجاهَلة الآن.' },
+  'gl.daarna': { nl: 'Teruggezet — je vindt hem in de controlewachtrij, waar "Opnieuw inlezen" klaarstaat.', en: 'Put back — you will find it in the verification queue, where "Read again" is waiting.', ar: 'أُعيدت — تجدها في طابور المراجعة، حيث «إعادة القراءة» جاهزة.' },
+  'gb.kop': { nl: 'Grootboekrekening', en: 'Ledger account', ar: 'حساب دفتر الأستاذ' },
+  'gb.groepEen': { nl: '1 factuur · {bedrag}', en: '1 invoice · {bedrag}', ar: 'فاتورة واحدة · {bedrag}' },
+  'gb.groep': { nl: '{n} facturen · {bedrag}', en: '{n} invoices · {bedrag}', ar: '{n} فاتورة · {bedrag}' },
+  'gb.klaar': { nl: 'Elke inkoopfactuur staat op een rekening.', en: 'Every purchase invoice is on an account.', ar: 'كل فاتورة شراء على حساب.' },
+  'gb.open': { nl: '{n} facturen bij {lev} leveranciers wachten nog op een rekening.', en: '{n} invoices from {lev} suppliers are still waiting for an account.', ar: '{n} فاتورة من {lev} مورّدًا ما زالت تنتظر حسابًا.' },
+  'gb.openEen': { nl: '1 factuur wacht nog op een rekening.', en: '1 invoice is still waiting for an account.', ar: 'فاتورة واحدة ما زالت تنتظر حسابًا.' },
+  'gb.leesfout': { nl: 'We konden nu niet ophalen welke facturen nog een rekening nodig hebben.', en: 'We could not fetch which invoices still need an account.', ar: 'تعذّر جلب الفواتير التي ما زالت تحتاج حسابًا.' },
+  'gb.opslaanFout': { nl: 'Opslaan mislukt. Probeer het nog een keer.', en: 'Saving failed. Please try again.', ar: 'فشل الحفظ. حاول مرة أخرى.' },
+  'gb.waaromVaker': { nl: 'je zette deze leverancier hier al eerder op', en: 'you put this supplier here before', ar: 'سبق أن وضعت هذا المورّد هنا' },
+  'gb.waaromWoord': { nl: 'op de factuur staat "{woord}"', en: '"{woord}" is on the invoice', ar: 'على الفاتورة «{woord}»' },
+  'gb.waaromNiets': { nl: 'we weten het niet — kies zelf', en: 'we do not know — pick one yourself', ar: 'لا نعرف — اختر بنفسك' },
+  'gb.meer': { nl: 'Toon meer', en: 'Show more', ar: 'أظهر المزيد' },
+  'gb.uitleg': { nl: 'Waar een inkoopfactuur op boekt. Je boekhouder ziet dit terug in het auditfile.', en: 'Where a purchase invoice books. Your accountant sees this back in the auditfile.', ar: 'أين تُقيَّد فاتورة الشراء. يراها محاسبك في ملفّ التدقيق.' },
+  'dba.sinds': { nl: 'sinds {jaar}', en: 'since {jaar}', ar: 'منذ {jaar}' },
+  'dba.nieuw': { nl: 'nieuw dit jaar', en: 'new this year', ar: 'جديد هذه السنة' },
+  'dba.maanden': { nl: '{n} maanden met omzet', en: '{n} months with revenue', ar: '{n} شهرًا فيها إيراد' },
+  'dba.maandEen': { nl: '1 maand met omzet', en: '1 month with revenue', ar: 'شهر واحد فيه إيراد' },
+  'dba.tarief': { nl: '{bedrag} per uur', en: '{bedrag} per hour', ar: '{bedrag} للساعة' },
+  'dba.gewonnen': { nl: '{n} van hen kwamen dit jaar binnen.', en: '{n} of them came in this year.', ar: '{n} منهم جاؤوا هذه السنة.' },
+  'dba.gewonnenEen': { nl: '1 van hen kwam dit jaar binnen.', en: '1 of them came in this year.', ar: 'واحد منهم جاء هذه السنة.' },
+  'dba.tariefBereik': { nl: 'Je afgesproken uurtarief loopt van {laag} tot {hoog}.', en: 'Your agreed hourly rate runs from {laag} to {hoog}.', ar: 'أجرك بالساعة المتّفق عليه يتراوح بين {laag} و{hoog}.' },
+  'dba.tariefGelijk': { nl: 'Je hebt {bedrag} per uur afgesproken met elk van hen.', en: 'You agreed {bedrag} per hour with each of them.', ar: 'اتّفقت على {bedrag} للساعة مع كلٍّ منهم.' },
   'dba.geenOordeel': { nl: 'Dit zijn je eigen facturen, opgeteld. Of je zelfstandig bent hangt van meer af dan deze cijfers.', en: 'These are your own invoices, added up. Whether you are self-employed depends on more than these figures.', ar: 'هذه فواتيرك أنت، مجموعة. استقلالك يعتمد على أكثر من هذه الأرقام.' },
   // ── [ONDERHANDEN-WERK] Werk dat op de laatste dag van het boekjaar nog niet gefactureerd was ──
   'ohw.kop': { nl: 'Onderhanden werk op {datum}', en: 'Work in progress on {datum}', ar: 'عمل قيد التنفيذ في {datum}' },
@@ -14725,6 +14817,9 @@ export const MESSAGES = {
   'bh.werk.meer': { nl: '+{n} meer', ar: '+{n} أخرى', en: '+{n} more' },
   'bh.werk.pakket': { nl: 'Pakket', ar: 'الحزمة', en: 'Package' },
   'bh.werk.jaarKnop': { nl: 'Jaar', ar: 'السنة', en: 'Year' },
+  // [JOURNAAL-BRON] Grootboek blijft Grootboek in elke taal — het is het woord van het vak,
+  // dezelfde regel die btw en kvk volgen.
+  'bh.werk.grootboekKnop': { nl: 'Grootboek', ar: 'دفتر الأستاذ (Grootboek)', en: 'Grootboek' },
   'bh.werk.verstuurHerinnering': { nl: 'Verstuur herinnering', ar: 'أرسل التذكير', en: 'Send reminder' },
   'bh.werk.annuleren': { nl: 'Annuleren', ar: 'إلغاء', en: 'Cancel' },
   'bh.werk.melding': { nl: 'De klant krijgt dit als melding in de app (geen e-mail).', ar: 'يصل هذا إلى العميل كإشعار داخل التطبيق (وليس بريدًا إلكترونيًا).', en: 'The client receives this as an in-app notification (no e-mail).' },
@@ -15302,6 +15397,16 @@ export const MESSAGES = {
     nl: 'De btw is nul, maar er staat geen 0% op het document.',
     ar: 'قيمة btw صفر، لكن لا يوجد 0% على المستند.',
     en: 'The btw is zero, but the document does not state 0%.',
+  },
+  'wacht.zelffactuur': {
+    nl: 'Op dit document staat dat de afnemer hem heeft opgemaakt. Controleer of dit jouw eigen verkoop is.',
+    ar: 'يذكر هذا المستند أن المشتري هو من حرّره. تحقّق ممّا إذا كان هذا بيعاً من عندك.',
+    en: 'This document states the customer drew it up. Check whether it is your own sale.',
+  },
+  'wacht.vreemdeValuta': {
+    nl: "De bedragen op dit document staan niet in euro's. Vul zelf het eurobedrag in dat je bank heeft afgeschreven.",
+    ar: 'المبالغ على هذا المستند ليست باليورو. أدخل بنفسك المبلغ باليورو الذي خصمه بنكك.',
+    en: "The amounts on this document are not in euros. Enter the euro amount your bank actually debited.",
   },
   'wacht.eFactuurAnders': {
     nl: 'De e-factuur van de leverancier noemt andere bedragen dan er gelezen is.',

@@ -369,6 +369,13 @@ export function ZzpDashboard(
               <MiniCard {...doorLook('/dashboard/jaar')}
                 label={t('start.jaar')} sub={t('start.jaar.sub')}
                 onClick={() => router.push('/dashboard/jaar')} />
+              {/* [GROOTBOEK-KAART] Het grootboek bestond al — als journaalposten in het auditfile,
+                  gebouwd door dezelfde functie die dit scherm nu leest. Wat ontbrak was de deur.
+                  Hij staat hier omdat een boekhouder die op het woord zoekt en niets vindt, niet
+                  concludeert dat de deur ontbreekt maar dat het grootboek ontbreekt. */}
+              <MiniCard {...doorLook('/dashboard/grootboek')}
+                label={t('start.grootboek')} sub={t('start.grootboek.sub')}
+                onClick={() => router.push('/dashboard/grootboek')} />
             </div>
           </section>
 

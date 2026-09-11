@@ -78,9 +78,12 @@ export async function buildXafInputForOwner(args: {
     // [XAF-TEGENPARTIJ] Het btw-nummer van de tegenpartij hoort in het auditfile (taxRegIdent), en
     // supplier_id is de tweede bron voor de facturen die het zelf niet dragen — zie hieronder.
     client_btw_number: string | null; supplier_id: string | null;
-  }>((from, to) => pipeline
+    // [GROOTBOEK] Newer than the generated types, hence the relaxed client below.
+    ledger_account: string | null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }>((from, to) => (pipeline as any)
     .from("invoices")
-    .select("id, invoice_number, direction, status, invoice_type, total_ex_btw, btw_amount, invoice_date, sender_id, receiver_id, client_name, client_btw_number, supplier_id, tax_kind")
+    .select("id, invoice_number, direction, status, invoice_type, total_ex_btw, btw_amount, invoice_date, sender_id, receiver_id, client_name, client_btw_number, supplier_id, tax_kind, ledger_account")
     .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`)
     .gte("invoice_date", start)
     .lte("invoice_date", end)
@@ -303,6 +306,9 @@ export async function buildXafInputForOwner(args: {
       // De factuur eerst — dat is wat het document zei. Pas als die leeg is, de leverancier.
       vendorBtwNumber: r.client_btw_number ?? (r.supplier_id ? btwPerLeverancier.get(r.supplier_id)?.btw ?? null : null),
       vendorKvkNumber: r.supplier_id ? btwPerLeverancier.get(r.supplier_id)?.kvk ?? null : null,
+      // [GROOTBOEK] The account the owner put it on. Null travels as null: the export then writes
+      // the 4000 it always wrote, and "not decided" stays distinguishable from "decided on 4000".
+      ledgerAccount: (r as { ledger_account?: string | null }).ledger_account ?? null,
     })),
     bank: bankRows.map((b) => ({
       id: b.id,

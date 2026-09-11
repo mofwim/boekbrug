@@ -213,9 +213,13 @@ export async function runBankAutoConfirm(args: {
   // matcher, the batch reconciler, the hidden-competitor scan — sees the same rows. A signal that
   // reaches one pass and not another is a guard that does not exist.
   const rawInvoices = invRows as (InvoiceForMatching & { amount_paid?: number | null; supplier_id?: string | null })[];
+  // [BLIND-LEVERANCIER] The lookup now says whether it answered. Nothing here changes on a
+  // failure and nothing needs to: this pass only ever BOOKS on a score, a missing signal can only
+  // lower one, so a lost read makes it confirm LESS — never wrongly. The two owner-facing entry
+  // points render the loss; an automatic pass has no screen to render it on.
   const allInvoices: MatchableInvoice[] = withSupplierIbans(
     rawInvoices,
-    await fetchSupplierIbans(pipeline, userId, rawInvoices),
+    (await fetchSupplierIbans(pipeline, userId, rawInvoices)).ibans,
   );
   // [PARTIAL-PAY] Auto-confirm books full-amount matches by writing status='paid' directly (not
   // via apply_bank_payment), so it must NEVER touch an invoice that is mid-instalment (amount_paid

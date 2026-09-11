@@ -31,6 +31,8 @@ import { useLocale } from '@/lib/i18n/use-locale'
 import { translator } from '@/lib/i18n/t'
 import { localeDir } from '@/lib/i18n/locale'
 import { failureText } from '@/lib/server-message'
+// [SAMENVOEGEN-EIGENAAR] The server's refusal, in the owner's language, by the reason it names.
+import { mergeRefusalText } from '@/lib/supplier-merge-copy'
 // [LEVERANCIER-STANDAARD] The two defaults: the rate the app proposes on this supplier's invoices,
 // and the category a bank line to them is proposed under. Vocabulary from the bank's own list.
 import { SELECTABLE_CATEGORIES } from '@/lib/bank-categories'
@@ -66,7 +68,13 @@ export interface SupplierEditResult {
   /** [LEVERANCIER-VERWIJDEREN] Set when the sheet DELETED the row; how many invoices came loose. */
   deleted?: boolean
   invoicesDetached?: number
+  /** [SAMENVOEGEN-EIGENAAR] Set when this row was merged INTO another; `name` is then the survivor's. */
+  merged?: boolean
+  mergedAwayName?: string
 }
+
+/** Another supplier of the same owner, as a merge target. */
+export interface SupplierChoiceCard { id: string; name: string }
 
 /** [LEVERANCIER-NIEUW] Open the sheet to make a row rather than edit one. */
 export interface SupplierCreateIntent {
@@ -87,12 +95,15 @@ const flat = (v: string) => v.replace(/\s+/g, '').toUpperCase()
 export default function SupplierEditSheet({
   supplier: existing,
   create,
+  others = [],
   onClose,
   onSaved,
 }: {
   /** The row to edit, or null when `create` says what to make. */
   supplier: SupplierEditCard | null
   create?: SupplierCreateIntent
+  /** [SAMENVOEGEN-EIGENAAR] The owner's other suppliers, offered as the row that stays. */
+  others?: SupplierChoiceCard[]
   onClose: () => void
   onSaved: (result: SupplierEditResult) => void
 }) {
@@ -117,6 +128,8 @@ export default function SupplierEditSheet({
   // [LEVERANCIER-VERWIJDEREN] Two taps, never one: the first shows what comes loose, the second
   // does it. The count is on the screen before the button that acts on it.
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  // [SAMENVOEGEN-EIGENAAR] The row the owner picked to keep; '' = none picked, nothing offered yet.
+  const [mergeInto, setMergeInto] = useState('')
   // [NO-SILENT-EMPTY] The server says WHICH field was wrong; that field is coloured and the
   // sentence sits under the form. "Ongeldig" alone leaves the owner hunting.
   const [error, setError] = useState<{ field: string | null; text: string } | null>(null)
@@ -199,6 +212,36 @@ export default function SupplierEditSheet({
       })
     } catch {
       setError({ field: null, text: t('lev.fout.verwijderen') })
+      setSaving(false)
+    }
+  }
+
+  const merge = async () => {
+    const target = others.find((o) => o.id === mergeInto)
+    if (saving || creating || !target) return
+    setSaving(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/supplier/merge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ survivorId: target.id, mergedAwayId: supplier.id, byOwner: true }),
+      })
+      const json = (await res.json().catch(() => ({}))) as { reason?: unknown; error?: unknown }
+      if (!res.ok) {
+        // The server names the FACT that refused (two KVK numbers, two own accounts), never "kon niet".
+        setError({
+          field: 'merge',
+          text: typeof json.reason === 'string'
+            ? mergeRefusalText(json.reason as Parameters<typeof mergeRefusalText>[0], locale)
+            : failureText(res.status, json as Parameters<typeof failureText>[1], mergeRefusalText(null, locale)),
+        })
+        setSaving(false)
+        return
+      }
+      onSaved({ name: target.name, ibanReplaced: false, invoicesRenamed: 0, merged: true, mergedAwayName: supplier.name })
+    } catch {
+      setError({ field: 'merge', text: mergeRefusalText(null, locale) })
       setSaving(false)
     }
   }
@@ -328,6 +371,47 @@ export default function SupplierEditSheet({
         >
           {t('lev.annuleren')}
         </button>
+
+        {/* [SAMENVOEGEN-EIGENAAR] The owner names the pair. The two vetoes still hold on the
+            server; what this gives up is the demand for a shared number, because the reader
+            founds two rows for one company without leaving one behind. */}
+        {!creating && others.length > 0 && (
+          <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid #E0E0E0', textAlign: 'start' }}>
+            <p style={{ fontSize: 13.5, fontWeight: 600, color: '#3c4043', margin: '0 0 4px' }}>{t('lev.samenvoeg.kop')}</p>
+            <p style={{ fontSize: 12.5, color: '#5F6368', lineHeight: 1.5, margin: '0 0 8px' }}>{t('lev.samenvoeg.uitleg')}</p>
+            <label style={{ display: 'block', marginBottom: 8 }}>
+              <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: '#3c4043', marginBottom: 5 }}>{t('lev.samenvoeg.kies')}</span>
+              <select
+                value={mergeInto}
+                onChange={(e) => setMergeInto(e.target.value)}
+                disabled={saving}
+                style={{
+                  width: '100%', boxSizing: 'border-box', padding: '11px 12px', fontSize: 15, borderRadius: 10,
+                  border: `1px solid ${error?.field === 'merge' ? M3.error : '#d1d1d6'}`, background: '#fff',
+                  color: '#202124', fontFamily: FONT,
+                }}
+              >
+                <option value="">{t('lev.samenvoeg.geen')}</option>
+                {others.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+              </select>
+            </label>
+            {mergeInto !== '' && (
+              <div role="alert">
+                <p style={{ fontSize: 13, color: '#202124', lineHeight: 1.55, margin: '0 0 10px' }}>
+                  {t('lev.samenvoeg.vraag', { dit: supplier.name, ander: others.find((o) => o.id === mergeInto)?.name ?? '' })}
+                </p>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={merge}
+                  style={{ padding: '10px 16px', borderRadius: 12, background: saving ? '#9AA0A6' : M3.primary, color: '#fff', border: 'none', fontWeight: 700, fontSize: 14, cursor: saving ? 'default' : 'pointer', fontFamily: FONT }}
+                >
+                  {saving ? t('lev.bezig') : t('lev.samenvoeg.bevestig')}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* [LEVERANCIER-VERWIJDEREN] Under the form, apart from it, and never on a row being made. */}
         {!creating && (

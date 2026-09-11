@@ -85,6 +85,10 @@ import { DEFAULT_CLAUDE_MODEL, resolveModel } from './ai-model';
 import { groundMoneyFields } from './amount-grounding';
 // [STATIEGELD-GAT] The deposit line the reader dropped, found back on the paper — see statiegeld.ts.
 import { detectDepositGap } from './statiegeld';
+// [REGELS] The lines, grouped per rate and checked against both printed anchors.
+import { splitFromLines } from './factuurregels';
+// [VREEMDE-VALUTA] The euro assumption, made explicit and checkable.
+import { foreignCurrencyHold } from './vreemde-valuta';
 // [GEGROND-NAAM] The same independent witness, for the supplier NAME — the one field on an
 // incoming invoice that had no check at all. See the header of that file for the read that
 // showed why: a BALKIP invoice imported under a different company's name, amounts all correct.
@@ -101,6 +105,8 @@ import { verifyDocument } from './document-verify';
 // [EIGEN-FACTUUR] Is this "purchase invoice" the owner's OWN sales invoice? Asked inside the
 // reader, one line before the receiver-identity backstop erases the evidence — see there.
 import { looksLikeOwnDocument, matchesOwnInvoiceNumber, ownDocumentNotice } from './own-document';
+// [ZELFFACTUUR] The printed word for "the customer issued this", independent of the model.
+import { selfBilledWordInDocument } from './zelffacturering';
 import { round2 } from './invoice-totals';
 // [MIN-REGEL] What a reading means by a quantity and a price — a negative quantity is a credit
 // line, not an unreadable one, and the minus may never sit in the price. See read-line.ts.
@@ -615,6 +621,15 @@ export interface VerifyInvoiceResult {
   // (grondslag) column and `btw` the RIGHT one. On a mixed-rate invoice this is the only thing
   // that can verify the btw total, because the legal-rate constraint no longer applies to a blend.
   btw_breakdown?: { rate: number; base: number; btw: number }[] | null;
+  // [VREEMDE-VALUTA] The currency code printed beside the amounts, as printed. Read, never
+  // assumed: null means the document said nothing, which is the normal case and changes nothing.
+  // See vreemde-valuta.ts for why a positive reading holds the invoice and nothing converts.
+  currency?: string | null;
+  // [REGELS] The invoice's own lines, as printed. Read for one reason above all: on a MIXED-rate
+  // document without a summary block the lines are the ONLY thing left that can corroborate the
+  // btw — group them per rate, apply the rate, and the result has to reproduce the printed total.
+  // See factuurregels.ts. `amount` is the line total EXCLUDING btw.
+  invoice_lines?: { description?: string | null; quantity?: number | null; unit_price?: number | null; btw_rate?: number | null; amount?: number | null }[] | null;
   // [BRIDGE-EXTRACT] Per-field confidence (0–1) — lets the UI ask the user to
   // confirm ONLY the fields the AI is unsure about, instead of guessing silently.
   field_confidence?: {
@@ -630,6 +645,11 @@ export interface VerifyInvoiceResult {
     // Carries both figures so the owner sees exactly what changed; its presence keeps the
     // invoice in the verify queue (a derived BTW is never auto-booked).
     _btw_derived?: { read: number | null; used: number | null };
+    // [EIGEN-CONTROLE-ONBEKEND] Set when the own-sales-invoice lookup could not run. Not a verdict
+    // — the document may well be a real supplier bill — but the one check that would have caught
+    // the owner's OWN invoice coming back as a cost did not answer, so a human looks. Never a
+    // refusal: a database hiccup must not reject a genuine purchase invoice.
+    _own_check_unavailable?: boolean;
     // [ASSURANTIE] Set when assurantiebelasting was stripped from the deductible BTW. Keeps the
     // document in the verify queue (never auto-booked) and drives the owner-facing reason.
     _assurantiebelasting?: { read: number | null };
@@ -639,9 +659,27 @@ export interface VerifyInvoiceResult {
     _btw_verlegd?: { grondslag: number | null };
     // [EX-INCL-FIX] Set when the base was recovered from incl − btw (a mislabelled "Subtotaal").
     _ex_corrected?: { read: number | null; used: number | null };
+    // [NUL-BTW-STIL] Set by an ingestion door that BOOKED a zero BTW the document does not explain
+    // — no 0 %-tarief, no verlegging, a material total. Never written by the reader itself: it is a
+    // statement about what was stored, not about what was read. Its presence keeps the row visible
+    // for a human, because the identity holds by construction and nothing else would mention it.
+    _btw_zero_unexplained?: boolean;
     // [BTW-SPLIT] The per-rate block, carried through to storage so the checklist can verify a
     // mixed-rate btw instead of reporting it as checked when nothing checked it.
     _btw_rows?: { rate: number; base: number; btw: number }[];
+    // [ZELFFACTUUR] Set when the document says, in its own characters, that the CUSTOMER drew it
+    // up (zelffacturering, art. 35 Wet OB). Which side the owner is on decides whether this is
+    // their own turnover or a real purchase, and nothing on the paper answers that — so it is
+    // recorded and a human looks. See zelffacturering.ts.
+    _zelffactuur?: boolean;
+    // [VREEMDE-VALUTA] Set when the document named a currency that is not the euro. The amounts
+    // stored are the amounts PRINTED — unconverted, because nothing here has a rate — so this key
+    // is what stops them being treated as euros, and what names the currency on screen.
+    _valuta?: { code: string };
+    // [REGELS] A per-rate split we built from the invoice's OWN LINES, and only when it reproduced
+    // both printed anchors. Different evidence from _btw_rows — that one the supplier printed,
+    // this one the goods imply — so it is kept apart and never merged into it.
+    _btw_rows_uit_regels?: { rate: number; base: number; btw: number }[];
     // [PRINTED-TOTAL] The printed final total, and — when it differs from what we stored — the
     // fact that WE produced one of the three amounts rather than reading it.
     _total_printed?: number | null;
@@ -1507,6 +1545,8 @@ Return only a JSON object with these exact keys:
   "total_inc_btw": number or null,
   "total_printed": number or null,
   "btw_breakdown": [{ "rate": 0 | 9 | 21, "base": number, "btw": number }] or null,
+  "invoice_lines": [{ "description": string, "quantity": number or null, "unit_price": number or null, "btw_rate": 0 | 9 | 21, "amount": number }] or null,
+  "currency": string or null,
   "btw_rate": 0 | 9 | 21 or null,
   "field_confidence": {
     "vendor": number between 0 and 1,
@@ -1789,6 +1829,31 @@ STATIEGELD / EMBALLAGE / STORTGELD (crucial — a shop that sells drinks sees th
   (equal excl and incl means zero BTW). Trust the "Totaal incl."/"Reeds betaald"/paid total
   and the printed BTW, and set total_ex_btw = total_inc_btw − btw_amount. Never return
   total_ex_btw equal to total_inc_btw when btw_amount is non-zero.
+
+CURRENCY (currency) — copy it, never assume it:
+- Return the currency code printed beside the amounts: "EUR", "USD", "GBP", "CHF", "TRY"… If the
+  document shows only a symbol, return the code that symbol stands for (€ → "EUR", £ → "GBP").
+- Return null when the document prints no currency at all. Null is the normal answer and it is a
+  safe one — do NOT fill in "EUR" because the invoice looks Dutch. We only act on what you read.
+- Return null too when the symbol could be more than one currency ("kr", a bare "$"), because a
+  currency named wrongly is worse than one not named.
+- WHY: every amount in this administration is a euro amount. A dollar invoice booked as euros is
+  wrong by the exchange rate in the base, the btw and the aangifte, and nothing downstream can see
+  it — the arithmetic on the document is perfectly consistent, in dollars.
+
+INVOICE LINES (invoice_lines) — read them, and read the RATE that stands on each one:
+- Copy each priced line as printed: its description, its amount EXCLUDING btw, and the btw rate
+  stated for THAT line (0, 9 or 21). Quantity and unit price when they are printed; null when not.
+- "amount" is the line total EXCLUDING btw. If a line prints only an inclusive price, leave
+  "amount" null rather than dividing it yourself — a computed line is not a read one.
+- If a line's rate is not stated or you are not sure which of the printed rates applies to it, set
+  "btw_rate": null for that line. Do NOT spread the document's rates over the lines by guessing:
+  a wrong rate on a line puts money in the wrong btw column, which is worse than no lines at all.
+- Return null for the whole field when the document prints no priced lines (a bank-style nota, a
+  one-line subscription invoice already covered by the totals).
+- WHY THIS MATTERS: on a document with TWO rates and no summary block, the lines are the only
+  thing that can corroborate the btw. We group them per rate and check that the result reproduces
+  the total you read. So the lines are not decoration — they are the check.
 
 MIXED-RATE BTW SUMMARY BLOCK (the most common mis-read on wholesale/horeca invoices):
 - Dutch invoices often close with a summary printing ONE ROW PER RATE, for example:
@@ -2364,6 +2429,29 @@ Return JSON only.`;
       };
     }
 
+    // ── [ZELFFACTUUR] The word on the paper, which no reading can contradict ──
+    //
+    // A self-billed invoice is drawn up by the BUYER on the seller's behalf. When the owner is the
+    // seller, that document is their own turnover arriving in the incoming pile, and booking it as
+    // a cost is the [EIGEN-FACTUUR] damage exactly: the sale stands again as an expense and the
+    // btw OWED is claimed back as voorbelasting.
+    //
+    // The identity guard directly above catches that whenever the paper carries the owner's KVK,
+    // btw number or IBAN — which it legally must. The number guard directly below cannot: a
+    // self-billed invoice carries the CUSTOMER's number series, from a run this app has never
+    // issued. So on this one document class the second line of defence is structurally absent, and
+    // an owner with a half-filled profile has nothing left. The printed word is a third handle,
+    // and it depends on neither the model naming the parties right nor the profile being complete.
+    //
+    // It decides NOTHING. We do not know which side the owner is on, and we must not guess: this
+    // is recorded, the document waits for one look, and the owner says. That look repeats per
+    // document, which is the cost — the right trade at zero instances, and if it ever becomes
+    // routine with one counterparty the answer is a per-supplier acknowledgement, never a weaker
+    // check.
+    if (selfBilledWordInDocument(statementText)) {
+      parsed.field_confidence = { ...(parsed.field_confidence ?? {}), _zelffactuur: true };
+    }
+
     // ── [EIGEN-NUMMER] Recognised by the number the app itself issued ──
     //
     // The identity guard above needs the reader to have named the OWNER as the vendor — and the
@@ -2375,7 +2463,30 @@ Return JSON only.`;
     // were. A lookup failure answers null and the reading continues: this layer may only ADD
     // recognition, never take a real supplier invoice down with a database hiccup.
     if (!eigenStuk.isOwn && parsed.invoice_number && opts?.lookupOwnInvoice) {
-      const ownRow = await opts.lookupOwnInvoice(parsed.invoice_number).catch(() => null);
+      // [EIGEN-CONTROLE-ONBEKEND] A lookup that FAILED and a lookup that found nothing are not the
+      // same answer, and this is one of the few checks where the difference costs real money: the
+      // silent outcome of a database hiccup here is the owner's own turnover booked as a cost,
+      // with the BTW they OWE claimed as voorbelasting. The catch below used to make those two
+      // outcomes identical.
+      //
+      // The layer still may not REFUSE on a hiccup — that would take a real supplier invoice down
+      // with the database. So the failure is carried instead, exactly the way [IBAN-CHECK-HONEST]
+      // and [ONE-INVOICE-UNVERIFIED] carry theirs: the row lands in the human queue with a
+      // sentence that says the check could not run, and never claims it ran clean.
+      let ownRow: Awaited<ReturnType<NonNullable<typeof opts.lookupOwnInvoice>>> | null = null;
+      let ownLookupFailed = false;
+      try {
+        ownRow = await opts.lookupOwnInvoice(parsed.invoice_number);
+      } catch (e) {
+        ownLookupFailed = true;
+        console.error('[EIGEN-CONTROLE-ONBEKEND] own-invoice lookup failed — the read continues, flagged', e);
+      }
+      if (ownLookupFailed) {
+        parsed.field_confidence = {
+          ...(parsed.field_confidence ?? {}),
+          _own_check_unavailable: true,
+        };
+      }
       if (ownRow) {
         const byNumber = matchesOwnInvoiceNumber(
           {
@@ -2654,6 +2765,21 @@ Return JSON only.`;
       };
     }
 
+    // [VREEMDE-VALUTA] The document named a currency, and it is not the euro. Record it and stop
+    // there: the amounts stay exactly as printed, because converting them needs the rate on the
+    // invoice date and this app has none. The key is the whole mechanism — it holds the invoice
+    // out of the auto-booking path and it names the currency where the owner reads it. Absent, or
+    // the euro, writes nothing at all, which is how 100 % of the documents seen so far behave.
+    {
+      const valuta = foreignCurrencyHold(parsed.currency);
+      if (valuta.hold && valuta.code != null) {
+        parsed.field_confidence = {
+          ...(parsed.field_confidence ?? {}),
+          _valuta: { code: valuta.code },
+        };
+      }
+    }
+
     // [BTW-SPLIT] Carry the per-rate summary block through to storage.
     //
     // It is stored and never acted on here, and that is the whole design. Repairing Enka Horeca
@@ -2691,6 +2817,35 @@ Return JSON only.`;
         .slice(0, 6);
       if (clean.length > 0) {
         parsed.field_confidence = { ...(parsed.field_confidence ?? {}), _btw_rows: clean };
+      }
+
+      // [REGELS] No printed block? Then the LINES are the only witness left, and on a mixed-rate
+      // document they are the constraint btw-split.ts describes as evaporating. Group them per
+      // rate, apply the rate, and require the result to reproduce BOTH printed anchors — the excl
+      // total and the btw. splitFromLines refuses on any mismatch rather than repairing anything,
+      // so what lands here has been CHECKED against the paper, never fitted to it.
+      //
+      // Kept under its own key. `_btw_rows` means the supplier printed a specification; this means
+      // we built one from the goods. The two are different evidence and the screens say so.
+      // Excluded on a creditnota for exactly the reason the block above is.
+      if (clean.length === 0 && parsed.is_credit_note !== true) {
+        const fromLines = splitFromLines({
+          lines: (parsed.invoice_lines ?? []).map((l) => ({
+            description: l?.description ?? null,
+            quantity: l?.quantity ?? null,
+            unitPrice: l?.unit_price ?? null,
+            btwRate: l?.btw_rate ?? null,
+            amount: l?.amount ?? null,
+          })),
+          totalExBtw: parsed.total_ex_btw,
+          btwAmount: parsed.btw_amount,
+        });
+        if (fromLines.ok) {
+          parsed.field_confidence = {
+            ...(parsed.field_confidence ?? {}),
+            _btw_rows_uit_regels: fromLines.rows.slice(0, 6),
+          };
+        }
       }
     }
 

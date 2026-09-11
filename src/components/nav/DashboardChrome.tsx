@@ -44,6 +44,7 @@ const STATIC_TITLES = new Map<string, MessageKey>([
   ["/dashboard/artikelen", "chrome.artikelen"],
   // [IB-JAAR] First-paint label; the page itself registers its translated title.
   ["/dashboard/jaar", "chrome.jaaroverzicht"],
+  ["/dashboard/grootboek", "chrome.grootboek"],
   ["/dashboard/kluis", "chrome.kluis"],
   // [LOGBOEK] Plain Dutch, like every other entry in this map — this registry is not translated.
   // It is the FIRST-PAINT label only: a page that registers a title through useSubPageHeader wins
