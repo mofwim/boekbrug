@@ -76,9 +76,12 @@ async function inApp(node: React.ReactElement) {
 const rendered = new Set<string>();
 
 /** Renders a screen the way the app mounts it, and fails with the screen's own error if it throws. */
-async function renderScreen(spec: string, props: Record<string, unknown> = {}): Promise<string> {
+async function renderScreen(spec: string, props: Record<string, unknown> = {}, named?: string): Promise<string> {
   const mod = await import(spec);
-  const Screen = mod.default as React.ComponentType<Record<string, unknown>>;
+  // A screen is not always a default export: the files screen and the dashboard body are named
+  // ones that a server page.tsx mounts, which is how they stayed unwalked through two passes.
+  const Screen = (named ? mod[named] : mod.default) as React.ComponentType<Record<string, unknown>>;
+  assert.ok(typeof Screen === "function", `${spec} has no component ${named ?? "as default export"}`);
   const html = renderToStaticMarkup(await inApp(React.createElement(Screen, props)));
   rendered.add(spec.replace(/^(\.\.\/)+/, "") + ".tsx");
   return html;
@@ -347,6 +350,71 @@ for (const [naam, spec] of BOUNDARIES) {
 // back into the first download of twelve public pages.
 
 // ─────────────────────────────────────────────────────────────────────────────
+// The screens that are NAMED exports, mounted by a server page.tsx
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The third time the definition of "screen" turned out to be too narrow. `export default function`
+// missed these: a client screen can be a named export that a server `page.tsx` mounts, and the
+// largest of them is the whole files feature — 1.957 lines plus ten panels around it, which is the
+// screen behind "Mijn bestanden" on the werkplek menu and was never called by anything.
+
+test("[WIT-SCHERM] the files screen renders", async () => {
+  const html = await renderScreen("../../src/app/dashboard/bestanden/BestandenPage", { role: "zzper" }, "BestandenPage");
+  assert.ok(html.length > 1000, "the files screen renders");
+});
+
+test("[WIT-SCHERM] the files screen renders for an accountant and for a client too", async () => {
+  // The role decides what may be moved, renamed and thrown away. A role whose branch throws is
+  // invisible from any other, and the accountant is the role being demonstrated to.
+  for (const role of ["accountant", "client", null]) {
+    const html = await renderScreen("../../src/app/dashboard/bestanden/BestandenPage", { role }, "BestandenPage");
+    assert.ok(html.length > 500, `the files screen renders for ${role ?? "no role"}`);
+  }
+});
+
+test("[WIT-SCHERM] the dashboard body renders, for a trade with vehicles and without", async () => {
+  for (const [vehicleTrade, workPluralKey] of [[true, "werk.meervoud.werkorders"], [false, null]] as const) {
+    const html = await renderScreen("../../src/app/dashboard/zzp/ZzpDashboard", {
+      profile: { id: "u-1", full_name: "Jamal Haddad", company_name: "Haddad Klussen", email: "jamal@example.nl", role: "zzper" },
+      vehicleTrade, workPluralKey,
+    }, "ZzpDashboard");
+    assert.ok(html.length > 2000, "the dashboard body renders");
+  }
+});
+
+test("[WIT-SCHERM] the service-worker registrar renders — it sits in the root layout", async () => {
+  // Renders nothing, and that is the point: it is mounted above every single screen in the app, so
+  // a throw here is not one white screen but all of them.
+  const html = await renderScreen("../../src/app/ServiceWorkerRegister", {}, "ServiceWorkerRegister");
+  assert.equal(html, "", "the registrar must draw nothing at all");
+});
+
+test("[WIT-SCHERM] the accountant's correction proposal form renders, including on unreadable amounts", async () => {
+  const { translator } = await import("../../src/lib/i18n/t");
+  const DateField = ({ value }: { value: string }) => React.createElement("input", { defaultValue: value });
+  const draai = async (invoice: Record<string, unknown>) => renderScreen(
+    "../../src/app/dashboard/clients/[id]/VoorstelFormulier",
+    {
+      clientId: "c-1", invoice, t: translator("nl"), DateField,
+      onClose: () => {}, onSent: () => {}, onError: () => {},
+    },
+    "VoorstelFormulier",
+  );
+  const vol = await draai({
+    id: "i-1", total_ex_btw: 799.45, btw_amount: 71.95, total_inc_btw: 871.4,
+    invoice_date: "2026-03-12", due_date: "2026-04-11",
+  });
+  assert.ok(vol.length > 400, "the proposal form renders");
+  // Every amount null: the form the accountant opens on an invoice the reader could not read at
+  // all. A zero here would be a proposal to change the figures to zero.
+  const leeg = await draai({
+    id: "i-2", total_ex_btw: null, btw_amount: null, total_inc_btw: null,
+    invoice_date: null, due_date: null,
+  });
+  assert.ok(leeg.length > 400, "the proposal form renders on an invoice with no readable amounts");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // The list closes itself
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -357,6 +425,34 @@ test("[WIT-SCHERM] no dashboard screen exists that this file never rendered", ()
   // A SCREEN is any client component a person can land on: not just `*Client.tsx`, which was the
   // first and far too narrow definition — it missed the invoice screen, login and signup, twenty
   // thousand lines of them, because those are `page.tsx` files that carry 'use client' themselves.
+  // Everything a server page.tsx or layout.tsx mounts. A screen is not always a DEFAULT export —
+  // the files screen (1.957 lines) and the dashboard body are named ones behind a thin server
+  // wrapper, and that is how they survived two passes of this check unwalked.
+  const mountedByAPage = new Set<string>();
+  const resolveFrom = (from: string, spec: string): string | null => {
+    const base = spec.startsWith("@/") ? join("src", spec.slice(2))
+      : spec.startsWith(".") ? join(dirname(from), spec)
+        : null;
+    if (!base) return null;
+    for (const ext of ["", ".tsx", ".ts", "/index.tsx", "/index.ts"]) {
+      if (existsSync(base + ext) && statSync(base + ext).isFile()) return base + ext;
+    }
+    return null;
+  };
+  const readPages = (dir: string) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) readPages(p);
+      else if (e.name === "page.tsx" || e.name === "layout.tsx") {
+        for (const m of readFileSync(p, "utf8").matchAll(/from\s*["'`]([^"'`]+)["'`]/g)) {
+          const target = resolveFrom(p, m[1]);
+          if (target) mountedByAPage.add(target);
+        }
+      }
+    }
+  };
+  readPages("src/app");
+
   const screens: string[] = [];
   const collect = (dir: string) => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -364,7 +460,8 @@ test("[WIT-SCHERM] no dashboard screen exists that this file never rendered", ()
       if (e.isDirectory()) collect(p);
       else if (/\.tsx$/.test(e.name) && !/\.test\.tsx$/.test(e.name)) {
         const src = readFileSync(p, "utf8");
-        if (/^\s*['"]use client['"]/m.test(src) && /export default function/.test(src)) screens.push(p);
+        if (!/^\s*['"]use client['"]/m.test(src)) continue;
+        if (/export default function/.test(src) || mountedByAPage.has(p)) screens.push(p);
       }
     }
   };

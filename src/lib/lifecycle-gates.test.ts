@@ -31598,6 +31598,12 @@ test("[WIT-SCHERM] the render list closes itself against the directory, and cann
     "the scan no longer recognises a page.tsx that is itself a client component");
   assert.match(suite, /for \(const f of readdirSync\("tests\/render"\)\)/,
     "coverage from the other render tests is no longer read, so this can only see its own work");
+  // Third narrowing found by measurement: a screen can be a NAMED export behind a thin server
+  // page.tsx. That is what the files screen is — 1.957 lines plus ten panels — and it survived two
+  // passes of this check unwalked because it has no default export.
+  assert.match(suite, /const mountedByAPage = new Set<string>\(\);/,
+    "the scan no longer follows what a server page.tsx mounts, so a named-export screen is invisible again");
+  assert.match(suite, /mountedByAPage\.has\(p\)/);
   // The single exemption must stay a NAMED one with its reason checked, never a silent skip.
   assert.match(suite, /const PDF_KNOP = "src\/app\/factuur-maken\/PdfDownloadButton\.tsx";/);
   assert.match(suite, /ssr: false \\\}\\\)\/,\s*\n?\s*"PdfDownloadButton is exempt/,
