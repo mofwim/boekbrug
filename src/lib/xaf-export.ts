@@ -171,6 +171,10 @@ export interface XafBankLine {
   category: string | null;
   /** Direction of the linked invoice, resolved by the route via effectiveDirection. */
   linkedInvoiceDirection: "incoming" | "outgoing" | null;
+  /** [XAF-OMSCHRIJVING] The number of that invoice, so the entry can name what it settles. */
+  linkedInvoiceNumber: string | null;
+  /** [XAF-OMSCHRIJVING] Who was on the other side, as the bank statement names them. */
+  counterpartName: string | null;
   /** toResultBankTx's decision — THE one card-payout predicate ([ONE-BANK-READ]). */
   posSettlement: boolean;
 }
@@ -440,6 +444,49 @@ function buildDepreciation(d: XafDepreciationEntry): { lines: Line[] } | { reaso
   };
 }
 
+/**
+ * [XAF-OMSCHRIJVING] What a bank mutation IS, in front of what the bank called it.
+ *
+ * Every other journal in this file describes its entries in words an accountant reads:
+ * "Verkoopfactuur 20260005", "Inkoopfactuur …", "Dagomzet 2026-08-21". The bank journal — the
+ * largest of them, 1525 mutations in a live year — passed the bank's own remittance text straight
+ * through, so the ledger read `USTD//Factuur:20260005/`. `USTD` is the bank's marker for
+ * unstructured remittance information, not a word anyone means; the owner who asked what that row
+ * was had a receipt of their own invoice in front of them and could not tell.
+ *
+ * The app knows more than the bank text does: which invoice the mutation settles, who the
+ * counterparty is, and whether it is a card payout. That knowledge goes in FRONT, where clipping
+ * cannot eat it, and the bank's own text stays in brackets BEHIND it — an accountant traces a line
+ * back to the statement by exactly that text, so replacing it would cost more than it gives.
+ *
+ * The verb follows the SIGN, not the invoice direction: a refund on a sales invoice is money
+ * leaving on an outgoing document, and calling that "Ontvangst" would describe the wrong event.
+ *
+ * [TAAL] Dutch, like every other description in this file: the auditfile is read by the
+ * accountant and the Belastingdienst, never by the owner's language setting.
+ */
+export function bankLineDescription(tx: Pick<XafBankLine,
+  "amount" | "description" | "linkedInvoiceDirection" | "linkedInvoiceNumber" | "counterpartName" | "posSettlement">
+): string {
+  const raw = (tx.description ?? "").trim();
+  let label: string;
+  if (tx.linkedInvoiceDirection) {
+    const soort = tx.linkedInvoiceDirection === "outgoing" ? "verkoopfactuur" : "inkoopfactuur";
+    const nummer = (tx.linkedInvoiceNumber ?? "").trim();
+    const werkwoord = tx.linkedInvoiceDirection === "outgoing"
+      ? (tx.amount >= 0 ? "Ontvangst" : "Terugbetaling")
+      : (tx.amount <= 0 ? "Betaling" : "Terugontvangst");
+    label = `${werkwoord} ${soort}${nummer ? ` ${nummer}` : ""}`;
+  } else if (tx.posSettlement) {
+    label = "Afrekening betaalautomaat";
+  } else {
+    label = (tx.counterpartName ?? "").trim() || "Bankmutatie";
+  }
+  const partij = (tx.counterpartName ?? "").trim();
+  const zin = partij && partij !== label ? `${label} · ${partij}` : label;
+  return raw && raw !== zin ? `${zin} (${raw})` : zin;
+}
+
 function buildBank(tx: XafBankLine): { lines: Line[] } | { reason: string } {
   if (!tx.date) return { reason: "geen datum" };
   const amtC = cents(tx.amount);
@@ -456,7 +503,7 @@ function buildBank(tx: XafBankLine): { lines: Line[] } | { reason: string } {
     : tx.posSettlement ? ACC.kruisposten
     : ACC.vraagposten;
   const hint = counter === ACC.vraagposten && tx.category ? ` [${tx.category}]` : "";
-  const desc = clip(tx.description ?? "Bankmutatie", 200);
+  const desc = clip(bankLineDescription(tx), 200);
   return {
     lines: [
       { accID: ACC.bank, debitC: amtC, desc, docRef },
@@ -743,7 +790,7 @@ export function buildJournalEntries(input: XafInput): JournalResult {
   const purchaseIds: ReadonlySet<string> = new Set(input.purchases.map((p) => p.id));
   const salesIds: ReadonlySet<string> = new Set(input.sales.map((p) => p.id));
   for (const tx of input.bank) {
-    push("BNK", tx.date ?? "", clip(tx.description ?? "Bankmutatie", 100), buildBank(tx), "bank", tx.id);
+    push("BNK", tx.date ?? "", clip(bankLineDescription(tx), 100), buildBank(tx), "bank", tx.id);
   }
   for (const row of input.cash) {
     const built = buildCash(row, purchaseIds, salesIds);
