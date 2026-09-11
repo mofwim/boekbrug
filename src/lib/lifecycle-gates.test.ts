@@ -22,7 +22,7 @@ import { LOCALE_BOOT_SCRIPT } from "./i18n/locale-boot";
 // [TAAL] The catalogue as a VALUE. An entity in a message survives every source-level check
 // there is; only the shipped string shows it.
 import { MESSAGES } from "./i18n/messages";
-import { AR_SETTLED, AR_DELIBERATE_SPLITS, AR_RETIRED, AR_RETIRED_EVERYWHERE, NL_RETIRED } from "./i18n/ar-decisions";
+import { AR_SETTLED, AR_DELIBERATE_SPLITS, AR_RETIRED, AR_RETIRED_EVERYWHERE, NL_RETIRED, EN_VAT_KEEPS_BTW } from "./i18n/ar-decisions";
 import { DOCUMENT_REFERRERS } from "./document-references";
 // [PAY-KEY-SCOPE] The triage this gate checks against is a function now, so the gate asks it
 // instead of parsing it out of source — see the test.
@@ -7345,6 +7345,36 @@ test("[AR-TERMEN] a settled Dutch source keeps its one settled Arabic wording", 
     if (ar !== wil) fouten.push(`${key}: «${nl}» must read «${wil}», not «${ar}»`);
   }
   assert.deepEqual(fouten, [], "a settled wording drifted:\n  " + fouten.join("\n  "));
+});
+
+test("[AR-TERMEN] the Dutch term is written one way inside Arabic", () => {
+  // «btw» is kept untranslated on purpose — it is what the owner reads on a letter from the
+  // Belastingdienst. Kept, but written ONE way: the catalogue had «رقم BTW» in nine values and
+  // «رقم btw» in fourteen, which is the same drift the Dutch casing caused on the bare label.
+  // Stated as an invariant rather than a list of forms, because the next uppercase one will be a
+  // wording nobody has written yet. If a value ever genuinely needs the capital, the decision is
+  // made in ar-decisions.ts like every other one — not by quietly adding it here.
+  const fouten: string[] = [];
+  for (const [key, message] of Object.entries(MESSAGES as Record<string, Record<string, string>>)) {
+    const ar = (message.ar ?? "").trim();
+    if (/BTW/.test(ar)) fouten.push(`${key}: «${ar}» writes the term as BTW — inside Arabic it is «btw»`);
+  }
+  assert.deepEqual(fouten, [], "the Dutch term is spelled two ways inside Arabic:\n  " + fouten.join("\n  "));
+});
+
+test("[AR-TERMEN] English says VAT, except where BTW is the legal field name", () => {
+  // Same shape as the Arabic casing rule, and for the same reason: the next value to get this
+  // wrong is one nobody has written yet, so the rule is an invariant rather than a list. The one
+  // exception is the Dutch legal field «BTW number» — an owner typing their btw-nummer into a box
+  // labelled "VAT number" has to work out that the two are the same thing.
+  const fouten: string[] = [];
+  for (const [key, message] of Object.entries(MESSAGES as Record<string, Record<string, string>>)) {
+    const en = (message.en ?? "").trim();
+    if (!en.includes("BTW")) continue;
+    if (en.replace(new RegExp(EN_VAT_KEEPS_BTW.source, "gi"), "").includes("BTW"))
+      fouten.push(`${key}: «${en}» says BTW where the term is just the Dutch abbreviation — English says VAT`);
+  }
+  assert.deepEqual(fouten, [], "the English says BTW where it means VAT:\n  " + fouten.join("\n  "));
 });
 
 test("[AR-TERMEN] the decision lists do not contradict each other", () => {

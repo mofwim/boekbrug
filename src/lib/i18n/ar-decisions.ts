@@ -48,6 +48,11 @@ export const AR_SETTLED: ReadonlyArray<readonly [nl: string, ar: string]> = [
   ["Boekhouder", "المحاسب"],
   ["Bon", "إيصال"],
   ["Btw", "الضريبة"],
+  ["BTW-nummer", "رقم btw"],
+  ["Btw-nummer", "رقم btw"],
+  ["BTW nummer", "رقم btw"],
+  ["BTW-nummer (optioneel)", "رقم btw (اختياري)"],
+  ["BTW-nummer klant", "رقم btw للعميل"],
   ["Bevestig", "تأكيد"],
   ["Bevestigen", "تأكيد"],
   ["Btw-tarief", "نسبة btw"],
@@ -171,6 +176,9 @@ export const AR_DELIBERATE_SPLITS: ReadonlyArray<{
     why: "plural; the singular sibling keeps دفعة, because Arabic agrees with number and the app has both keys" },
   { key: "cat.teDoen", ar: "معاملات متبقية",
     why: "plural; cat.teDoenEen is the singular, for the same reason" },
+  { key: "prul.nietVerwijderdActie",
+    ar: "افصل الملف عن ذلك أولًا، أو احذف ذلك القيد. بعدها يمكنك حذفه من هنا — بهذا لا تبقى إدارتك بقيد بلا مستند داعم.",
+    why: "its Dutch is `losmaken` — detaching a file from a booking, not the interface action called «إلغاء الربط». Ruled to keep «افصل»: the unlink wording is scoped to `ontkoppelen`, and «ألغِ ربط الملف عن ذلك» is heavy Arabic for a lighter act" },
   { key: "beh.gezond.nooitGedraaid", ar: "لم يُشغَّل قط",
     why: "nooit gedraaid is about a job that never RAN; nog nooit is a plain never" },
 ];
@@ -224,7 +232,33 @@ export const AR_RETIRED_EVERYWHERE: Readonly<Record<string, string>> = {
   "فكّ الربط": "إلغاء الربط",
   "فكّ ربط": "إلغاء ربط", // the same name in construct state: «فكّ ربط دفعة جماعية»
   "افكك ربط": "ألغِ ربط",
+  "رقم BTW": "رقم btw",
+  "رقم ضريبة القيمة المضافة": "رقم btw", // the BARE «ضريبة القيمة المضافة» is not retired: it
+                                          // names the tax itself in six values and stays there
+  "رقم الضريبة": "رقم btw",
 };
+
+/**
+ * English says VAT. The reviewer's ruling, in their words: use `VAT` wherever `BTW` is merely the
+ * Dutch abbreviation for it — sentences, headings and ordinary fields alike — and preserve the
+ * legally specific Dutch terms.
+ *
+ * In practice that is ONE exception, and this pattern is it: «BTW number», the name of the Dutch
+ * legal field. An owner who types their btw-nummer into a form labelled "VAT number" has to work
+ * out that the two are the same thing, on the one screen where being wrong is expensive.
+ *
+ * Everything else went: 33 occurrences across 30 values. Before the ruling the app said `VAT` in
+ * 163 values and `BTW` in 38, and one sentence — inst.kasstelselUitleg — used BOTH for the same
+ * tax, two clauses apart. That sentence is why this is a rule and not a preference.
+ *
+ * A named Dutch tax form spelled in Dutch («btw-aangifte») would also stay, per the same ruling.
+ * None exists in an English value today; if one is added, it needs no entry here because it is not
+ * the string this pattern or the gate looks for.
+ *
+ * [TAAL] This English ruling lives in a file named for Arabic on purpose: it is the record of
+ * language decisions, and a second file is one nobody finds when they are about to re-decide.
+ */
+export const EN_VAT_KEEPS_BTW = /BTW[- ](number|nummer)/i;
 
 /** Dutch forms retired in favour of one form per action, so the source cannot re-teach a split. */
 export const NL_RETIRED: Readonly<Record<string, string>> = {
