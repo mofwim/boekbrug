@@ -35,7 +35,10 @@ export const AR_SETTLED: ReadonlyArray<readonly [nl: string, ar: string]> = [
   ["Al toegevoegd", "أُضيف مسبقًا"],
   ["Artikelen", "المنتجات"],
   ["Automatische incasso", "خصم مباشر تلقائي"],
-  ["BTW", "btw"],
+  ["BTW", "الضريبة"],
+  ["btw", "الضريبة"],
+  ["BTW ({pct}%)", "الضريبة ({pct}%)"],
+  ["BTW ({rate}%)", "الضريبة ({rate}%)"],
   ["Bank", "البنك"],
   ["Bedrag excl. BTW", "المبلغ بدون btw"],
   ["Betaling ongedaan maken?", "التراجع عن الدفعة؟"],
@@ -45,6 +48,8 @@ export const AR_SETTLED: ReadonlyArray<readonly [nl: string, ar: string]> = [
   ["Boekhouder", "المحاسب"],
   ["Bon", "إيصال"],
   ["Btw", "الضريبة"],
+  ["Bevestig", "تأكيد"],
+  ["Bevestigen", "تأكيد"],
   ["Btw-tarief", "نسبة btw"],
   ["Combineer {n} pagina's → één factuur", "ادمج {n} صفحة ← فاتورة واحدة"],
   ["Concept BTW te betalen", "btw المبدئية للدفع"],
@@ -206,10 +211,19 @@ export const AR_RETIRED: Readonly<Record<string, string>> = {
  * error messages correctly, «أعد المحاولة» closes 35 more. Checking AR_RETIRED by substring would
  * condemn all 120 and force them into a register the reviewer did not ask for. So the substring
  * rule holds only for wordings that name a thing, and each entry earns its place by being one.
+ *
+ * Two unlink verbs are deliberately NOT here, and both were measured before being left out:
+ *   · «فصل» appears in 11 values, 7 of them «منفصل/منفصلة» meaning separate — a different word
+ *     that happens to share three letters. Listing it would condemn seven correct sentences.
+ *   · «افصل» appears in prul.nietVerwijderdActie, whose Dutch is `losmaken`, not `ontkoppelen`.
+ *     That sentence is the same defect and has not been ruled on yet, so the rule that would catch
+ *     it is not armed. This list grows when that ruling arrives — not before, because a gate that
+ *     is red on purpose is a gate everyone learns to skip.
  */
 export const AR_RETIRED_EVERYWHERE: Readonly<Record<string, string>> = {
   "فكّ الربط": "إلغاء الربط",
   "فكّ ربط": "إلغاء ربط", // the same name in construct state: «فكّ ربط دفعة جماعية»
+  "افكك ربط": "ألغِ ربط",
 };
 
 /** Dutch forms retired in favour of one form per action, so the source cannot re-teach a split. */

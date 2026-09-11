@@ -1177,7 +1177,7 @@ export const MESSAGES = {
   'bank.regelWegJa': { nl: 'Ja, verwijderen', ar: 'نعم، احذف', en: 'Yes, delete' },
   'bank.regelWegKlaar': { nl: 'Regel verwijderd.', ar: 'حُذف السطر.', en: 'Line deleted.' },
   'bank.fout.regelWeg': { nl: 'Verwijderen mislukt.', ar: 'فشل الحذف.', en: 'Deleting failed.' },
-  'bank.fout.regelGekoppeld': { nl: 'Deze regel staat (deels) op een factuur — ontkoppel eerst.', ar: 'هذا السطر مرتبط (جزئيًا) بفاتورة — افصله أولًا.', en: 'This line is (partly) on an invoice — unlink it first.' },
+  'bank.fout.regelGekoppeld': { nl: 'Deze regel staat (deels) op een factuur — ontkoppel eerst.', ar: 'هذا السطر مرتبط (جزئيًا) بفاتورة — ألغِ ربطه أولًا.', en: 'This line is (partly) on an invoice — unlink it first.' },
   'bank.openFactuur': { nl: 'Open factuur', ar: 'افتح الفاتورة', en: 'Open invoice' },
   // [REGEL-FACTUUR] An invoice from a bank line, no file.
   'bank.lf.knop': { nl: 'Zonder bestand', ar: 'بدون ملف', en: 'Without a file' },
@@ -2372,7 +2372,7 @@ export const MESSAGES = {
     en: 'Copy the total and the VAT exactly as printed at the bottom of the invoice — the ex-VAT amount computes itself.',
   },
   'corr.totaalIncl': { nl: 'Totaal (incl. BTW)', ar: 'الإجمالي (شامل btw)', en: 'Total (incl. VAT)' },
-  'corr.btw': { nl: 'BTW', ar: 'btw', en: 'VAT' },
+  'corr.btw': { nl: 'BTW', ar: 'الضريبة', en: 'VAT' },
   'corr.exclBtw': { nl: 'Bedrag excl. BTW', ar: 'المبلغ بدون btw', en: 'Amount excl. VAT' },
   'corr.creditTitel': { nl: 'Dit is een creditnota', ar: 'هذا إشعار دائن', en: 'This is a credit note' },
   'corr.creditUitleg': {
@@ -3006,7 +3006,7 @@ export const MESSAGES = {
   },
   'verd.alVerdeeldUitleg': {
     nl: 'Er valt hier niets meer toe te wijzen. Klopt de verdeling niet, ontkoppel dan eerst een factuur op de bankpagina — dan komt dat bedrag hier weer vrij.',
-    ar: 'لا شيء متبقٍ للتوزيع هنا. إن كان التوزيع خاطئاً، فافصل أولاً فاتورة في صفحة البنك — فيتحرر ذلك المبلغ هنا من جديد.',
+    ar: 'لا شيء متبقٍ للتوزيع هنا. إن كان التوزيع خاطئاً، فألغِ ربط فاتورة في صفحة البنك أولاً — فيتحرر ذلك المبلغ هنا من جديد.',
     en: 'There is nothing left to assign. If the split is wrong, first unlink an invoice on the bank page — that amount then becomes available here again.',
   },
   'verd.terugBank': { nl: 'Terug naar de bank', ar: 'العودة إلى البنك', en: 'Back to the bank' },
@@ -3057,7 +3057,7 @@ export const MESSAGES = {
   'verd.boek': { nl: 'Boek {count} facturen', ar: 'تسجيل {count} فاتورة', en: 'Book {count} invoices' },
   'verd.voetnoot': {
     nl: 'Een factuur die deels betaald is, blijft voor de rest openstaan; er wordt niets weggeschreven. De rest van de betaling blijft ook staan, en ontkoppelen kan altijd.',
-    ar: 'الفاتورة المدفوعة جزئياً يبقى باقيها مفتوحاً؛ لا يُشطب شيء. وباقي الدفعة يبقى أيضاً، والفصل ممكن دائماً.',
+    ar: 'الفاتورة المدفوعة جزئياً يبقى باقيها مفتوحاً؛ لا يُشطب شيء. وباقي الدفعة يبقى أيضاً، وإلغاء الربط ممكن دائماً.',
     en: 'An invoice that is partly paid stays open for the rest; nothing is written off. The rest of the payment stays too, and unlinking is always possible.',
   },
 
@@ -4397,7 +4397,7 @@ export const MESSAGES = {
   },
   'bank.verplaats.geenBedrag': {
     nl: 'Geen bedrag vastgelegd, dus verplaatsen kan niet. Ontkoppel hem en boek hem opnieuw.',
-    ar: 'لم يُسجَّل مبلغ، فلا يمكن النقل. افكك ربطها وقيّدها من جديد.',
+    ar: 'لم يُسجَّل مبلغ، فلا يمكن النقل. ألغِ ربطها وسجّلها من جديد.',
     en: 'No amount recorded, so it cannot be moved. Unlink it and book it again.',
   },
   'bank.verplaats.kies': {
@@ -6346,12 +6346,12 @@ export const MESSAGES = {
   },
   'ink.btw': {
     nl: 'BTW',
-    ar: 'btw',
+    ar: 'الضريبة',
     en: 'VAT',
   },
   'ink.btwPct': {
     nl: 'BTW ({rate}%)',
-    ar: 'btw ({rate}%)',
+    ar: 'الضريبة ({rate}%)',
     en: 'VAT ({rate}%)',
   },
   'ink.bulk.aandachtEen': {
@@ -9763,12 +9763,17 @@ export const MESSAGES = {
   },
   'lijst.btw': {
     nl: 'BTW',
-    ar: 'btw',
+    ar: 'الضريبة',
     en: 'BTW',
+  },
+  'lijst.btwNummer': {
+    nl: 'BTW-nummer',
+    ar: 'رقم btw',
+    en: 'VAT number',
   },
   'lijst.btwPct': {
     nl: 'BTW ({pct}%)',
-    ar: 'btw ({pct}%)',
+    ar: 'الضريبة ({pct}%)',
     en: 'BTW ({pct}%)',
   },
   'lijst.bundel.deel': {
@@ -14887,7 +14892,7 @@ export const MESSAGES = {
   'bh.fact.btwTarief': { nl: '{tarief}% BTW', ar: '{tarief}% BTW', en: '{tarief}% BTW' },
   'bh.fact.regelErbij': { nl: '+ Regel erbij', ar: '+ سطر إضافي', en: '+ Add a line' },
   'bh.fact.subtotaal': { nl: 'Subtotaal', ar: 'المجموع الفرعي', en: 'Subtotal' },
-  'bh.fact.btw': { nl: 'BTW', ar: 'btw', en: 'BTW' },
+  'bh.fact.btw': { nl: 'BTW', ar: 'الضريبة', en: 'BTW' },
   'bh.fact.totaal': { nl: 'Totaal', ar: 'الإجمالي', en: 'Total' },
   'bh.fact.bezig': { nl: 'Bezig met versturen…', ar: 'جارٍ الإرسال…', en: 'Sending…' },
   'bh.fact.verstuurNamens': { nl: 'Verstuur namens {naam}', ar: 'أرسل نيابةً عن {naam}', en: 'Send on behalf of {naam}' },
