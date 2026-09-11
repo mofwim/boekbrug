@@ -10016,15 +10016,24 @@ export const MESSAGES = {
     ar: 'استُؤنف التكرار',
     en: 'Repeating resumed',
   },
+  // [KNOP-RESULTAAT] A button is named for what it LEAVES BEHIND, not for the verb behind it.
+  //
+  // These two sat side by side on a sent sales invoice and both read as "again": "Nog een keer"
+  // and "Herhalen". One makes a single draft, now, and opens it for editing; the other sets up a
+  // series that keeps preparing drafts every week, month, quarter or year. The owner asked which
+  // was which — and a label whose own reader has to ask is a label that failed at its one job.
+  //
+  // So each says its outcome: a COPY, or a SCHEDULE. The state labels below take over once a
+  // schedule exists ("Herhaalt elke maand"), which is the same story one step further on.
   'lijst.herhalen.knop': {
-    nl: 'Herhalen',
-    ar: 'تكرار',
-    en: 'Repeat',
+    nl: 'Factuur inplannen',
+    ar: 'جدولة الفاتورة',
+    en: 'Schedule invoice',
   },
-  // [BESTE] "Nog een keer": the copy that every package puts beside a sent invoice — a new concept
-  // with the same customer and lines, opened for editing.
-  'lijst.nogEenKeer': { nl: 'Nog een keer', ar: 'مرة أخرى', en: 'Once more' },
-  'lijst.nogEenKeer.mislukt': { nl: 'Kopiëren is niet gelukt.', ar: 'لم ينجح النسخ.', en: 'Copying did not work.' },
+  // [BESTE · KNOP-RESULTAAT] The copy every package puts beside a sent invoice — a new concept with
+  // the same customer and lines, opened for editing.
+  'lijst.kopieMaken': { nl: 'Kopie maken', ar: 'إنشاء نسخة', en: 'Make a copy' },
+  'lijst.kopieMaken.mislukt': { nl: 'Kopiëren is niet gelukt.', ar: 'لم ينجح النسخ.', en: 'Copying did not work.' },
   // [BESTE] The money above the list: what is still to come in, and how much of it is late.
   'lijst.kop.openstaand': { nl: 'Openstaand', ar: 'مستحق', en: 'Outstanding' },
   'lijst.kop.teLaat': { nl: 'Te laat', ar: 'متأخر', en: 'Late' },

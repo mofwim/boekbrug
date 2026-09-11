@@ -980,10 +980,10 @@ export default function FacturenClient({
     try {
       const res = await fetch(`/api/invoice/${id}/duplicate`, { method: 'POST' })
       const json = await res.json().catch(() => ({}))
-      if (!res.ok || !json?.invoiceId) { showToast(failureText(res.status, json, t('lijst.nogEenKeer.mislukt'))); return }
+      if (!res.ok || !json?.invoiceId) { showToast(failureText(res.status, json, t('lijst.kopieMaken.mislukt'))); return }
       router.push(`/dashboard/invoice/${json.invoiceId}/edit`)
     } catch {
-      showToast(t('lijst.nogEenKeer.mislukt'))
+      showToast(t('lijst.kopieMaken.mislukt'))
     }
   }
 
@@ -1947,7 +1947,7 @@ export default function FacturenClient({
                             onClick={e => { e.stopPropagation(); void handleDuplicate(inv.id) }}
                             style={{ fontSize: 13, color: M3.onPrimaryContainer, background: M3.primaryContainer, border: 'none', borderRadius: R.full, padding: '8px 16px', cursor: 'pointer', fontWeight: 500, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 4 }}>
                             <span className="material-symbols-outlined" style={{ fontSize: 16 }} aria-hidden>content_copy</span>
-                            {t('lijst.nogEenKeer')}
+                            {t('lijst.kopieMaken')}
                           </button>
                         )}
                         <button
