@@ -50,7 +50,7 @@ import { execSync } from "node:child_process";
 import { parseVak, sellsOverCounter } from "./vak-profile";
 import { demoRefusalFor } from "./demo-tenant";
 // [POST-WAARD] The composed mail as a VALUE — the second lock is held against the real html.
-import { planOchtendMail } from "./ochtend-digest";
+import { planOchtendMail, takenVoorMail, type OchtendTaak } from "./ochtend-digest";
 
 /**
  * Source with comments stripped — these files explain the very mistakes the gates look for, so a
@@ -30098,6 +30098,82 @@ test("[BLIND-LEVERANCIER] the supplier-account read says whether it answered, an
 //   · 4000 is untouched. Adding accounts beside it makes an export more precise; renaming or
 //     renumbering it silently moves history.
 // And the third that makes it safe: it suggests, it never books.
+// ─── [OCHTEND-TAKEN] Tasks ride along; they never summon ──────────────────────────────────────
+//
+// The morning mail reported what HAPPENED and never what to do, and its own header forbade the
+// second on purpose: "No nagging about open work. Standing state belongs on the dashboard." That
+// was right when it was written, because the app had nothing worth asking for. It does now, and
+// all of it sits on screens an owner who has not opened the app never sees.
+//
+// So the mail carries tasks. What must not change is WHY the old rule existed: a mail that nags
+// often enough is deleted unread, and then it costs the one mail that mattered. Both halves are
+// held by a single rule, and this gate exists for that rule alone —
+//
+//     A DAY WITH NO EVENT PRODUCES NO MAIL, HOWEVER MUCH WORK IS OPEN.
+//
+// Break it and the digest becomes a daily reminder that every owner filters away.
+test("[OCHTEND-TAKEN] the quiet day survives, and no task can summon a mail", () => {
+  const digest = code("src/lib/ochtend-digest.ts");
+  const cron = code("src/app/api/cron/ochtend/route.ts");
+
+  // ── The rule, in the code: the quiet check comes BEFORE the tasks are even looked at.
+  const quiet = digest.indexOf("if (betalingen.length === 0 && inkomend.length === 0) return null;");
+  const takenAt = digest.indexOf("const taken = takenVoorMail(");
+  assert.ok(quiet > 0, "the quiet-by-default rule is gone");
+  assert.ok(takenAt > quiet, "the tasks are consulted BEFORE the quiet check — a task can now summon a mail");
+
+  // …and it holds when actually run, which is the assertion that survives a refactor of the above.
+  assert.equal(
+    planOchtendMail({
+      gisteren: "2026-09-10", payments: [], newIncoming: [],
+      taken: [{ soort: "grootboek", aantal: 40, pad: "/dashboard/grootboek" }],
+      baseUrl: "https://boekbrug.nl",
+    }),
+    null,
+    "forty open tasks must not produce a mail on a day when nothing happened",
+  );
+
+  // ── A task with no rows is not a task, and a kind with no Dutch behind it is dropped rather
+  //    than printed raw — the [LOGBOEK] failure, in a mailbox instead of a logbook.
+  assert.deepEqual(takenVoorMail([{ soort: "grootboek", aantal: 0, pad: "/x" }]), []);
+  assert.deepEqual(
+    takenVoorMail([{ soort: "onbekend", aantal: 3, pad: "/x" } as unknown as OchtendTaak]), [],
+    "an unknown task kind must never reach the owner as an identifier",
+  );
+
+  // ── Bounded. A mail is a doorway, not a report ([RUSTIG]).
+  assert.match(digest, /export const MAX_TAKEN = 4;/);
+
+  // ── Ordered by what it costs to leave undone, never by how many there are.
+  assert.match(digest, /rang: 1 \}/);
+  assert.match(digest, /\.sort\(\(a, b\) => TAAK_TEKST\[a\.soort\]\.rang - TAAK_TEKST\[b\.soort\]\.rang\)/);
+  assert.doesNotMatch(digest, /sort\(\(a, b\) => b\.aantal - a\.aantal\)/,
+    "a task with forty rows is not more urgent than one with two — it is just longer");
+
+  // ── The cron counts tasks ONLY for owners already receiving a mail, and a failed count leaves
+  //    the task out rather than reporting zero: "nothing is waiting" is the one sentence this
+  //    mail may not get wrong.
+  assert.match(cron, /if \(!ontvangers\.has\(uid\)\) return;/,
+    "the task read must never decide who gets a mail");
+  assert.match(cron, /const takenByUser = new Map<string, OchtendTaak\[\]>\(\);/);
+  // Each count is guarded on its own, so one failure does not cost the others. The window is cut
+  // on REAL CODE at both ends: code() strips comments, so a marker living in one is not in the
+  // string being sliced and indexOf returns -1 — the AGENTS.md defect this file is named for.
+  const blokStart = cron.indexOf("const takenByUser = new Map");
+  const blokEnd = cron.indexOf("const userIds = [...new Set(");
+  assert.ok(blokStart > 0 && blokEnd > blokStart, "the task block moved — this window measures nothing");
+  const taakBlok = cron.slice(blokStart, blokEnd);
+  assert.ok((taakBlok.match(/try \{/g) ?? []).length >= 4,
+    "the task reads are not individually guarded; one failed count would cost the others");
+  assert.doesNotMatch(taakBlok, /aantal: 0/, "a count that could not be read must be ABSENT, never zero");
+
+  // ── The mail is organised: three named sections, in the order a morning is read.
+  assert.match(digest, /Dit wacht op jou/);
+  assert.match(digest, />Gisteren</);
+  // And the button lands on the thing that needs doing.
+  assert.match(digest, /const topTaak = taken\[0\] \?\? null;/);
+});
+
 // ─── [WACHTKOPPELING] A link to a payment that has not arrived yet ────────────────────────────
 //
 // Every attach door in this app requires its object to exist: bank-attachment and

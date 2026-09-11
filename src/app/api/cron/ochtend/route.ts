@@ -27,7 +27,7 @@ import { timingSafeEqualStr } from "@/lib/timing-safe";
 import { beginCronRun, finishCronRun, alreadyRanToday } from "@/lib/cron-heartbeat";
 import { amsterdamToday, amsterdamMidnightUtc } from "@/lib/format-nl";
 import { effectiveDirection } from "@/lib/closing-package";
-import { planOchtendMail, type OchtendIncoming, type OchtendPayment } from "@/lib/ochtend-digest";
+import { planOchtendMail, type OchtendIncoming, type OchtendPayment, type OchtendTaak } from "@/lib/ochtend-digest";
 import { sendOchtendMail, sendBeheerAlarm } from "@/lib/email";
 // [BEHEER-GEZOND] Het oordeel over de andere crons bestond al en had geen enkele lezer.
 import { readSystemHealth, healthAlarm } from "@/lib/beheer-health";
@@ -148,6 +148,78 @@ export async function GET(req: NextRequest) {
       incomingByUser.set(r.receiver_id, arr);
     }
 
+    // ── 2b. [OCHTEND-TAKEN] What is waiting for each owner ──
+    //
+    // Counts only, and only for the owners who are already getting a mail — this read must never
+    // decide WHO gets one. Tasks ride along; they never summon ([OCHTEND-TAKEN] in the digest).
+    //
+    // Every count here is a status this app already maintains, read once for everybody rather
+    // than once per owner: the morning must not become N queries per mailbox.
+    const takenByUser = new Map<string, OchtendTaak[]>();
+    const ontvangers = new Set<string>([...paymentsByUser.keys(), ...incomingByUser.keys()]);
+    if (ontvangers.size > 0) {
+      const push = (uid: string, t: OchtendTaak) => {
+        if (!ontvangers.has(uid)) return;
+        const arr = takenByUser.get(uid) ?? [];
+        arr.push(t);
+        takenByUser.set(uid, arr);
+      };
+
+      // [NO-SILENT-EMPTY] A failed count must leave the task OUT, never show it as zero: "nothing
+      // is waiting" is the one sentence this mail may not get wrong. Each read is guarded on its
+      // own so one failure does not cost the others.
+      type TaakRij = { receiver_id: string | null; status: string | null; ledger_account?: string | null; due_date?: string | null };
+      try {
+        const rijen = await fetchAllRows<TaakRij>((from, to) => pipeline
+          .from("invoices")
+          .select("receiver_id, status")
+          .eq("direction", "incoming")
+          .eq("status", "processing")
+          .order("id", { ascending: true }).range(from, to));
+        const per = new Map<string, number>();
+        for (const r of rijen) if (r.receiver_id) per.set(r.receiver_id, (per.get(r.receiver_id) ?? 0) + 1);
+        for (const [uid, n] of per) push(uid, { soort: "te_beoordelen", aantal: n, pad: "/dashboard/incoming" });
+      } catch { /* the task stays out; the mail is still true without it */ }
+
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const rijen = await fetchAllRows<TaakRij>((from, to) => (pipeline as any)
+          .from("invoices")
+          .select("receiver_id, status, ledger_account")
+          .eq("direction", "incoming")
+          .in("status", ["received", "paid"])
+          .is("ledger_account", null)
+          .order("id", { ascending: true }).range(from, to));
+        const per = new Map<string, number>();
+        for (const r of rijen) if (r.receiver_id) per.set(r.receiver_id, (per.get(r.receiver_id) ?? 0) + 1);
+        for (const [uid, n] of per) push(uid, { soort: "grootboek", aantal: n, pad: "/dashboard/grootboek" });
+      } catch { /* [DEPLOY-SAFE] ledger_account arrives by a hand-applied migration */ }
+
+      try {
+        const rijen = await fetchAllRows<{ user_id: string | null }>((from, to) => pipeline
+          .from("bank_transactions")
+          .select("user_id")
+          .eq("status", "pending")
+          .is("invoice_id", null)
+          .order("id", { ascending: true }).range(from, to));
+        const per = new Map<string, number>();
+        for (const r of rijen) if (r.user_id) per.set(r.user_id, (per.get(r.user_id) ?? 0) + 1);
+        for (const [uid, n] of per) push(uid, { soort: "bank_te_beslissen", aantal: n, pad: "/dashboard/bank" });
+      } catch { /* the task stays out */ }
+
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const rijen = await fetchAllRows<{ user_id: string | null }>((from, to) => (pipeline as any)
+          .from("wachtkoppelingen")
+          .select("user_id")
+          .in("status", ["wachtend", "voorgesteld"])
+          .order("id", { ascending: true }).range(from, to));
+        const per = new Map<string, number>();
+        for (const r of rijen) if (r.user_id) per.set(r.user_id, (per.get(r.user_id) ?? 0) + 1);
+        for (const [uid, n] of per) push(uid, { soort: "wacht_op_bankregel", aantal: n, pad: "/dashboard/bank" });
+      } catch { /* [DEPLOY-SAFE] wachtkoppelingen arrives by a hand-applied migration */ }
+    }
+
     // ── 3. The owners this concerns, with their address and their choice ──
     const userIds = [...new Set([...paymentsByUser.keys(), ...incomingByUser.keys()])];
     type ProfielRij = { id: string; email: string | null; role: string | null; ochtend_mail?: boolean | null };
@@ -205,6 +277,7 @@ export async function GET(req: NextRequest) {
           gisteren,
           payments: paymentsByUser.get(p.id) ?? [],
           newIncoming: incomingByUser.get(p.id) ?? [],
+          taken: takenByUser.get(p.id) ?? [],
           baseUrl,
         });
         if (!mail) { quiet++; continue; }
