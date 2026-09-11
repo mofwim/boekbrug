@@ -1241,7 +1241,7 @@ export const MESSAGES = {
   'bank.blind.geweigerd': { nl: 'We konden nu niet ophalen welke suggesties je hebt afgewezen — een afgewezen suggestie kan terugkomen.', en: 'We could not fetch which suggestions you rejected — a rejected one may come back.', ar: 'تعذّر جلب الاقتراحات التي رفضتها — قد يعود اقتراح رفضته.' },
   'bank.fout.matchen': { nl: 'Matchen mislukt.', ar: 'فشلت المطابقة.', en: 'Matching failed.' },
   'bank.fout.negeren': { nl: 'Negeren mislukt.', ar: 'فشل التجاهل.', en: 'Ignoring failed.' },
-  'bank.fout.ontkoppelen': { nl: 'Ontkoppelen mislukt.', ar: 'فشل فكّ الربط.', en: 'Unlinking failed.' },
+  'bank.fout.ontkoppelen': { nl: 'Ontkoppelen mislukt.', ar: 'فشل إلغاء الربط.', en: 'Unlinking failed.' },
   'bank.fout.ophalen': { nl: 'Ophalen mislukt.', ar: 'فشل الجلب.', en: 'Fetching failed.' },
   'bank.fout.opslaan': { nl: 'Kon niet opslaan. Probeer het nog een keer.', ar: 'تعذّر الحفظ. حاول مرة أخرى.', en: 'Could not save. Please try again.' },
   'bank.fout.terugzetten': { nl: 'Terugzetten mislukt.', ar: 'فشلت الإعادة.', en: 'Putting back failed.' },
@@ -1257,7 +1257,7 @@ export const MESSAGES = {
   'bank.fout.geenBoeking': { nl: 'Geen geboekte betaling gevonden op deze regel.', ar: 'لا قيد دفع على هذا البند.', en: 'No booked payment found on this line.' },
   'bank.fout.geenNummers': { nl: 'Geen factuurnummers meer. Is dit geen factuur? Gebruik Negeren.', ar: 'لم تعد ثمة أرقام فواتير. أليست فاتورة؟ استخدم «تجاهل».', en: 'No invoice numbers left. Not an invoice? Use Ignore.' },
   'bank.fout.alToegewezen': { nl: 'Deze betaling is al volledig toegewezen aan facturen.', ar: 'هذه الدفعة وُزّعت بالكامل على فواتير.', en: 'This payment is already fully assigned to invoices.' },
-  'bank.fout.groep': { nl: 'Ontkoppelen van een groepsbetaling kan hier nog niet.', ar: 'فكّ ربط دفعة جماعية غير ممكن هنا بعد.', en: 'Unlinking a group payment is not possible here yet.' },
+  'bank.fout.groep': { nl: 'Ontkoppelen van een groepsbetaling kan hier nog niet.', ar: 'إلغاء ربط دفعة جماعية غير ممكن هنا بعد.', en: 'Unlinking a group payment is not possible here yet.' },
   'bank.fout.verwerkt': { nl: 'De boekhouder heeft deze factuur al verwerkt. Vraag eerst om dat ongedaan te maken.', ar: 'المحاسب عالج هذه الفاتورة مسبقاً. اطلب أولاً التراجع عن ذلك.', en: 'The accountant already processed this invoice. First ask to undo that.' },
   'bank.fout.netGedaan': { nl: 'Even wachten — je hebt dit net al gedaan.', ar: 'انتظر قليلاً — فعلت هذا للتو.', en: 'One moment — you just did this.' },
   'bank.fout.bedragNul': { nl: 'Vul een bedrag groter dan nul in.', ar: 'أدخل مبلغاً أكبر من صفر.', en: 'Enter an amount above zero.' },
@@ -3106,7 +3106,7 @@ export const MESSAGES = {
   },
   'bkc.opgehaald': { nl: '{inserted} nieuwe transacties opgehaald.', ar: 'جُلبت {inserted} معاملة جديدة.', en: '{inserted} new transactions fetched.' },
   'bkc.geenNieuwe': { nl: 'Geen nieuwe transacties bij je bank.', ar: 'لا معاملات جديدة لدى بنكك.', en: 'No new transactions at your bank.' },
-  'bkc.ontkoppelenMislukt': { nl: 'Ontkoppelen mislukt.', ar: 'فشل فكّ الربط.', en: 'Disconnecting failed.' },
+  'bkc.ontkoppelenMislukt': { nl: 'Ontkoppelen mislukt.', ar: 'فشل إلغاء الربط.', en: 'Disconnecting failed.' },
   'bkc.ontkoppeld': {
     nl: 'Bank ontkoppeld. Je transacties blijven bewaard.',
     ar: 'فُصل البنك. معاملاتك تبقى محفوظة.',
@@ -8698,7 +8698,7 @@ export const MESSAGES = {
   },
   'inst.ontkoppelenMislukt': {
     nl: 'Ontkoppelen mislukt',
-    ar: 'فشل فكّ الربط',
+    ar: 'فشل إلغاء الربط',
     en: 'Unlinking failed',
   },
   'inst.ontkoppelTitel': {
@@ -15138,7 +15138,7 @@ export const MESSAGES = {
   'bh.det.ontkoppelUitleg': { nl: 'Je verliest de toegang tot de administratie van {naam}. Hij houdt alles zelf; later opnieuw koppelen kan.', ar: 'ستفقد الوصول إلى دفاتر {naam}. يحتفظ هو بكل شيء؛ ويمكن الربط من جديد لاحقًا.', en: 'You lose access to the books of {naam}. They keep everything; you can link again later.' },
   'bh.det.ontkoppelUitlegAnoniem': { nl: 'Je verliest de toegang tot de administratie van deze klant. Hij houdt alles zelf; later opnieuw koppelen kan.', ar: 'ستفقد الوصول إلى دفاتر هذا العميل. يحتفظ هو بكل شيء؛ ويمكن الربط من جديد لاحقًا.', en: 'You lose access to this client\'s books. They keep everything; you can link again later.' },
   'bh.det.ontkoppelen': { nl: 'Ontkoppelen', ar: 'إلغاء الربط', en: 'Unlink' },
-  'bh.det.ontkoppelMislukt': { nl: 'Ontkoppelen mislukt', ar: 'فشل فكّ الربط', en: 'Unlinking failed' },
+  'bh.det.ontkoppelMislukt': { nl: 'Ontkoppelen mislukt', ar: 'فشل إلغاء الربط', en: 'Unlinking failed' },
   'bh.det.klantgegevens': { nl: 'Klantgegevens', ar: 'بيانات العميل', en: 'Client details' },
   'bh.det.naam': { nl: 'Naam', ar: 'الاسم', en: 'Name' },
   'bh.det.email': { nl: 'E-mail', ar: 'البريد الإلكتروني', en: 'E-mail' },
@@ -15662,7 +15662,7 @@ export const MESSAGES = {
   'beh.titel': { nl: 'Beheer', ar: 'الإدارة', en: 'Admin' },
   'beh.alleenLezen': {
     nl: 'Alleen-lezen. Koppelen, ontkoppelen en rollen lopen via de partijen zelf — dit scherm geeft overzicht, geen tweede deur.',
-    ar: 'للقراءة فقط. الربط وفكّ الربط والأدوار تتم عند الأطراف نفسها. هذه الشاشة تعطي نظرة عامة، وليست بابًا ثانيًا.',
+    ar: 'للقراءة فقط. الربط وإلغاء الربط والأدوار تتم عند الأطراف نفسها. هذه الشاشة تعطي نظرة عامة، وليست بابًا ثانيًا.',
     en: 'Read-only. Linking, unlinking and roles are done by the parties themselves — this screen gives an overview, not a second door.',
   },
 
