@@ -52,6 +52,23 @@ per-mailbox sync "succeeded" and the run was written `ok:true` while not one doc
 Every job green, nothing happening. A held run is now simply not a successful run, so the watchman
 that already exists fires by itself — no second watchman was added.
 
+**`[LEZER-KLOK]`** — the hole the two fixes above could not cover from the outside. The reader's
+`fetch` carried no signal, and undici's own ceilings (300 s) sit above every route that calls it, so
+a connection that *stalls* rather than fails does not throw: it hangs until Vercel kills the whole
+function, **and a killed function runs no catch block.** `[BEWAAR-EERST]` stores the file when the
+read THROWS; a lambda killed at `maxDuration` never gets there. The owner waits two minutes, gets a
+platform error page, and has nothing kept — with their monthly reading spent.
+
+The call now carries a **deadline for the whole call** (60 s) rather than a per-attempt timeout: a
+per-attempt limit short enough to leave room for a retry would clip the slow tail of a legitimate
+vision read, which is a self-inflicted failure on a document that was going to succeed. A healthy
+slow read gets the entire budget; a stalled one leaves no time for a second attempt, which is
+correct, because there is nothing left to spend it on. The abort is relabelled on the way out — the
+bare `DOMException` says only "This operation was aborted", and a read classified as terminal is a
+document written off as unreadable instead of held and tried again. The public scanner
+(`maxDuration` 30) got the same thing at 22 s, so a visitor sees the Dutch sentence the route
+already writes instead of a dead request.
+
 ## What we are deliberately NOT building
 
 ### Offline-first for the screens
@@ -69,6 +86,23 @@ in the order they matter:
 3. **It buys almost nothing here.** The work this app asks of an owner is not typing — it is
    capturing (a photo of a bon) and deciding (yes, book it). Deciding needs the server anyway,
    because only the server may create the state the decision produces.
+
+### A circuit breaker in front of the reader
+
+Proposed as the obvious companion to retry/backoff, and **measured before being accepted — it does
+not earn its place here.** The classifier already refuses to retry anything that will not fix
+itself: `isRetryable` is `429 || >= 500`, so the outage classes we actually see — 402 out of credit,
+401/403 a rotated key, 404 a model not enabled — make **one** attempt and fail immediately. There is
+no storm to break. A breaker would save at most one short backoff during a transient 429/5xx window.
+
+Against that: the state has to be shared across serverless invocations that do not share memory, so
+it would live in the database — a read and a write on every upload, to save a few seconds in a rare
+window. And a breaker stuck open after the service recovers is a new way to refuse a read that
+would have succeeded. Wrong trade on the money path.
+
+**Trigger:** if the reader ever gains a failure mode that is both slow and retryable — one where the
+app burns its function budget discovering something it already knew a second ago. `[LEZER-KLOK]`
+bounds that cost today; a breaker would only remove it.
 
 ### A connection-state indicator
 

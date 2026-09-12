@@ -759,6 +759,31 @@ interface InvoiceInput {
 // [BOEK-018] core fetch wrapper — May 2026
 // ─────────────────────────────────────────────────────────
 
+// [LEZER-KLOK] The reader call had no clock of its own, and the platform's is not a substitute.
+//
+// fetch() here carried no signal, and undici's own ceilings (300 s) sit far above every route that
+// calls this. So a connection that stalls rather than fails does not throw — it hangs until Vercel
+// kills the whole function, and a killed function runs NO catch block. That is the one hole
+// [BEWAAR-EERST] cannot cover from the outside: the upload door stores the file when the read
+// THROWS, and a lambda that is killed never gets there. The owner then waits two minutes and gets
+// a platform error page, with nothing kept and their monthly reading spent.
+//
+// The budget is a DEADLINE for the whole call, not a per-attempt timeout. A per-attempt timeout
+// short enough to leave room for a retry would clip the slow tail of a legitimate vision read
+// (a dense multi-page PDF), which is a self-inflicted failure on a document that was going to
+// succeed. With a deadline, a healthy slow read gets the entire budget and a stalled one leaves
+// no time for a second attempt — which is correct, because there is nothing left to spend it on.
+//
+// 60 s sits above every real read measured here (10-30 s) and leaves the tightest caller
+// (/api/intake, maxDuration 120) a full minute to store the file and answer honestly.
+const READER_BUDGET_MS = 60_000
+
+/** An abort raised by our own deadline, phrased so isTransientAiError recognises it. */
+function isAbortError(err: unknown): boolean {
+  const name = (err as { name?: unknown } | null)?.name
+  return typeof name === 'string' && /^(AbortError|TimeoutError)$/i.test(name)
+}
+
 // [BOEK-011 double-check m.3] Retry transient Claude failures once.
 // A single 429 (rate limit) or 5xx during a big backfill would otherwise cost a
 // whole sync round per invoice (the invoice isn't lost — email-integration
@@ -773,10 +798,14 @@ async function fetchWithRetry(
 ): Promise<Response> {
   const isRetryable = (status: number) => status === 429 || status >= 500;
 
+  const deadline = Date.now() + READER_BUDGET_MS
   let lastErr: unknown = null
   for (let attempt = 1; attempt <= 2; attempt++) {
+    const left = deadline - Date.now()
+    if (left <= 0) break
     try {
-      const res = await fetch(url, init)
+      // [LEZER-KLOK] Whatever is left of the budget, never more.
+      const res = await fetch(url, { ...init, signal: AbortSignal.timeout(left) })
       if (res.ok) return res
       if (attempt < 2 && isRetryable(res.status)) {
         // Respect Retry-After when present (seconds), else a short fixed backoff.
@@ -784,15 +813,23 @@ async function fetchWithRetry(
         const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
           ? Math.min(retryAfter * 1000, 5000)
           : 1200
+        // Waiting past the deadline to make an attempt we cannot finish spends the caller's
+        // remaining time on nothing. Hand back the response we have and let it be read as the
+        // error it is.
+        if (deadline - Date.now() <= waitMs) return res
         console.warn(`[BOEK-011] ${label} ${res.status} — retrying in ${waitMs}ms`)
         await new Promise((r) => setTimeout(r, waitMs))
         continue
       }
       return res // non-retryable, or out of attempts → let caller read the error
     } catch (err) {
-      // Network-level throw (DNS, socket) — retry once, then rethrow.
-      lastErr = err
-      if (attempt < 2) {
+      // Network-level throw (DNS, socket) — retry once, then rethrow. An abort is OUR deadline,
+      // and it is relabelled here: the DOMException says only "This operation was aborted", which
+      // no classifier can tell apart from a caller cancelling on purpose.
+      lastErr = isAbortError(err)
+        ? new Error(`${label}: request timeout after ${READER_BUDGET_MS} ms`)
+        : err
+      if (attempt < 2 && deadline - Date.now() > 1200) {
         console.warn(`[BOEK-011] ${label} network error — retrying`, err)
         await new Promise((r) => setTimeout(r, 1200))
         continue
@@ -1383,6 +1420,10 @@ export function isTransientAiError(error: unknown): boolean {
   const cause = (error as { cause?: { code?: unknown } } | null)?.cause;
   const code = typeof cause?.code === 'string' ? cause.code : '';
   if (/ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|UND_ERR/i.test(code)) return true;
+  // [LEZER-KLOK] Our own deadline, however it reaches here. The relabelled message above already
+  // matches /timeout/, but an abort that escapes by another path must not read as a bad document:
+  // a held attachment is retried, a poison-pilled one is written off forever.
+  if (isAbortError(error)) return true;
   return false;
 }
 

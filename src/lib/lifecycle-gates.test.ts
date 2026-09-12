@@ -31961,3 +31961,75 @@ test("[LEZER-STIL] a run that read nothing because the reader was down is not a 
   // together would lose the distinction the message above depends on.
   assert.doesNotMatch(route, /failed \+= 1;\s*\n\s*if \(r\?\.readerOutage\)/);
 });
+
+// ─── [LEZER-KLOK] A hang is not a failure, and a killed function runs no catch block ─────────
+//
+// The reader's fetch carried no signal, and undici's own ceilings (300 s) sit above every route
+// that calls it. So a stalled connection does not throw — it hangs until the platform kills the
+// whole function, and a killed function never reaches the catch that [BEWAAR-EERST] put there.
+// That is the one hole the upload door cannot cover from the outside: the file is stored when the
+// read THROWS, and the owner otherwise waits two minutes for a platform error page with nothing
+// kept and their monthly reading spent.
+//
+// The budget is a DEADLINE for the whole call rather than a per-attempt timeout, because a
+// per-attempt limit short enough to leave room for a retry would clip the slow tail of a
+// legitimate vision read — a self-inflicted failure on a document that was going to succeed.
+test("[LEZER-KLOK] the reader call has a clock of its own, and it fits inside the caller's", () => {
+  const ai = code("src/lib/ai.ts");
+
+  // The budget exists, is a real number, and is smaller than the tightest route that calls it.
+  const budget = ai.match(/const READER_BUDGET_MS = ([\d_]+)/);
+  assert.ok(budget, "the reader budget is gone — a stalled read hangs until the platform kills it");
+  const ms = Number(budget[1].replace(/_/g, ""));
+  assert.ok(ms > 0 && ms <= 90_000, `the reader budget is ${ms} ms, which is not a budget`);
+
+  // /api/intake is the tightest caller and must have room LEFT to store the file and answer.
+  const intakeCeiling = Number(
+    code("src/app/api/intake/route.ts").match(/export const maxDuration = (\d+)/)?.[1] ?? 0,
+  );
+  assert.ok(intakeCeiling > 0, "the upload door lost its maxDuration — this gate cannot compare");
+  assert.ok(
+    ms <= intakeCeiling * 1000 - 30_000,
+    `the reader may run ${ms} ms inside a ${intakeCeiling}s route, leaving under 30s to keep the ` +
+      "file and answer — which is the whole point of the budget",
+  );
+
+  // Cut on real code at both ends ([UREN-EENMALIG]) — the retry loop, and nothing after it.
+  const start = ai.indexOf("async function fetchWithRetry(");
+  assert.ok(start > 0, "fetchWithRetry moved — this gate is measuring the wrong function");
+  const end = ai.indexOf("function cacheableSystem(", start);
+  assert.ok(end > start, "the end marker moved — the window would run to the end of the file");
+  const loop = ai.slice(start, end);
+
+  // Every attempt is bounded, and by what is LEFT rather than by the full budget each time —
+  // two full-budget attempts would double the ceiling this gate just checked.
+  assert.match(loop, /signal: AbortSignal\.timeout\(left\)/,
+    "the fetch runs without a deadline again, or takes the full budget per attempt");
+  assert.match(loop, /const deadline = Date\.now\(\) \+ READER_BUDGET_MS/);
+  assert.match(loop, /const left = deadline - Date\.now\(\)/);
+  assert.match(loop, /if \(left <= 0\) break/,
+    "a spent budget still starts another attempt");
+
+  // A backoff that outlasts the deadline spends the caller's remaining time on nothing.
+  assert.match(loop, /if \(deadline - Date\.now\(\) <= waitMs\) return res/);
+  assert.match(loop, /if \(attempt < 2 && deadline - Date\.now\(\) > 1200\)/);
+
+  // Our own abort is relabelled, because the DOMException says only "This operation was aborted"
+  // and a read classified as terminal is a document written off rather than tried again.
+  assert.match(loop, /isAbortError\(err\)/);
+  assert.match(loop, /request timeout after \$\{READER_BUDGET_MS\} ms/);
+  assert.match(ai, /if \(isAbortError\(error\)\) return true;/,
+    "an abort no longer classifies as transient, so a held document becomes a discarded one");
+
+  // The public scanner has its own, tighter ceiling and needs the same thing — it answers in
+  // Dutch on failure, and a killed function answers nothing at all.
+  const scan = code("src/app/api/tools/scan-invoice/route.ts");
+  const scanCeiling = Number(scan.match(/export const maxDuration = (\d+)/)?.[1] ?? 0);
+  const scanBudget = Number(scan.match(/AbortSignal\.timeout\((\d+)_000\)/)?.[1] ?? 0);
+  assert.ok(scanCeiling > 0 && scanBudget > 0, "the public scanner runs without a deadline again");
+  assert.ok(
+    scanBudget < scanCeiling,
+    `the scanner may run ${scanBudget}s inside a ${scanCeiling}s route, so it is killed before it ` +
+      "can say what went wrong",
+  );
+});
