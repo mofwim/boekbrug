@@ -32654,3 +32654,81 @@ test("[ANON-ORAKEL] nothing revokes the two oracles that TO-public policies need
     /has_function_privilege\('anon', 'public\.is_my_accountant_client\(uuid\)', 'EXECUTE'\)/,
     "the state check that records anon SHOULD still reach is_my_accountant_client is gone");
 });
+
+// ─── [WERK-GEDAAN-DEUR] "En wat levert het mij op?" was answered behind the login ──────────────
+//
+// Every office asks it as soon as it understands what the product does, and the page they ask it
+// on had no answer. The answer EXISTED: /api/work-done has counted six things per client and per
+// office over a self-chosen period since [WERK-GEDAAN] — but only inside the app, so it was
+// invisible to precisely the accountant who has not decided to come in yet.
+//
+// Two halves, and the second is the one that gets skipped:
+//
+//   · TIME — the six counted actions, with the deliberate refusal to price them. work-done.ts
+//     says why in as many words: an invented minutes figure is one an accountant disproves in an
+//     afternoon, and the first number of yours that turns out to be made up is the last one they
+//     believe. The office types its own minutes; the arithmetic is theirs.
+//   · MONEY — there is no commission, no margin, no resale. Saying nothing there reads as "still
+//     negotiable", which is the silence a conversation later breaks on.
+test("[WERK-GEDAAN-DEUR] the accountant page answers what an office gets, in both halves", () => {
+  const pagina = code("src/app/voor-boekhouders/page.tsx");
+  const teller = code("src/lib/work-done.ts");
+
+  assert.match(pagina, /En wat levert het jou op\?/,
+    "the question every office asks is unanswered on the page where they ask it");
+
+  // The six lines must be the counter's OWN words. A page that says one thing and an app that
+  // shows another makes the office doubt the number beside it — which is the whole asset here.
+  //
+  // Matched on the two halves that a template literal keeps intact. The counter builds each line
+  // as `${n} ${n === 1 ? "factuur" : "facturen"} uit de e-mail gehaald`, so the plural noun and the
+  // tail after it are never contiguous in the SOURCE — asserting the whole phrase against
+  // work-done.ts fails on a file that is perfectly correct. So: the page carries the plural line
+  // as an office reads it, and the counter is checked on the two pieces it actually contains.
+  const ZINNEN: { pagina: string; meervoud: string; staart: string }[] = [
+    { pagina: "facturen uit de e-mail gehaald", meervoud: "facturen", staart: "uit de e-mail gehaald" },
+    { pagina: "facturen gecontroleerd en geboekt zonder tik", meervoud: "facturen", staart: "gecontroleerd en geboekt zonder tik" },
+    { pagina: "bankregels ingedeeld op eerdere antwoorden", meervoud: "bankregels", staart: "ingedeeld op eerdere antwoorden" },
+    { pagina: "bankregels aan de juiste factuur gekoppeld", meervoud: "bankregels", staart: "aan de juiste factuur gekoppeld" },
+    { pagina: "kassadagen ingelezen uit een Z-rapport", meervoud: "kassadagen", staart: "ingelezen uit een Z-rapport" },
+    { pagina: "dubbele documenten tegengehouden", meervoud: "dubbele documenten", staart: "tegengehouden" },
+  ];
+  for (const zin of ZINNEN) {
+    assert.ok(pagina.includes(zin.pagina), `the page no longer names: ${zin.pagina}`);
+    assert.ok(teller.includes(`"${zin.meervoud}"`),
+      `work-done.ts no longer counts "${zin.meervoud}" — the page names a count that is gone`);
+    assert.ok(teller.includes(zin.staart),
+      `work-done.ts no longer says "${zin.staart}" — the page quotes a sentence the app never shows`);
+  }
+
+  // The refusal to convert actions into euros travels with the claim, or the claim becomes the
+  // invented number the counter exists to avoid.
+  assert.match(pagina, /wat het waard was/);
+  assert.match(pagina, /jouw minuten × ons aantal/);
+  // And the refusal is asserted on CODE, not on the paragraph that explains it: code() strips
+  // comments, so a gate that reads the reasoning reads an empty string and passes on any file.
+  // What must hold is that no minutes figure can appear without the office typing one — so the
+  // parameter carries no default, and a missing or unusable one leaves through `return null`.
+  const schatting = teller.slice(teller.indexOf("export function estimateMinutes"));
+  assert.ok(schatting.startsWith("export function estimateMinutes"),
+    "estimateMinutes is gone — the page promises the office its own arithmetic");
+  const kop = schatting.slice(0, schatting.indexOf("{"));
+  assert.doesNotMatch(kop, /minutesPerAction[^,)]*=/,
+    "estimateMinutes grew a default minutes figure — the page promises the office's own number");
+  assert.match(schatting.slice(0, schatting.indexOf("return Math.round")), /return null;/,
+    "estimateMinutes no longer refuses without the office's own figure");
+
+  // The money half, said out loud and findable where the other limits are.
+  assert.match(pagina, /Krijg ik een vergoeding of marge als ik klanten aanbreng\?/,
+    "the commercial half of the question is unanswered, which reads as 'negotiable'");
+  assert.match(pagina, /geen commissie, geen marge en geen wederverkoop/);
+
+  // [KNOP-IN-ZIN] The new section points at that entry; the pointer and the target move together.
+  assert.match(pagina, /dat staat verderop bij wat BoekBrug\s*\n?\s*niet doet/,
+    "the section points at an answer further down the page — it must still be there");
+
+  // The intro above the list may not count the list wrong. It said "Vier dingen" while the list
+  // had eight, and adding the ninth is what surfaced it.
+  assert.doesNotMatch(pagina, /(Vier|Vijf|Zes|Zeven|Acht|Negen) dingen waar je waarschijnlijk/,
+    "the honest-limits intro states a number of items instead of just introducing them");
+});

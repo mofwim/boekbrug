@@ -183,6 +183,18 @@ const SCHERMEN: ReadonlyArray<{ titel: string; uitleg: string }> = [
 /** The four questions an office asks that BoekBrug has to answer with "nee". */
 const NIET: ReadonlyArray<{ vraag: string; antwoord: string }> = [
   {
+    // [WERK-GEDAAN-DEUR] De helft van "wat levert het mij op?" die over geld gaat. Elk kantoor
+    // vraagt hem, en het antwoord is nee — dat hier niet zeggen laat het lijken alsof er nog over
+    // te praten valt, en dat is het soort stilte waar een gesprek later op stukloopt.
+    vraag: 'Krijg ik een vergoeding of marge als ik klanten aanbreng?',
+    antwoord:
+      'Nee. Er is geen commissie, geen marge en geen wederverkoop, en er is er ook geen in de maak — ' +
+      'noch gebouwd, noch geprijsd. Wat je terugkrijgt is tijd, en die telt de app voor je: zie ' +
+      '"En wat levert het jou op?" hierboven. Wat je klant betaalt gaat volledig naar het gebruik ' +
+      'van zijn eigen administratie, en jouw portaal is gratis — daar zit dus ook geen opslag in ' +
+      'die via jou zou lopen.',
+  },
+  {
     vraag: 'Doet BoekBrug de aangifte?',
     antwoord:
       'Nee. Het scherm BEREIDT de BTW-aangifte voor — het rekent de rubrieken uit en laat zien ' +
@@ -420,7 +432,7 @@ export default function VoorBoekhoudersPage() {
         <section style={{ ...card, marginBottom: 32 }}>
           <h2 style={h2}>Wat BoekBrug niet doet</h2>
           <p style={body}>
-            Vier dingen waar je waarschijnlijk naar zou vragen. Beter hier dan halverwege een
+            De dingen waar je waarschijnlijk naar zou vragen. Beter hier dan halverwege een
             demo.
           </p>
           <dl style={{ margin: 0 }}>
@@ -431,6 +443,40 @@ export default function VoorBoekhoudersPage() {
               </div>
             ))}
           </dl>
+        </section>
+
+        {/* ── [WERK-GEDAAN-DEUR] "En wat levert het mij op?" ───────────────────────── */}
+        {/* De vraag die elk kantoor stelt zodra het snapt wat het product doet, en waar deze
+            pagina geen antwoord op gaf. Het antwoord bestond wél — /api/work-done telt sinds
+            [WERK-GEDAAN] precies deze zes dingen per klant en per kantoor over een zelfgekozen
+            periode — maar het stond ACHTER de inlog, en dus onzichtbaar voor precies de
+            boekhouder die nog moet beslissen of hij binnenkomt.
+
+            De zinnen hieronder zijn woord voor woord die uit work-done.ts. Dat is geen netheid:
+            een kantoor dat hier "facturen uit de e-mail gehaald" leest en straks in de app iets
+            anders ziet staan, gaat terecht twijfelen aan het getal ernaast. */}
+        <section style={{ ...card, marginBottom: 32 }}>
+          <h2 style={h2}>En wat levert het jou op?</h2>
+          <p style={body}>
+            Geen commissie en geen marge — die zijn er niet, en dat staat verderop bij wat BoekBrug
+            niet doet. Wat je terugkrijgt is tijd, en BoekBrug telt zelf hoeveel werk het per klant
+            heeft gedaan. Zes dingen, over een periode die jij kiest:
+          </p>
+          <ul style={{ margin: '14px 0 0', paddingInlineStart: 20, fontSize: 15, lineHeight: 1.9, color: '#3c4043' }}>
+            <li>facturen uit de e-mail gehaald</li>
+            <li>facturen gecontroleerd en geboekt zonder tik</li>
+            <li>bankregels ingedeeld op eerdere antwoorden</li>
+            <li>bankregels aan de juiste factuur gekoppeld</li>
+            <li>kassadagen ingelezen uit een Z-rapport</li>
+            <li>dubbele documenten tegengehouden</li>
+          </ul>
+          <p style={{ ...body, marginTop: 14 }}>
+            <strong>Wat wij er níét bij zetten, is wat het waard was.</strong> Wij weten niet wat
+            een minuut op jouw kantoor kost, en een verzonnen urenbesparing is een getal dat je in
+            een middag onderuit haalt — het eerste cijfer van ons dat niet klopt, is het laatste dat
+            je van ons gelooft. Vul je eigen minuten per handeling in en de rekensom is van jou, en
+            zichtbaar: jouw minuten × ons aantal.
+          </p>
         </section>
 
         {/* ── [DPA-BEREIKBAAR] De vraag die elk kantoor als eerste stelt ──────────── */}
