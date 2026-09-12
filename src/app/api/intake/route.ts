@@ -46,6 +46,8 @@ import {
 import { supplierNameKey } from "@/lib/supplier-registry"
 import { resolveImportTarget, ensureImportedFolder } from "@/lib/bestanden"
 import { computeContentHash } from "@/lib/content-hash"
+// [BEWAAR-EERST] Shared with /api/bank/attach-invoice — one keep-the-file path, not two.
+import { storeRawIncoming } from "@/lib/store-raw-incoming"
 // [BEWAAR-EERST] The label the skipped panel counts, so a file we could not read yet gets its
 // "Lees opnieuw" button — see skipped-import.ts and [TWEEDE-KANS].
 import { DOC_TYPE_COULD_NOT_READ } from "@/lib/skipped-import"
@@ -94,7 +96,7 @@ import { findSemanticDuplicate, pickDedupMatch, normalizeToIso, type PossibleDup
 // [DUP-TRASHED] De uitzondering op de byte-hash-poort voor een bestand dat de eigenaar zelf heeft
 // weggegooid. Gedeeld met /api/email/upload, /api/bank/attach-invoice en de mailsync — vier kopieën
 // van deze redenering zouden drie kansen zijn dat er één uit de pas gaat lopen.
-import { releaseTrashedHash, trashedDuplicateCleared } from "@/lib/trashed-dedup"
+import { trashedDuplicateCleared } from "@/lib/trashed-dedup"
 import { collectPossibleDuplicate, mergePossibleDuplicate, markDuplicateCheckUnavailable } from "@/lib/possible-duplicate-collect"
 // [READING-MEMORY] Feed the reader what the owner keeps correcting at each supplier.
 import { readingPromptHint } from "@/lib/reading-memory"
@@ -1694,56 +1696,6 @@ eInvoiceContradicts: eInvoiceContradictsRead(v.field_confidence),
 // if it is a fresh file whose store failed. Skips storage when this exact file (byte-hash) already
 // exists, so a corrected re-upload never piles up document rows. Rolls back the storage blob if the
 // documents row fails, so a failed store never leaks an orphan.
-async function storeRawIncoming(
-  buffer: Buffer,
-  file: File,
-  userId: string,
-  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
-  aiDocType: string,
-  source: IntakeSource,
-  // [BEWAAR-EERST] Default true, which is what every existing caller means: those branches DID run
-  // a reader. The outage branch passes false, because claiming a read that never happened would
-  // make the reader-quality panel count a failure as a success.
-  opts: { aiProcessed?: boolean } = {},
-): Promise<string | null> {
-  const hash = computeContentHash(buffer)
-  try {
-    const { data: existing } = await supabase
-      .from("documents").select("id, trashed").eq("user_id", userId).eq("content_hash", hash).limit(1).maybeSingle()
-    // [DUP-TRASHED] Een weggegooide rij teruggeven zou de boeking koppelen aan bewijs dat de eigenaar
-    // niet meer ziet staan. Sleutel vrijgeven en vers opslaan; lukt dat niet, dan loopt de insert
-    // hieronder op de UNIQUE index stuk en valt dit terug op "geen document" — dit is en blijft
-    // best-effort opslag, de boeking zelf is de money-truth.
-    if (existing?.id && existing.trashed !== true) return existing.id
-    if (existing?.id) await releaseTrashedHash(supabase, userId, existing.id)
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
-    const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
-    const { error: upErr } = await supabase.storage
-      .from("documents").upload(storagePath, buffer, { contentType: file.type || "application/octet-stream", upsert: false })
-    if (upErr) {
-      console.error("[STORE-RAW] storage upload failed — the file is NOT kept", { userId, file: file.name, error: upErr.message })
-      return null
-    }
-    const folderId = await ensureImportedFolder(userId, "pipeline")
-    const pipelineDoc = createPipelineClient()
-    const { data: doc, error: docErr } = await pipelineDoc.from("documents").insert({
-      user_id: userId, file_name: file.name, file_url: storagePath,
-      file_size: buffer.length, file_type: file.type || "application/octet-stream",
-      doc_type: "overig", folder_id: folderId, source,
-      ai_processed: opts.aiProcessed ?? true, ai_doc_type: aiDocType, content_hash: hash,
-    }).select("id").single()
-    if (docErr || !doc) {
-      console.error("[STORE-RAW] documents insert failed — the file is NOT kept", { userId, file: file.name, error: docErr?.message })
-      await supabase.storage.from("documents").remove([storagePath]).catch(() => {})
-      return null
-    }
-    return doc.id
-  } catch (e) {
-    console.error("[STORE-RAW] unexpected failure — the file is NOT kept", { userId, file: file.name, error: e instanceof Error ? e.message : String(e) })
-    return null // storage is a convenience; the booking is the money-truth
-  }
-}
-
 // ── [UBL-INTAKE] UBL / Peppol XML e-invoice handler ─────────────────────────────────────────
 // Parses the standard UBL leaf elements and creates a verify-queue invoice (status 'processing')
 // so an e-invoice's BTW/voorbelasting flows into Crediteuren + the aangifte like a PDF invoice,
