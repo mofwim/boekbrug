@@ -32226,3 +32226,121 @@ test("[GEEN-DEUR] no new API route may exist without a screen that calls it", ()
     "these routes have a door now — remove them from ZONDER_DEUR so the list keeps meaning what " +
     "it says");
 });
+
+// ─── [BELOFTE-WAAR] The front page may not describe a smaller product than the one that exists ──
+//
+// Two claims on the homepage had stopped being true, and both were undersells rather than
+// oversells — which is why nothing caught them. An oversell gets reported by the first customer
+// who does not get what was promised; an undersell is never reported by anyone.
+//
+//   · "Dat is het enige werk dat deze app doet." The app now also runs the work itself, processes
+//     rather than reads, and computes a per-quarter readiness verdict the accountant sees per
+//     client on their board. A sentence saying none of that exists is not modesty, it is untrue.
+//   · "De AI leest de leverancier, het bedrag en de BTW voor je uit." That sells an OCR scanner —
+//     the busiest corner of this market — while reading is step one of eight.
+//
+// The gate holds the fix in place AND ties every claim to the code that performs it, so the
+// sentence cannot survive the capability being removed. It deliberately does NOT require the
+// promise to be broad: see belofte.ts on why widening it into "werk, geld én administratie" is
+// the feature comparison this product refuses to have.
+test("[BELOFTE-WAAR] the homepage claims what the app does, no less and nothing it cannot do", () => {
+  const belofte = code("src/lib/belofte.ts");
+  const engels = code("src/lib/belofte-en.ts");
+  const home = code("src/app/page.tsx");
+
+  // 1. The sentence that had become false, in both languages. The English page may never say more
+  //    than the Dutch one, and it may not say something older either.
+  assert.doesNotMatch(belofte, /het enige werk dat deze app doet/,
+    "the promise says this app does one thing, which stopped being true when the work layer landed");
+  assert.doesNotMatch(engels, /the only job this app has/, "the English page kept the retired claim");
+  assert.match(belofte, /Alles wat deze app doet, dient die ene zin\./);
+  assert.match(engels, /Everything this app does serves that one sentence\./);
+
+  // 2. The reader is described as a PROCESS, not a scanner. Four of the steps by name, and the
+  //    last one — which is the whole point — verbatim.
+  const kaart = home.slice(home.indexOf("const features = ["), home.indexOf("export default async function Home"));
+  assert.ok(kaart.length > 200, "the features block moved — this gate is measuring nothing");
+  assert.doesNotMatch(kaart, /De AI leest de leverancier, het bedrag en de BTW voor je uit/,
+    "the homepage sells an OCR scanner again");
+  for (const stap of [/herkennen de leverancier/, /controleren de btw/, /dubbele facturen/, /koppelen de betaling/]) {
+    assert.match(kaart, stap, `the processing card no longer names this step: ${stap}`);
+  }
+  assert.match(kaart, /alleen van ons wat niet zeker is/,
+    "the card drops the one line that separates processing from scanning");
+
+  // 3. And each of those four claims is performed by code that exists. A promise whose capability
+  //    was deleted is the same failure in the other direction.
+  assert.ok(existsSync("src/lib/leveranciers.ts") || existsSync("src/lib/reading-memory.ts"),
+    "nothing recognises a supplier any more, and the homepage still says we do");
+  assert.ok(existsSync("src/lib/existing-duplicates.ts"), "the duplicate search the card promises is gone");
+  assert.ok(existsSync("src/lib/bank-auto-confirm.ts"), "nothing couples a payment any more");
+  assert.ok(existsSync("src/lib/btw-soort.ts") || existsSync("src/lib/aangifte.ts"), "nothing checks btw any more");
+
+  // 4. The work layer is on the page at all — it was missing entirely, so a monteur reading this
+  //    could only conclude the app does not know his trade. The card names the trade's own words,
+  //    because that is the part no general bookkeeping package has.
+  assert.match(kaart, /Werkorders, ritten, klussen/,
+    "the work layer is off the homepage again, or no longer named in the trade's own words");
+  const werk = code("src/lib/werk.ts");
+  for (const woord of ["werkorder", "rit", "klus", "opdracht", "reparatie"]) {
+    assert.match(werk, new RegExp(`werk\\.noun\\.${woord}`),
+      `the homepage names "${woord}" as a trade's word for its work, and the skin is gone`);
+  }
+});
+
+// ─── [KLAAR-STAND] The door answered the question only after you opened it ────────────────────
+//
+// /dashboard/klaar has answered "ben ik klaar voor de boekhouder?" since it was built, out of
+// /api/readiness — the verdict over everything imported, with the points that still need
+// attention. The dashboard carried a prominent button to it, and that button asked the QUESTION.
+// So the state this whole product is organised around was the one state never shown at rest: the
+// owner had to open a screen to learn something the app already knew.
+//
+// The verdict now travels to the button. What this gate protects is the honest half: an absent or
+// unrecognised report may NEVER render as a verdict, because an owner who reads green on a quarter
+// nobody measured hands over an incomplete administratie. [NO-SILENT-EMPTY], on the one screen
+// where it decides what he does next.
+test("[KLAAR-STAND] the dashboard shows the readiness verdict, and never invents one", () => {
+  const mod = code("src/lib/klaar-stand.ts");
+  const dash = code("src/app/dashboard/zzp/ZzpDashboard.tsx");
+
+  // The line is decided in a pure module, not in the component — a component holds no language of
+  // its own, and this one has to be provable without a browser or a database ([TAAL]).
+  assert.match(mod, /export function klaarRegel\(/);
+  assert.match(mod, /export type KlaarKey =/,
+    "the key is a plain string again, so a key that does not exist compiles and lands on a button");
+
+  // Unknown is a STATE, and it is the fallback for everything unrecognised.
+  assert.match(mod, /if \(!isStand\(status\)\) \{/);
+  assert.match(mod, /key: "start\.waarheid\.sub"/,
+    "an unmeasured quarter no longer keeps the question");
+  // The one thing that must be impossible: green out of nothing.
+  const onbekend = mod.slice(mod.indexOf("if (!isStand(status))"), mod.indexOf('if (status === "ready")'));
+  assert.ok(onbekend.length > 20, "the unknown branch moved — this gate is measuring nothing");
+  assert.doesNotMatch(onbekend, /start\.klaar\.ready/,
+    "the unknown branch can produce the ready verdict");
+
+  // The dashboard renders what it is handed, derived in render (never setState in an effect).
+  assert.match(dash, /const klaarStand = klaarRegel\(klaarRapport\)/);
+  assert.match(dash, /t\(klaarStand\.key, klaarStand\.params\)/,
+    "the button hard-codes a sentence again instead of rendering the verdict's key");
+  // And the dot is drawn only when there IS a verdict — a grey dot beside a question reads as one.
+  assert.match(dash, /klaarStand\.stand !== 'unknown' && \(/);
+  // A failed read must leave the report null rather than assume anything.
+  assert.match(dash, /setKlaarRapport\(json\?\.report \?\? null\)/);
+
+  // [KNOP-IN-ZIN] The button's own name does not move: sentences elsewhere point at it.
+  assert.match(dash, /\{t\('start\.klaar'\)\}/,
+    "the button was renamed — every sentence naming it now points at a word that is gone");
+
+  // Every key this module can name exists in the catalogue, in Dutch at minimum.
+  const berichten = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  for (const k of ["start.waarheid.sub", "start.klaar.ready", "start.klaar.almost", "start.klaar.attention"]) {
+    assert.match(berichten, new RegExp(`'${k.replace(/\./g, "\\.")}': \\{ nl:`), `${k} is not in the catalogue`);
+  }
+  // The two counting keys must actually carry the count they are given.
+  for (const k of ["start.klaar.almost", "start.klaar.attention"]) {
+    const regel = berichten.slice(berichten.indexOf(`'${k}':`), berichten.indexOf("\n", berichten.indexOf(`'${k}':`)));
+    assert.match(regel, /\{count\}/, `${k} is handed a count it does not render`);
+  }
+});

@@ -472,6 +472,12 @@ export const MESSAGES = {
   // precies de kaart onleesbaar laten die het vertrouwen moet dragen.
   'start.waarheid': { nl: 'Je waarheid', ar: 'حقيقتك', en: 'Your truth' },
   'start.waarheid.sub': { nl: 'Status van je kwartaal — en klaar voor de boekhouder', ar: 'وضع ربعك — وجاهز للمحاسب', en: 'Where your quarter stands — ready for the accountant' },
+  // [KLAAR-STAND] Het ANTWOORD onder de knop, in plaats van alleen de vraag erop. Drie standen,
+  // en de vierde — nog niet gemeten — houdt bewust de zin hierboven: een oordeel dat er niet is,
+  // mag er niet uitzien als een oordeel ([NO-SILENT-EMPTY]).
+  'start.klaar.ready': { nl: 'Klaar voor je boekhouder', ar: 'جاهز لمحاسبك', en: 'Ready for your accountant' },
+  'start.klaar.almost': { nl: 'Bijna klaar — nog {count} punten', ar: 'شارف على الجاهزية — بقيت {count} نقاط', en: 'Almost ready — {count} points left' },
+  'start.klaar.attention': { nl: '{count} punten hebben aandacht nodig', ar: '{count} نقاط تحتاج انتباهك', en: '{count} points need attention' },
   'start.klaar': { nl: 'Ben ik klaar?', ar: 'هل أنا جاهز؟', en: 'Am I ready?' },
   'start.vraag': { nl: 'Bekijk de vraag en antwoord hier', ar: 'اطّلع على السؤال والجواب هنا', en: 'See the question and answer here' },
 
