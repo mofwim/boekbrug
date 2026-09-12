@@ -32137,3 +32137,92 @@ test("[ELKE-DEUR] no door a person hands a file to may discard it when the reade
       `${door} does not import the shared keeper, so it has grown its own`);
   }
 });
+
+// ─── [GEEN-DEUR] A capability nobody can reach is not a capability ────────────────────────────
+//
+// [WACHTKOPPELING] was this failure once already: the table was on production, the API was
+// tested, and there was no way to reach either — "the capability existed and the door did not".
+// It was diagnosed five times and committed four before anyone noticed the screen was missing.
+//
+// So this gate measures the whole surface instead of that one case. It walks every API route and
+// asks whether ANY file under src/ or public/ actually calls it — a fetch, an href, a
+// location.assign — as opposed to merely mentioning it in a comment or listing it in a registry.
+// Mentions are exactly how the four below stayed invisible: /api/eft/import appears in the
+// demo blocklist, in fair-use-gate.ts and in ai-budget.ts, and is called by nothing.
+//
+// It is a RATCHET, like [RUSTIG]: the four known orphans are listed with what each one is, so a
+// FIFTH fails here. Fixing one means deleting its entry, never adding to the list.
+test("[GEEN-DEUR] no new API route may exist without a screen that calls it", () => {
+  // Reached by a machine, not a screen — a cron is fired by the scheduler, a webhook by the
+  // payment provider, a callback by the bank's OAuth redirect.
+  const NIET_VIA_EEN_SCHERM = (url: string) =>
+    url.startsWith("/api/cron/") || url.includes("webhook") || url.includes("callback") ||
+    url.includes("well-known") ||
+    // The diagnostic that has to answer during an outage — see the note in mfa.ts. It is opened
+    // by a person or a monitor, deliberately not from inside the app.
+    url === "/api/health";
+
+  // Measured 12 September 2026. Each entry says what is unreachable, so the next reader can
+  // decide to build the door or delete the route — and cannot mistake it for a to-do nobody
+  // wrote down.
+  const ZONDER_DEUR = new Set([
+    // The invite an accountant sends a client. KlantenBeheer sends its own and calls this one
+    // "the sibling" — two routes for one act, and the screen uses the other.
+    "/api/accountant/invite",
+    // A summary beside /api/closing-package and /api/closing-package/vers, which the werkboard
+    // does call. This third one nothing opens.
+    "/api/closing-package/summary",
+    // Corner 2 of the reconciliation triangle: the payment-terminal settlement receipt. The
+    // route, the AI transcription, the pure parser and its tests all exist; no screen uploads to
+    // it. A triangle with an unreachable corner cannot close.
+    "/api/eft/import",
+    // A second manual invoice upload beside /api/intake, which is the one every screen uses.
+    "/api/email/upload",
+  ]);
+
+  const routes = execSync("find src/app/api -name route.ts", { encoding: "utf8" })
+    .trim().split("\n").filter(Boolean).sort();
+  assert.ok(routes.length > 100, `only ${routes.length} routes found — the scan broke`);
+
+  const bronnen = execSync(
+    "find src public -type f \\( -name '*.tsx' -o -name '*.ts' -o -name '*.js' \\) " +
+    "! -path 'src/app/api/*' ! -name '*.test.ts' ! -name '*.test.tsx'",
+    { encoding: "utf8" },
+  ).trim().split("\n").filter(Boolean);
+  const teksten = bronnen.map((f) => readFileSync(f, "utf8"));
+  assert.ok(teksten.length > 100, "the source scan found almost nothing — a broken scan passes");
+
+  // A CALL, not a mention. The window is the line plus what comes before it, because a URL in a
+  // template literal is usually a line or two below the fetch( that carries it.
+  const ROEPT_AAN = /fetch\(|action=|href|sendBeacon|EventSource|new Request\(|location\.assign|window\.open/;
+  const wordtAangeroepen = (pad: string) =>
+    teksten.some((t) => {
+      let i = t.indexOf(pad);
+      while (i !== -1) {
+        if (ROEPT_AAN.test(t.slice(Math.max(0, i - 300), t.indexOf("\n", i) + 1 || undefined))) return true;
+        i = t.indexOf(pad, i + 1);
+      }
+      return false;
+    });
+
+  const gevonden: string[] = [];
+  for (const r of routes) {
+    const url = "/" + r.slice("src/app/".length, -"/route.ts".length);
+    if (NIET_VIA_EEN_SCHERM(url)) continue;
+    // A dynamic caller builds `${id}` into the path, so only the part before the first
+    // [parameter] can be matched literally.
+    if (!wordtAangeroepen(url.split("/[")[0])) gevonden.push(url);
+  }
+
+  const nieuw = gevonden.filter((u) => !ZONDER_DEUR.has(u));
+  assert.deepEqual(nieuw, [],
+    "a new API route has no screen that calls it — build the door in the same change, or the " +
+    "capability is finished and unreachable, which is what [WACHTKOPPELING] cost us once already");
+
+  // And the ratchet only turns one way: an entry that is now reachable must leave the list, or
+  // the list stops describing anything.
+  const opgelost = [...ZONDER_DEUR].filter((u) => !gevonden.includes(u));
+  assert.deepEqual(opgelost, [],
+    "these routes have a door now — remove them from ZONDER_DEUR so the list keeps meaning what " +
+    "it says");
+});
