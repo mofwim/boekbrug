@@ -94,6 +94,20 @@ export const BELOFTE_STAPPEN: readonly { kop: string; tekst: string }[] = [
  *
  * En het brak de regel uit belofte-en.ts: de Engelse pagina mag nooit MEER zeggen dan de
  * Nederlandse. Nu staat het op één plek, in beide talen, en verhuist het samen.
+ *
+ * ── [BELOFTE-WAAR] Waarom de slotzin veranderde, en waarom de belofte NIET breder werd ──
+ *
+ * Er stond: "Dat is het enige werk dat deze app doet." Dat was waar toen het er kwam te staan en
+ * is het niet meer. De app draait inmiddels ook het werk zelf (werkorders, ritten, klussen — elf
+ * vakken met hun eigen woorden), leest niet alleen maar verwerkt (dubbelen, btw-splitsing,
+ * leveranciersgeheugen, bankafletting), en rekent per kwartaal een gereedheidsoordeel uit dat de
+ * boekhouder per klant op zijn bord ziet. Een zin die zegt dat dit alles niet bestaat, is geen
+ * bescheiden belofte maar een onware.
+ *
+ * De verleiding is dan om de belofte te VERBREDEN — "werk, geld én administratie". Dat is precies
+ * de featurevergelijking die de rest van dit bestand weigert te voeren, en die BoekBrug verliest.
+ * "Alles wat deze app doet, dient die ene zin" houdt de belofte even smal en maakt de breedte
+ * ondergeschikt in plaats van zichtbaar: het is geen opsomming, het is een rangorde.
  */
 export const PROBLEEM_KOP = "Het probleem" as const;
 export const PROBLEEM_1 =
@@ -103,7 +117,7 @@ export const PROBLEEM_1 =
 export const PROBLEEM_2_VET = "De oplossing is niet dat jij leert boekhouden.";
 export const PROBLEEM_2 =
   " Het is dat er niets verdwijnt tussen het moment dat je een papiertje krijgt en het moment " +
-  "dat je boekhouder het nodig heeft. Dat is het enige werk dat deze app doet.";
+  "dat je boekhouder het nodig heeft. Alles wat deze app doet, dient die ene zin.";
 
 /**
  * De belofte richting de BOEKHOUDER. Een ander mens met een ander probleem: hij wil geen

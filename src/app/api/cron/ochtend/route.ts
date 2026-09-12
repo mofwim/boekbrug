@@ -261,6 +261,33 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // ── [BEHEER-GEZOND] Draaien de ándere taken nog? ────────────────────────
+    //
+    // cron-heartbeat legt elke run vast en judgeCron velt er een oordeel over. Dat oordeel had één
+    // lezer — /api/health, dat je moet CURLEN — en cronsNeedingAttention had in de hele
+    // productiecode geen enkele aanroeper. Het systeem meet dus dat een taak is gestopt, oordeelt
+    // erover, en vertelt het aan niemand. Valt reminders om, dan worden er geen herinneringen meer
+    // verstuurd; valt payment-due om, dan mist een ondernemer zijn betaaltermijnen — en het scherm
+    // ziet er in beide gevallen normaal uit.
+    //
+    // Hier meeliftend en niet als twaalfde cron: deze draait al dagelijks, en een wachter die zelf
+    // een aparte wachter nodig heeft is er een te veel. Best-effort in alles — het alarm mag de
+    // ochtendmail nooit laten falen, en de beheerpagina toont dezelfde stand als tweede weg.
+    //
+    // [WACHTER-EERST] En hij staat VÓÓR de mailronde, niet erachter. Dat is geen ordening maar de
+    // hele werking: de mailronde is het langste stuk van deze functie — één mail per eigenaar met
+    // 300 ms ertussen — en dus verreweg het meest waarschijnlijke stuk om op maxDuration te
+    // sneuvelen. Stond de wachter daarachter, dan zweeg hij precies op de ochtend dat er iets mis
+    // wás. Dat is 12 september 2026 ook gebeurd: deze run stopte halverwege, en het alarm dat
+    // gestopte taken meldt was het deel dat niet meer aan de beurt kwam. Een wachter die uitvalt
+    // met datgene waarover hij moet waken, bewaakt niets.
+    let alarmVerstuurd = false;
+    try {
+      alarmVerstuurd = await meldGestopteCrons(pipeline);
+    } catch (e) {
+      console.error("[BEHEER-GEZOND] cron-alarm mislukt", { error: e instanceof Error ? e.message : String(e) });
+    }
+
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "https://boekbrug.nl";
     let sent = 0;
     let quiet = 0;
@@ -294,25 +321,6 @@ export async function GET(req: NextRequest) {
           userId: p.id, error: e instanceof Error ? e.message : String(e),
         });
       }
-    }
-
-    // ── [BEHEER-GEZOND] Draaien de ándere taken nog? ────────────────────────
-    //
-    // cron-heartbeat legt elke run vast en judgeCron velt er een oordeel over. Dat oordeel had één
-    // lezer — /api/health, dat je moet CURLEN — en cronsNeedingAttention had in de hele
-    // productiecode geen enkele aanroeper. Het systeem meet dus dat een taak is gestopt, oordeelt
-    // erover, en vertelt het aan niemand. Valt reminders om, dan worden er geen herinneringen meer
-    // verstuurd; valt payment-due om, dan mist een ondernemer zijn betaaltermijnen — en het scherm
-    // ziet er in beide gevallen normaal uit.
-    //
-    // Hier meeliftend en niet als twaalfde cron: deze draait al dagelijks, en een wachter die zelf
-    // een aparte wachter nodig heeft is er een te veel. Best-effort in alles — het alarm mag de
-    // ochtendmail nooit laten falen, en de beheerpagina toont dezelfde stand als tweede weg.
-    let alarmVerstuurd = false;
-    try {
-      alarmVerstuurd = await meldGestopteCrons(pipeline);
-    } catch (e) {
-      console.error("[BEHEER-GEZOND] cron-alarm mislukt", { error: e instanceof Error ? e.message : String(e) });
     }
 
     await finishCronRun(pipeline, cronRunId, {

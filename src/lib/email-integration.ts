@@ -2359,6 +2359,14 @@ export async function syncUserEmails(
   // voortgang": een bijlage die blijft hangen (opnieuw proberen helpt) en een MAANDgrens (opnieuw
   // proberen kan per definitie niets opleveren).
   heldByFairUse: number
+  // [LEZER-STIL] Did the READER refuse this run for a reason that is app-wide — an empty balance,
+  // a wrong key or model, our own spend fuse, or a capacity outage that took the whole batch?
+  //
+  // The cron needs this because a hold is INVISIBLE otherwise: an outage-hold throws nothing, so
+  // every per-user sync "succeeds", the run is written ok:true, and the heartbeat watchman —
+  // which only ever looks at whether a job RAN — reports a healthy morning while not one document
+  // is being read. That is the same silence [BEHEER-GEZOND] was built for, one layer in.
+  readerOutage: boolean
   skipped: number
   // [COULD-NOT-READ] Attachments kept in bestanden because we couldn't read them
   // (never asserted "not an invoice"). Surfaced so the owner can go check them.
@@ -2496,7 +2504,7 @@ export async function syncUserEmails(
   const accessToken = await refreshAccessToken(userId)
   if (!accessToken) {
     console.error('[BOEK-011] Could not obtain a fresh access_token', { userId })
-    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, autoAdvanced: 0, errors: 1, remaining: 0, heldByFairUse: 0, skipped: 0, couldNotRead: 0, keptForBooking: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, autoAdvanced: 0, errors: 1, remaining: 0, heldByFairUse: 0, readerOutage: false, skipped: 0, couldNotRead: 0, keptForBooking: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
   }
 
   // [H3] The per-message "already done" skip set was removed — it was prefix-matched on
@@ -2547,7 +2555,7 @@ export async function syncUserEmails(
     }
   } catch (error) {
     console.error('[BOEK-011] Fetch failed:', error)
-    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, autoAdvanced: 0, errors: 1, remaining: 0, heldByFairUse: 0, skipped: 0, couldNotRead: 0, keptForBooking: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, autoAdvanced: 0, errors: 1, remaining: 0, heldByFairUse: 0, readerOutage: false, skipped: 0, couldNotRead: 0, keptForBooking: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
   }
 
   // [MAILTEKST] The invoices that never had an attachment. A separate, bounded pass appended to
@@ -2752,6 +2760,11 @@ export async function syncUserEmails(
     // transientError adds the capacity-outage case, so no case main handled is lost.)
     configOutage?: boolean
     transientError?: boolean
+    // [GEEN-KREDIET] creditOutage = the PROVIDER's balance is empty (HTTP 400 "credit balance is
+    // too low", or 402). App-wide, never this file's fault, and it heals the moment someone tops
+    // up — so it holds exactly like the two below. It is listed separately from configOutage
+    // because it is not a setting anyone here got wrong.
+    creditOutage?: boolean
     // [COST-GUARD] budgetOutage = the GLOBAL daily spend fuse refused the call. App-wide by
     // construction (one ceiling for every user and every path), so it is an outage-hold exactly
     // like configOutage — never this file's fault, and never a verdict about this file.
@@ -3316,6 +3329,13 @@ export async function syncUserEmails(
         // poison-pilling — a held invoice is read tomorrow, a buried one never is.
         const { isAiBudgetError } = await import('@/lib/ai-budget')
         const budgetOutage = isAiBudgetError(err)
+        // [GEEN-KREDIET] (d) the PROVIDER's own balance is empty. Fourth member of the same family
+        // and the one that was missing when it happened: Anthropic answers an exhausted account
+        // with HTTP 400 invalid_request_error, which every predicate above reads as this file's
+        // fault — so a real invoice arriving during the outage was buried as could_not_read and
+        // the watermark walked past it. See isAiCreditError for why none of the others match.
+        const { isAiCreditError } = await import('@/lib/ai-model')
+        const creditOutage = isAiCreditError(err)
         return {
           attachment,
           classification: { isInvoice: false } as Awaited<ReturnType<typeof classifyAttachment>>,
@@ -3323,6 +3343,7 @@ export async function syncUserEmails(
           configOutage,
           transientError,
           budgetOutage,
+          creditOutage,
         }
       }
     }
@@ -3376,6 +3397,8 @@ export async function syncUserEmails(
   // run an outage — the same reasoning as a config outage, and deliberately not the batch-wide
   // "everyone failed" proof a transient error needs.
   const budgetOutageAny = classified.some((c) => c.budgetOutage)
+  // [GEEN-KREDIET] An empty balance is app-wide by definition too — one occurrence is the whole run.
+  const creditOutageAny = classified.some((c) => c.creditOutage)
 
   // [EERLIJK-GEBRUIK] Teruggeven wat niet gelezen ís. Dit maakt de zin op /eerlijk-gebruik
   // waar: "Een bestand dat wij niet konden lezen telt ook niet mee — mislukte pogingen komen
@@ -3398,15 +3421,15 @@ export async function syncUserEmails(
     })
   }
   const transientOutage = classifiedTotal >= 2 && classifiedFailed === classifiedTotal
-  const outageActive = configOutageAny || budgetOutageAny || transientOutage
+  const outageActive = configOutageAny || budgetOutageAny || creditOutageAny || transientOutage
 
   // PHASE 2 — save loop, sequential by design (dedup correctness)
-  for (const { attachment, classification, classifyFailed, configOutage, transientError, budgetOutage } of classified) {
+  for (const { attachment, classification, classifyFailed, configOutage, transientError, budgetOutage, creditOutage } of classified) {
     const wmKey = `${attachment.messageId}:${attachment.filename}`
     // An outage-hold when: a config outage (always), the spend fuse (always), or a transient error
     // DURING a batch-wide outage.
     // A lone transient failure (some files succeeded) is NOT an outage → it takes the poison-pill path.
-    const outageHold = configOutage || budgetOutage || (transientError && outageActive)
+    const outageHold = configOutage || budgetOutage || creditOutage || (transientError && outageActive)
     try {
       // [MODEL-OUTAGE] An app-wide model/config failure (invalid CLAUDE_MODEL → 404, auth) is not
       // this file's fault. NEVER count it toward the poison-pill give-up and NEVER register it as
@@ -5185,6 +5208,9 @@ export async function syncUserEmails(
     // the no-progress guard still stops it if a round genuinely advances nothing.
     remaining: windowNarrowed ? Math.max(remainingAfterBatch, 1) : remainingAfterBatch,
     heldByFairUse: hold?.held ?? 0,
+    // [LEZER-STIL] Exactly the four app-wide refusals the save loop already holds on. Not the same
+    // thing as `errors`: those are per-mailbox failures, and a held run has none of them.
+    readerOutage: configOutageAny || budgetOutageAny || creditOutageAny || transientOutage,
     // [BOEK-011] Attachments registered as non-invoice this run — the client
     // counts (saved + skipped) as progress, so a pure-logo batch doesn't trip
     // the no-progress guard.
