@@ -32342,3 +32342,79 @@ test("[KLAAR-STAND] the dashboard shows the readiness verdict, and never invents
     assert.match(regel, /\{count\}/, `${k} is handed a count it does not render`);
   }
 });
+
+// ─── [SUBVERWERKER-ECHT] Every party that touches customer data is named in both documents ────
+//
+// Five accountants asked the owner the same question: may I put my clients' administration into
+// this? That is not a feeling, it is AVG art. 28 — the office is verwerkingsverantwoordelijke, we
+// are verwerker, and without a processing agreement naming every sub-processor the data may not
+// come here at all.
+//
+// The agreement existed, in full, in docs/legal — where no accountant could reach it. And when it
+// was read against the code, its sub-processor table was two integrations out of date: the PSD2
+// bank link, and Mollie, which appeared in NO legal document while seven modules of it had
+// shipped. Both are exactly what an accountant's own check finds first, because both move money
+// data.
+//
+// A list maintained by remembering to maintain it is how that happened. So the list is held
+// against the code: an integration that processes customer data and is not named in BOTH
+// published documents fails here.
+test("[SUBVERWERKER-ECHT] no integration processes customer data without standing in both documents", () => {
+  const privacy = readFileSync("src/content/legal/privacyverklaring.ts", "utf8");
+  const dpa = readFileSync("src/content/legal/verwerkersovereenkomst.ts", "utf8");
+
+  // The integrations, each proven present by a module that exists. Adding a service without
+  // adding it here is caught by the second half of this test.
+  // `slug` is what the module is called on disk, which is not always what the party is called in
+  // a legal document — "Enable Banking Oy" ships as enablebanking-connection.ts.
+  const VERWERKERS: { naam: string; bewijs: string; slug: string }[] = [
+    { naam: "Supabase", bewijs: "src/lib/supabase-pipeline.ts", slug: "supabase" },
+    { naam: "Anthropic", bewijs: "src/lib/ai-model.ts", slug: "anthropic" },
+    { naam: "Resend", bewijs: "src/lib/email.ts", slug: "resend" },
+    { naam: "Enable Banking", bewijs: "src/app/api/bank/enablebanking/sync/route.ts", slug: "enablebanking" },
+    { naam: "Mollie", bewijs: "src/lib/mollie-connection.ts", slug: "mollie" },
+    // Found BY this gate, on the day it was written: a live integration holding a long-lived
+    // key with full access to the administration, named in no legal document at all.
+    { naam: "SnelStart", bewijs: "src/lib/snelstart-connection.ts", slug: "snelstart" },
+  ];
+
+  for (const v of VERWERKERS) {
+    assert.ok(existsSync(v.bewijs), `${v.naam} is gone — remove it from the documents too`);
+    assert.ok(privacy.includes(v.naam),
+      `${v.naam} processes customer data and is not in the privacyverklaring's sub-processor table`);
+    assert.ok(dpa.includes(v.naam),
+      `${v.naam} processes customer data and is not in the verwerkersovereenkomst — an accountant ` +
+      "who signs it is told an incomplete list of who touches their clients' data");
+  }
+
+  // The other direction: a service named in the code as an integration but in neither document.
+  // Matched on the module's own name, so a new src/lib/<service>-connection.ts or a new
+  // /api/<service>/ route surfaces here rather than in someone's due diligence.
+  const bekend = new Set([...VERWERKERS.map((v) => v.slug),
+    // Named in the documents under a different word than their module: OAuth providers and hosting.
+    "google", "gmail", "microsoft", "outlook", "vercel", "sentry", "stripe"]);
+  const koppelingen = execSync(
+    "ls src/lib | sed -n 's/^\\([a-z]*\\)-connection\\.ts$/\\1/p'", { encoding: "utf8" },
+  ).trim().split("\n").filter(Boolean);
+  for (const k of koppelingen) {
+    assert.ok(bekend.has(k),
+      `src/lib/${k}-connection.ts is an integration nobody added to the sub-processor lists`);
+  }
+
+  // And the agreement must actually be reachable. It was written, complete, and published nowhere
+  // — which is the same as not having one, for the only audience that needs it.
+  assert.ok(existsSync("src/app/verwerkersovereenkomst/page.tsx"),
+    "the processing agreement is unpublished again — an accountant cannot lawfully hand us a " +
+    "client file without reading and signing it");
+  assert.match(readFileSync("src/components/public-footer.tsx", "utf8"), /\/verwerkersovereenkomst/,
+    "the agreement is published but not linked, so only someone who guesses the URL finds it");
+  assert.match(readFileSync("src/app/voor-boekhouders/page.tsx", "utf8"), /\/verwerkersovereenkomst/,
+    "the accountant page does not link the one document an accountant must have");
+
+  // Our own party details may be provisional — the KVK registration is running — but they must be
+  // OBVIOUSLY provisional, never a plausible-looking false number on a contract. company.test.ts
+  // enforces that no ALL-CAPS placeholder survives; this checks the document is genuinely wired
+  // to that machinery rather than carrying its own hard-coded identity.
+  assert.match(dpa, /fillCompanyIdentity\(md\)/,
+    "the agreement hard-codes our identity instead of reading it from the configured one");
+});

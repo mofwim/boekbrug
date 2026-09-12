@@ -117,6 +117,15 @@ export const PUBLIC_PATHS = [
   // "/eerlijk-gebruik" begint (gecontroleerd op src/app).
   "/eerlijk-gebruik",
   "/steun",
+  // [DPA-BEREIKBAAR] De verwerkersovereenkomst. Openbaar om precies dezelfde reden als
+  // /beveiliging: hij is bedoeld voor wie nog GEEN account heeft. Een boekhouder mag de
+  // administratie van zijn klanten hier pas naartoe brengen nadat hij deze overeenkomst heeft
+  // gelezen en getekend — dus achter de inlog is hij onbereikbaar voor iedereen die hem nodig
+  // heeft, en de vraag "mag ik dit gebruiken?" blijft onbeantwoord tot ná de beslissing.
+  //
+  // Gevonden door tests/public-surface.spec.ts op de dag dat de pagina er kwam: hij stond in de
+  // footer en gaf 307. Dat is de smoke test die precies dit soort belofte-zonder-deur vangt.
+  "/verwerkersovereenkomst",
 ] as const;
 
 /**

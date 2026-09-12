@@ -433,6 +433,56 @@ export default function VoorBoekhoudersPage() {
           </dl>
         </section>
 
+        {/* ── [DPA-BEREIKBAAR] De vraag die elk kantoor als eerste stelt ──────────── */}
+        {/* Vijf accountants, dezelfde vraag: mag ik de administratie van mijn klanten hierin
+            zetten? Dat is geen gevoelsvraag maar een juridische: het kantoor is
+            verwerkingsverantwoordelijke, wij zijn verwerker, en zonder verwerkersovereenkomst
+            mag die data hier niet eens naartoe. Die overeenkomst was geschreven en stond in de
+            repository — nergens waar een boekhouder hem kon lezen. Nu staat hij er, en deze
+            sectie zegt in vier regels wat erin staat. */}
+        <section style={{ ...card, marginBottom: 32 }}>
+          <h2 style={h2}>Mag je de administratie van je klanten hierin zetten?</h2>
+          <p style={body}>
+            Ja, en dat is een juridische vraag met een juridisch antwoord. Jouw kantoor is
+            verwerkingsverantwoordelijke, BoekBrug is verwerker. De verwerkersovereenkomst (AVG
+            art. 28) staat online, is compleet en hoeft alleen nog door beide partijen te worden
+            ingevuld en ondertekend.
+          </p>
+          <dl style={{ margin: 0 }}>
+            {[
+              {
+                vraag: 'Wie raakt de gegevens aan?',
+                antwoord:
+                  'Negen subverwerkers, allemaal met naam, doel, vestigingsland en grondslag in de overeenkomst. De bankkoppeling (Enable Banking, Finland) en Mollie verwerken in de EU; hosting, opslag, AI en e-mail lopen onder Standard Contractual Clauses. Een nieuwe koppeling die niet in die lijst staat, komt niet door onze build.',
+              },
+              {
+                vraag: 'Wat ziet BoekBrug zelf?',
+                antwoord:
+                  'De database staat onder Row-Level Security: elke rij hangt aan een eigenaar, en een koppeling met jouw kantoor is een aparte, door de klant gegeven toestemming. Toegang tot productiedata is beperkt tot kritieke onderhoudssituaties. Elke handeling die jij namens een klant doet, komt met jouw naam in zijn logboek — dat hij zelf kan inzien.',
+              },
+              {
+                vraag: 'En als er iets misgaat?',
+                antwoord:
+                  'Melding aan jou zonder onnodige vertraging, volledige informatie binnen 72 uur, en de melding aan de Autoriteit Persoonsgegevens doen wij. Je hebt auditrecht op onze maatregelen. Het staat allemaal in artikel 9 en 10.',
+              },
+              {
+                vraag: 'Wat is er nog niet klaar?',
+                antwoord:
+                  'Onze eigen partijgegevens — bedrijfsnaam, KVK en adres — staan nog als "(volgt)" in de overeenkomst omdat de inschrijving loopt. Ze vullen zichzelf zodra dat rond is. Tot die tijd kun je de tekst wel volledig lezen en beoordelen, en dat is precies waarvoor hij er staat.',
+              },
+            ].map((n) => (
+              <div key={n.vraag} style={{ borderTop: '1px solid #f1f3f4', paddingTop: 14, marginTop: 14 }}>
+                <dt style={{ fontSize: 16, fontWeight: 600, color: '#202124', marginBottom: 6 }}>{n.vraag}</dt>
+                <dd style={{ fontSize: 15, color: '#5f6368', lineHeight: 1.65, margin: 0 }}>{n.antwoord}</dd>
+              </div>
+            ))}
+          </dl>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 20 }}>
+            <Link href="/verwerkersovereenkomst" style={btnPrimary}>Verwerkersovereenkomst lezen</Link>
+            <Link href="/privacy" style={btnGhost}>Privacyverklaring</Link>
+          </div>
+        </section>
+
         {/* ── Slot ───────────────────────────────────────────────── */}
         <section style={{ ...card, textAlign: 'center' }}>
           <h2 style={{ ...h2, marginBottom: 10 }}>Begin met één klant</h2>
