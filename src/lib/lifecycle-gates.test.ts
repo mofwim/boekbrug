@@ -32087,3 +32087,53 @@ test("[AANHECHT-EERST] a reader outage never mints a paid invoice, and never eat
   assert.doesNotMatch(code("src/app/api/intake/route.ts"), /^async function storeRawIncoming\(/m,
     "intake grew its own copy back — the two doors can now drift apart again");
 });
+
+// ─── [ELKE-DEUR] Every door a person hands a file to keeps it when the reader is down ────────
+//
+// Three fixes in a row, on three doors, for one bug — because the keep-the-file path lived inside
+// /api/intake and each door carried its own idea of what to do when the reader refused. This gate
+// is the invariant rather than a fourth special case: it FINDS the doors instead of listing them,
+// so door number four fails here on the day it is written rather than on the day it is needed.
+test("[ELKE-DEUR] no door a person hands a file to may discard it when the reader refuses", () => {
+  // A door that takes bytes from a person: it reads a file out of the request AND calls the
+  // reader. The two re-read routes below take no file — they re-read a document that is already
+  // stored, so there is nothing to lose and nothing for them to keep.
+  const HERLEZERS = new Set([
+    "src/app/api/email/reimport/[id]/route.ts",
+    "src/app/api/documents/[id]/read-as-invoice/route.ts",
+  ]);
+
+  const routes = execSync(
+    "grep -rl 'verifyInvoiceFromPdf' src/app/api --include=route.ts",
+    { encoding: "utf8" },
+  ).trim().split("\n").filter(Boolean).sort();
+
+  const doors = routes.filter((r) => !HERLEZERS.has(r));
+  assert.ok(doors.length >= 3,
+    `only ${doors.length} upload doors found — the scan broke, and a broken scan passes vacuously`);
+
+  for (const door of doors) {
+    const src = code(door);
+    // The reader's failure must reach a catch at all: a swallowed confidence-0 verdict is a
+    // document the app invented ([AANHECHT-EERST]).
+    assert.match(src, /throwOnTransient: true,/,
+      `${door} accepts a reader outage as a verdict about the document`);
+    // And that catch keeps the bytes, through the ONE helper. A second private copy is how the
+    // doors drifted apart the first time.
+    assert.match(src, /storeRawIncoming\(/,
+      `${door} discards the file the owner just handed over when the reader is down`);
+    assert.match(src, /DOC_TYPE_COULD_NOT_READ/,
+      `${door} keeps the file under a label the skipped panel does not count, so [TWEEDE-KANS] ` +
+      "never offers to read it again");
+    assert.match(src, /aiProcessed: false/,
+      `${door} records a read that never happened`);
+    // The reading is returned: our outage may not cost the owner a document of their month.
+    assert.match(src, /gate\.release\(\)/, `${door} charges the owner for a read that failed`);
+  }
+
+  // One definition, imported by every door — never re-implemented.
+  for (const door of doors) {
+    assert.match(code(door), /from "@\/lib\/store-raw-incoming"/,
+      `${door} does not import the shared keeper, so it has grown its own`);
+  }
+});

@@ -12,6 +12,9 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 // but incoming invoices have sender_id = null.
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { verifyInvoiceFromPdf } from "@/lib/ai";
+// [BEWAAR-EERST] The one keep-the-file path, shared with /api/intake and the bank door.
+import { storeRawIncoming } from "@/lib/store-raw-incoming";
+import { DOC_TYPE_COULD_NOT_READ } from "@/lib/skipped-import";
 import { resolveSupplierForImport } from "@/lib/supplier-registry";
 import { resolveImportTarget } from "@/lib/bestanden";
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
@@ -217,12 +220,31 @@ async function runUpload(req: NextRequest) {
       throwOnTransient: true,
     });
   } catch (aiErr) {
-    console.error("[AI-CONFIG-SAFE] upload AI read failed — filing nothing, asking for retry", aiErr);
+    // [BEWAAR-EERST] The third door, closed with the same helper as the other two.
+    //
+    // This branch was already config-SAFE — the read throws instead of returning a verdict nobody
+    // produced — but it still filed nothing, and its own log line said so: "filing nothing, asking
+    // for retry". A reader outage of hours therefore discarded the same document on every attempt.
+    // Safe and lossy are different properties, and this route had only the first.
+    console.error("[BEWAAR-EERST] upload AI read failed — keeping the file, asking nobody to upload it again", aiErr);
+    const keptId = await storeRawIncoming(
+      buffer, file, user.id, supabase, DOC_TYPE_COULD_NOT_READ, "upload", { aiProcessed: false },
+    );
     // [FAIR-USE] Niet gelezen, dus niet geteld — anders kost een storing van ons de
     // gebruiker een document van zijn maandtegoed.
     await gate.release();
+    // A failure status, like the bank door and unlike /api/intake: this route's contract is "add
+    // this INVOICE", and no invoice was added. No screen in this repo calls it today, so there is
+    // no client whose success handling could be checked — which is itself the reason to answer
+    // with the one status no caller can read as a completed booking.
     return NextResponse.json(
-      { error: "We konden dit bestand nu niet lezen. Probeer het zo meteen opnieuw." },
+      {
+        error: keptId
+          ? "Automatisch inlezen lukt op dit moment niet. Je bestand is bewaard — je hoeft het niet opnieuw te uploaden. Je vindt het bij Inkomend onder \u201eOvergeslagen bij import\u201d, met een knop om het opnieuw te laten lezen."
+          : "We konden dit bestand nu niet lezen én niet bewaren. Bewaar het zelf even en probeer het zo meteen opnieuw.",
+        code: "reader_unavailable",
+        ...(keptId ? { documentId: keptId, kept: true } : {}),
+      },
       { status: 503 }
     );
   }
