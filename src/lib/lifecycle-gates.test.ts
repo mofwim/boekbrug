@@ -31743,3 +31743,54 @@ test("[SHEET-LAAT] the spreadsheet writer is never in a public page's first down
     "these client screens pull SheetJS into their first download; move the import into the handler " +
     "that needs it:\n  · " + clientImporters.join("\n  · "));
 });
+
+// ─── [GEEN-KREDIET] The outage family had three members and needed four ───────────────────────
+//
+// Found from a real production signal rather than by reading: the Anthropic account ran out of
+// credit, and nothing in this app was able to tell that apart from "this document cannot be read".
+//
+// Anthropic answers an exhausted balance with HTTP 400 and `invalid_request_error`. Measured
+// against the three guards that existed:
+//   · isTransientAiError      429 / 5xx only            → 400 is not transient
+//   · isModelUnavailableError not_found / 404 / model:   → no
+//   · isAiCredentialError     invalid[_ ]?api, auth      → `invalid_request_error` is not that
+//   · isAiBudgetError         THIS app's daily fuse      → not the provider's balance
+//
+// So every invoice that arrived by e-mail during the outage was registered could_not_read and the
+// watermark walked past it — a real cost, a real voorbelasting, retired with nobody told. That is
+// the exact failure [COST-GUARD] was written to prevent, reached through a different empty wallet.
+test("[GEEN-KREDIET] an exhausted account holds the watermark, and is not the document's fault", () => {
+  const model = code("src/lib/ai-model.ts");
+  const sync = code("src/lib/email-integration.ts");
+
+  // The predicate exists and matches BOTH the sentence and the status. A guard over money must not
+  // hinge on prose a provider is free to rewrite.
+  assert.match(model, /export function isAiCreditError/);
+  assert.match(model, /credit balance is too low/);
+  assert.ok(model.includes("402"),
+    "only the sentence is matched now — a provider that rewords it stops being recognised, and "
+    + "the status code is the half that cannot be reworded");
+
+  // It stays OUT of isAiConfigError: that union is pinned to the regex the sync used before it was
+  // extracted, and widening it would move the sync's behaviour from a file that promises not to.
+  assert.match(model, /export function isAiConfigError\(error: unknown\): boolean \{\s*return isModelUnavailableError\(error\) \|\| isAiCredentialError\(error\);/,
+    "the config union grew a third member — the test pinning it to the old regex is now a lie");
+
+  // And it is WIRED. A predicate nothing consumes is the shape this repo has been burned by all
+  // week: the rule exists, the door does not.
+  assert.match(sync, /const creditOutage = isAiCreditError\(err\)/,
+    "the sync no longer asks whether the account is out of credit");
+  assert.match(sync, /const outageHold = configOutage \|\| budgetOutage \|\| creditOutage \|\|/,
+    "an empty balance no longer holds the attachment — it poison-pills a real invoice again");
+  assert.match(sync, /creditOutageAny/,
+    "one empty balance is app-wide by definition and must make the whole run an outage");
+
+  // The owner is told the truth and sent nowhere they cannot go: this is not their setting.
+  assert.match(model, /export const AI_CREDIT_MESSAGE/);
+  assert.match(model, /er gaat niets verloren/);
+  // The WORDING is pinned in ai-model.test.ts, against the constant itself. It is not checked here
+  // on a slice of the file: this file holds MODEL_UNAVAILABLE_MESSAGE too, which says "instellingen
+  // van de app" and is right to — and a window opened at one constant with no real closing bound
+  // runs to the end of the file and reads the other one. That is the [UREN-EENMALIG] mistake, and
+  // it cost a red gate here before this comment replaced it.
+});
