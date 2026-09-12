@@ -85,7 +85,7 @@ export async function GET(req: NextRequest) {
   if (!owner.ok) return NextResponse.json({ error: owner.error }, { status: owner.status });
   const ownerId = owner.ownerId;
 
-  // service_role, every query scoped to ownerId (mirrors /api/closing-package/summary).
+  // service_role, every query scoped to ownerId (the same dual-path shape as /api/closing-package).
   const pipeline = createPipelineClient();
 
   // ── 1) Invoice evidence — REUSE summarizeClosingPackage (single source of truth) ──

@@ -32166,17 +32166,15 @@ test("[GEEN-DEUR] no new API route may exist without a screen that calls it", ()
   // decide to build the door or delete the route — and cannot mistake it for a to-do nobody
   // wrote down.
   const ZONDER_DEUR = new Set([
-    // The invite an accountant sends a client. KlantenBeheer sends its own and calls this one
-    // "the sibling" — two routes for one act, and the screen uses the other.
-    "/api/accountant/invite",
-    // A summary beside /api/closing-package and /api/closing-package/vers, which the werkboard
-    // does call. This third one nothing opens.
-    "/api/closing-package/summary",
     // Corner 2 of the reconciliation triangle: the payment-terminal settlement receipt. The
     // route, the AI transcription, the pure parser and its tests all exist; no screen uploads to
     // it. A triangle with an unreachable corner cannot close.
     "/api/eft/import",
-    // A second manual invoice upload beside /api/intake, which is the one every screen uses.
+    // A second manual invoice upload beside /api/intake, which is the one every screen uses —
+    // and NOT an orphan to remove. /api/intake's own header records it as kept for back-compat,
+    // so a client cached in someone's browser can still reach it. It stays, it is held to the
+    // same [ELKE-DEUR] promises as every other door, and it is listed here so this scan does
+    // not report it as new every time somebody runs the gate.
     "/api/email/upload",
   ]);
 
