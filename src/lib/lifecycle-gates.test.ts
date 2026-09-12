@@ -32033,3 +32033,57 @@ test("[LEZER-KLOK] the reader call has a clock of its own, and it fits inside th
       "can say what went wrong",
   );
 });
+
+// ─── [AANHECHT-EERST] The door that books straight to 'paid' was the one that never opted in ──
+//
+// /api/bank/attach-invoice was the only reader route that did not pass throwOnTransient. So on any
+// reader outage verifyInvoiceFromPdf returned its FALLBACK — is_invoice:false, confidence 0, every
+// field null — and this route never reads is_invoice at all. It went on to MINT an invoice from a
+// document nobody had read: vendor "Onbekende afzender", no number, and the amount taken from the
+// bank line (aiTotal == null → totalIncBtw = bankAmount). Marked paid, attached to the line, and
+// consuming that line's budget. Flagged for review, but created — once per attach, for as long as
+// the outage lasted.
+//
+// The catch then rethrew, which is a 500 with no sentence and no file kept: the same loss
+// [BEWAAR-EERST] closed on the upload door, on the door where the stakes are highest.
+test("[AANHECHT-EERST] a reader outage never mints a paid invoice, and never eats the file", () => {
+  const attach = code("src/app/api/bank/attach-invoice/route.ts");
+
+  // Cut on real code at both ends ([UREN-EENMALIG]) — the read and its catch, nothing after.
+  const start = attach.indexOf("verification = await verifyInvoiceFromPdf(");
+  assert.ok(start > 0, "the reader call moved — this gate is measuring the wrong branch");
+  const end = attach.indexOf("const bankAmount = Math.abs(", start);
+  assert.ok(end > start, "the end marker moved — the window would run to the end of the file");
+  const tak = attach.slice(start, end);
+
+  // 1. The verdict may never be a swallowed outage. This is the whole finding.
+  assert.match(tak, /throwOnTransient: true,/,
+    "the door that books straight to 'paid' accepts a confidence-0 outage verdict as a document");
+
+  // 2. The file is kept, through the SAME helper the upload door uses. Two keep-the-file paths is
+  //    how the two doors came to disagree in the first place.
+  assert.match(tak, /await storeRawIncoming\(\s*buffer, file, user\.id, supabase, DOC_TYPE_COULD_NOT_READ, "upload", \{ aiProcessed: false \},/,
+    "the outage branch no longer keeps the file, or keeps it through a second private copy");
+  assert.doesNotMatch(tak, /throw aiErr/,
+    "the branch rethrows again: a 500, no sentence, and nothing kept");
+
+  // 3. And it must NOT read as success. This is where this door differs from /api/intake, whose
+  //    200 is honest because its contract is "the file is in the app". Here the contract is "this
+  //    file is linked to this bank line", which did not happen — and BankClient counts every
+  //    res.ok as "gekoppeld", so a 200 would report a link that does not exist.
+  assert.match(tak, /status: 503/, "the kept-file answer reads as a completed link");
+  assert.doesNotMatch(tak, /ok: true/, "the outage branch answers ok:true on a door that booked nothing");
+  assert.match(tak, /je hoeft het niet opnieuw te uploaden/);
+  assert.match(tak, /De bankregel staat nog open/);
+  assert.match(tak, /niet lezen én niet bewaren/,
+    "[NO-SILENT-EMPTY] when the store fails too there is no honest sentence left");
+
+  // 4. The quota is returned either way — our outage may not cost a reading.
+  assert.match(tak, /await gate\.release\(\)/);
+
+  // The helper is shared, not copied: exactly one definition in the repo.
+  const lib = code("src/lib/store-raw-incoming.ts");
+  assert.match(lib, /export async function storeRawIncoming\(/);
+  assert.doesNotMatch(code("src/app/api/intake/route.ts"), /^async function storeRawIncoming\(/m,
+    "intake grew its own copy back — the two doors can now drift apart again");
+});

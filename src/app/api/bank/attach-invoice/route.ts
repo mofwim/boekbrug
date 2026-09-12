@@ -27,6 +27,9 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createPipelineClient } from "@/lib/supabase-pipeline";
 import { createNotification } from "@/lib/notifications";
 import { verifyInvoiceFromPdf } from "@/lib/ai";
+// [AANHECHT-EERST] The same keep-the-file path the upload door uses — one, not two.
+import { storeRawIncoming } from "@/lib/store-raw-incoming";
+import { DOC_TYPE_COULD_NOT_READ } from "@/lib/skipped-import";
 import { resolveImportTarget } from "@/lib/bestanden";
 import { computeContentHash } from "@/lib/content-hash";
 import { buildFolderBreadcrumb } from "@/lib/documents";
@@ -258,10 +261,42 @@ async function runAttachInvoice(req: NextRequest) {
       // [EIGEN-NUMMER] This door passes no receiver identity, so the number is the ONLY way it
       // can recognise the owner's own outgoing invoice being attached as an "expense" proof.
       lookupOwnInvoice: makeOwnInvoiceLookup(supabase, user.id),
+      // [AANHECHT-EERST] The one reader door that never opted in, on the one route that books
+      // straight to 'paid'. Without this an infra failure is swallowed into the confidence-0
+      // FALLBACK — every field null — and this route never checks is_invoice, so it went on to
+      // MINT a paid invoice from a document nobody read: vendor "Onbekende afzender", no number,
+      // and the amount taken from the bank line (aiTotal == null → totalIncBtw = bankAmount).
+      // Flagged for review, yes, but created, marked paid, and consuming the line's budget.
+      // During an outage of hours it does that once per attach.
+      throwOnTransient: true,
     });
   } catch (aiErr) {
+    // [AANHECHT-EERST] Keep the bytes, book nothing, leave the bank line exactly as it was.
+    //
+    // The old branch rethrew, which became a 500 with no sentence and no file kept — the same
+    // loss [BEWAAR-EERST] closed on the upload door, on the door where the stakes are highest.
+    console.error("[AANHECHT-EERST] attach AI read failed — keeping the file, booking nothing", aiErr);
+    const keptId = await storeRawIncoming(
+      buffer, file, user.id, supabase, DOC_TYPE_COULD_NOT_READ, "upload", { aiProcessed: false },
+    );
+    // [FAIR-USE] Niet gelezen, dus niet geteld.
     await gate.release();
-    throw aiErr;
+    // This answer is a FAILURE status on purpose, and that is where this door differs from
+    // /api/intake. There a 200 is honest: the contract is "the file is in the app", and it is.
+    // Here the contract is "this file is now linked to this bank line" — which did not happen.
+    // BankClient counts every res.ok as "gekoppeld", so a 200 would report a link that does not
+    // exist and leave the owner believing the line was handled. The sentence carries the part
+    // that saves them work: the file is kept, so do not upload it again.
+    return NextResponse.json(
+      {
+        error: keptId
+          ? "Automatisch inlezen lukt op dit moment niet. Je bestand is bewaard — je hoeft het niet opnieuw te uploaden. De bankregel staat nog open; je vindt het bestand bij Inkomend onder \u201eOvergeslagen bij import\u201d, met een knop om het opnieuw te laten lezen."
+          : "We konden dit bestand nu niet lezen én niet bewaren. Er is niets geboekt. Bewaar het zelf even en probeer het zo meteen opnieuw.",
+        code: "reader_unavailable",
+        ...(keptId ? { documentId: keptId, kept: true } : {}),
+      },
+      { status: 503 },
+    );
   }
 
   // [DECLARED-INVOICE] Does this payment name MORE invoices than the one being attached?

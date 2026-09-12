@@ -52,6 +52,21 @@ per-mailbox sync "succeeded" and the run was written `ok:true` while not one doc
 Every job green, nothing happening. A held run is now simply not a successful run, so the watchman
 that already exists fires by itself — no second watchman was added.
 
+**`[AANHECHT-EERST]`** — the same rule, on the door with the highest stakes.
+`/api/bank/attach-invoice` was the only reader route that never passed `throwOnTransient`, so on an
+outage `verifyInvoiceFromPdf` returned its FALLBACK — `is_invoice:false`, confidence 0, every field
+null — and this route never reads `is_invoice`. It went on to **mint a paid invoice from a document
+nobody had read**: vendor "Onbekende afzender", no number, and the amount taken from the bank line,
+attached to that line and consuming its budget. Flagged for review, but created — once per attach,
+for as long as the outage lasted. And the catch rethrew, so the file was lost too.
+
+It now opts in, keeps the bytes through the same helper the upload door uses, and answers **503**
+rather than 200 — the one place this door must differ from `/api/intake`. There a 200 is honest,
+because the contract is "the file is in the app". Here the contract is "this file is linked to this
+bank line", which did not happen, and `BankClient` counts every `res.ok` as *gekoppeld*. The keep
+itself moved to `src/lib/store-raw-incoming.ts`: it had lived inside `/api/intake`, which is exactly
+why only one of the doors had it.
+
 **`[LEZER-KLOK]`** — the hole the two fixes above could not cover from the outside. The reader's
 `fetch` carried no signal, and undici's own ceilings (300 s) sit above every route that calls it, so
 a connection that *stalls* rather than fails does not throw: it hangs until Vercel kills the whole
