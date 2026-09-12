@@ -31,7 +31,7 @@
 --
 -- ── TWEE QUERY'S, WANT ER ZIJN TWEE SOORTEN MIGRATIES ──
 --
---   DEEL 1  de 148 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
+--   DEEL 1  de 149 migraties die iets AANMAKEN. Bestaat het object, dan is ze gedraaid.
 --   DEEL 2  de 17 die niets aanmaken — alleen rechten intrekken, iets weggooien of een
 --           stand goed zetten. Daar wordt de STAND gemeten in plaats van het bestaan.
 --
@@ -373,6 +373,7 @@ with probe(bestand, soort, object, tabel, schema) as (values
   ('package_shares.sql', 'policy', 'package_shares_select_own', 'package_shares', 'public'),
   ('package_shares.sql', 'policy', 'package_shares_update_own', 'package_shares', 'public'),
   ('package_shares.sql', 'table', 'package_shares', null, 'public'),
+  ('paid_invoice_money_frozen.sql', 'function', 'prevent_paid_invoice_rewrite', null, 'public'),
   ('pay_bundles.sql', 'index', 'idx_pay_bundle_invoices_bundle', null, 'public'),
   ('pay_bundles.sql', 'index', 'idx_pay_bundle_invoices_invoice', null, 'public'),
   ('pay_bundles.sql', 'index', 'idx_pay_bundles_token', null, 'public'),
@@ -624,7 +625,7 @@ order by case when bool_and(aanwezig) then 3 when bool_or(aanwezig) then 1 else 
 --
 
 -- =====================================================================
--- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 165
+-- DEEL 2 — NIET VAST TE STELLEN MET EEN OBJECT: 17 van de 166
 -- =====================================================================
 --
 -- Deze trekken alleen rechten in, gooien iets weg, zetten een stand goed of verplaatsen

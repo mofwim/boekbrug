@@ -32520,3 +32520,59 @@ test("[LANDING-AR] the Arabic homepage exists, is reachable, and never promises 
   assert.doesNotMatch(pagina, /href="\/(factuur-maken|factuur-scannen|bankafschrift-naar-excel|btw-berekenen|uurtarief-berekenen)"/,
     "the Arabic page sends its reader to a Dutch-only tool");
 });
+
+// ─── [VAST-IN-DE-DB] The rule the app has always stated, moved to where it cannot be walked around
+//
+// "Een verstuurde factuur pas je niet meer aan — een fout corrigeer je met een creditnota" has
+// been the rule since this app had invoices, and isInvoiceEditable / sentEditBlockers enforce it
+// on every route. The database did not. invoices_zzp_update is
+//
+//     FOR UPDATE TO authenticated USING (sender_id = auth.uid()) WITH CHECK (sender_id = auth.uid())
+//
+// with no status test and no column list, so the owner's OWN token — used against PostgREST,
+// outside every route in this app — could rewrite the amount, the btw, the date or the number of
+// an invoice their customer is already holding. With no audit row, because the audit rows are
+// written by the correction flow that write went around.
+//
+// Two triggers already sat on the table and neither caught it: prevent_accountant_amount_changes
+// guards the ACCOUNTANT and exempts the owner, and invoices_verwerkt_guard only fires once the
+// accountant has marked it verwerkt. The owner's own paid invoice was the hole between them.
+//
+// The trigger is deliberately NARROWER than "every sent invoice": editing a sent-but-unpaid
+// invoice is a guarded feature, not an oversight (the CAS in /api/invoice/[id]). What is absolute
+// is the case where MONEY HAS MOVED — which is exactly where sentEditBlockers draws its line too.
+test("[VAST-IN-DE-DB] a paid outgoing invoice's money cannot be rewritten, by anyone with a session", () => {
+  const migratie = readFileSync("supabase/migrations/paid_invoice_money_frozen.sql", "utf8");
+
+  assert.match(migratie, /CREATE TRIGGER invoices_paid_money_frozen\s+BEFORE UPDATE ON public\.invoices/,
+    "the trigger is gone, and the rule is back to living only in the routes");
+  // The service-role bypass is the same convention the sibling guards use — pipeline paths
+  // (bank_confirm_atomic, apply_manual_payment) re-assert their own preconditions and must work.
+  assert.match(migratie, /IF auth\.uid\(\) IS NULL THEN\s+RETURN NEW;/);
+  // Outgoing only: an INCOMING invoice is a document we RECEIVED and had a model read, and
+  // correcting its split is what [SPLIT-CORRECTIE] exists for.
+  assert.match(migratie, /OLD\.direction IS DISTINCT FROM 'outgoing'/,
+    "the freeze reaches incoming invoices, which breaks correcting a btw split we read ourselves");
+  // A partial payment counts: the customer paid against THESE amounts.
+  assert.match(migratie, /COALESCE\(OLD\.amount_paid, 0\) <= 0 AND OLD\.status IS DISTINCT FROM 'paid'/);
+
+  // The frozen list is the document's own identity — and it must not quietly shrink.
+  for (const kolom of ["invoice_number", "invoice_date", "total_ex_btw", "btw_amount",
+                       "total_inc_btw", "direction", "sender_id", "receiver_id", "invoice_type"]) {
+    assert.match(migratie, new RegExp(`NEW\\.${kolom}\\s+IS DISTINCT FROM OLD\\.${kolom}`),
+      `${kolom} left the frozen list — it is part of what the customer's copy says`);
+  }
+  // And what is ABOUT the payment must stay writable, or booking, unbooking and [STORNO] break.
+  for (const kolom of ["status", "amount_paid", "payment_method", "marked_paid_at", "document_id",
+                       "accountant_status", "pay_token"]) {
+    assert.doesNotMatch(migratie, new RegExp(`NEW\\.${kolom}\\s+IS DISTINCT FROM OLD\\.${kolom}`),
+      `${kolom} was frozen too — that is a record of what happened to the document, not the document`);
+  }
+
+  // The refusal speaks the app's own sentence, so the owner reads one rule and not two.
+  assert.match(migratie, /een fout corrigeer je met een creditnota/);
+
+  // [MIGRATIE-STAND] The state check travels with it, the way this repo's other migrations do.
+  assert.match(migratie, /pg_trigger WHERE tgname = 'invoices_paid_money_frozen'/,
+    "no way to ask a live database whether this is actually installed");
+});
