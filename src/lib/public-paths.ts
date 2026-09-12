@@ -143,7 +143,12 @@ export const PUBLIC_PATHS = [
  * test's three sweeps read PUBLIC_PATHS (which did not have it), sitemap.xml (which did not have
  * it either — fixed in sitemap.ts) and the footer (the link sits in a section above it).
  */
-export const EXACT_PUBLIC_PATHS = ["/", "/en"] as const;
+// [LANDING-AR] "/ar" joins them for exactly the reason "/en" is here, and the shape of the bug
+// was identical: /ar/blog and /ar/prijzen were both in the prefix list while the Arabic homepage
+// itself matched neither, so the one page an Arabic visitor lands on would have gone to /login.
+// It cannot go in PUBLIC_PATHS either — startsWith("/ar") would also open "/artikelen", which is
+// a dashboard screen.
+export const EXACT_PUBLIC_PATHS = ["/", "/en", "/ar"] as const;
 
 /**
  * Is this path reachable without a session?

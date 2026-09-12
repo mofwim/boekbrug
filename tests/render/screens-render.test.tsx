@@ -302,6 +302,9 @@ const REST: readonly [string, string][] = [
   ["one message", "../../src/app/dashboard/messages/[id]/page"],
   ["the day's truth panel", "../../src/app/dashboard/zzp/DailyTruth"],
   ["the turnover insights panel", "../../src/app/dashboard/dagomzet/TurnoverInsights"],
+  // [AFREKENING-DEUR] Corner 2 of the reconciliation triangle. It renders with no data at all,
+  // which is the state every owner meets first: the upload choice and the way to type it instead.
+  ["the card-terminal settlement panel", "../../src/app/dashboard/dagomzet/AfrekeningImport"],
   ["the retention card", "../../src/app/dashboard/kluis/BewaarkluisCard"],
   ["the subscribe button", "../../src/app/prijzen/SubscribeButton"],
   ["the manage-subscription button", "../../src/app/dashboard/settings/facturering/ManageSubscriptionButton"],

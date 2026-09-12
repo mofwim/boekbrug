@@ -32166,10 +32166,6 @@ test("[GEEN-DEUR] no new API route may exist without a screen that calls it", ()
   // decide to build the door or delete the route — and cannot mistake it for a to-do nobody
   // wrote down.
   const ZONDER_DEUR = new Set([
-    // Corner 2 of the reconciliation triangle: the payment-terminal settlement receipt. The
-    // route, the AI transcription, the pure parser and its tests all exist; no screen uploads to
-    // it. A triangle with an unreachable corner cannot close.
-    "/api/eft/import",
     // A second manual invoice upload beside /api/intake, which is the one every screen uses —
     // and NOT an orphan to remove. /api/intake's own header records it as kept for back-compat,
     // so a client cached in someone's browser can still reach it. It stays, it is held to the
@@ -32417,4 +32413,110 @@ test("[SUBVERWERKER-ECHT] no integration processes customer data without standin
   // to that machinery rather than carrying its own hard-coded identity.
   assert.match(dpa, /fillCompanyIdentity\(md\)/,
     "the agreement hard-codes our identity instead of reading it from the configured one");
+});
+
+// ─── [AFREKENING-DEUR] The reconciliation triangle had an unreachable corner ──────────────────
+//
+// The triangle compares three witnesses to the same card money: the till's Z-report, the payment
+// terminal's own settlement receipt, and what the bank actually paid out. /api/eft/import has
+// parsed the second one since July — route, AI transcription, pure parser, tests — and no screen
+// ever uploaded to it. So readiness has been reconciling two witnesses and calling it three, and
+// [GEEN-DEUR] listed the route as unreachable.
+//
+// This gate holds the door open, and holds open the way through it that needs no reader at all.
+test("[AFREKENING-DEUR] the terminal settlement can be handed over, with or without the reader", () => {
+  const paneel = code("src/app/dashboard/dagomzet/AfrekeningImport.tsx");
+  const scherm = code("src/app/dashboard/dagomzet/DagomzetImportClient.tsx");
+
+  // It is mounted where the OTHER corner of the triangle already lives — one screen for the day's
+  // card money, not two places to remember.
+  assert.match(scherm, /<AfrekeningImport onCommitted=/,
+    "the settlement panel is off the screen again, and the route is unreachable once more");
+
+  // Two steps, never one: read, show, and only then store. Same promise as the Z-report beside it.
+  assert.match(paneel, /'\/api\/eft\/import'/);
+  assert.match(paneel, /settlement: preview\.settlement/,
+    "the panel stores something other than what the owner reviewed");
+
+  // [LEZER-STIL] The reader-free path is a FIRST-CLASS choice on the screen, not a sentence that
+  // only appears after a failure. A terminal receipt is a dozen numbers; typing them always works.
+  assert.match(paneel, /afr\.zelfTypen/,
+    "the way through without the reader is gone, so an outage is a dead end again");
+  assert.match(paneel, /'Content-Type': 'application\/json'.*\n?.*JSON\.stringify\(\{ text: body \}\)/,
+    "the typed path no longer posts as text, so it needs the reader after all");
+
+  // [DUBBEL] Terminal-ID and period number are the natural key. Without them a re-import INSERTS
+  // a second settlement instead of updating one — that day's card takings double. The route
+  // refuses without them, so the panel must let the owner supply what OCR missed.
+  for (const veld of [/zet\('terminalId'/, /zet\('periodNr'/, /zet\('settlementDate'/]) {
+    assert.match(paneel, veld, `the owner cannot correct ${veld} — the route will refuse and the screen cannot say why`);
+  }
+
+  // [NO-SILENT-EMPTY] A failed read must not look like a receipt with no card sales on it.
+  assert.match(paneel, /role="alert"/);
+  assert.match(paneel, /setFout\(failureText\(res\.status, json/,
+    "the panel invents its own message instead of rendering the route's");
+
+  // [TAAL] The component holds no language of its own, and every key it names exists in Dutch.
+  const berichten = readFileSync("src/lib/i18n/messages.ts", "utf8");
+  const sleutels = [...paneel.matchAll(/t\('(afr\.[a-zA-Z.]+)'/g)].map((m) => m[1]);
+  assert.ok(sleutels.length >= 10, `only ${sleutels.length} keys found — the scan broke`);
+  for (const k of new Set(sleutels)) {
+    assert.match(berichten, new RegExp(`'${k.replace(/\./g, "\\.")}': \\{ nl:`), `${k} is not in the catalogue`);
+  }
+  assert.doesNotMatch(paneel, />[A-Z][a-z]+ [a-z]+ [a-z]+</,
+    "a Dutch sentence is hard-coded in the component instead of coming from a key");
+});
+
+// ─── [LANDING-AR] The blog was doing acquisition into a door that did not exist ────────────────
+//
+// 53 Arabic articles, an /ar/blog route and an Arabic pricing page have been live for months —
+// and /ar was a 404. So an Arabic reader could learn about bookkeeping from us, could learn what
+// it costs, and had nowhere to learn what the product IS.
+//
+// The guard was about to repeat the /en bug exactly: /ar/blog and /ar/prijzen sit in the PREFIX
+// list while the homepage itself matches neither, so the one page an Arabic visitor actually
+// lands on would have gone to /login. It cannot join that prefix list either — startsWith("/ar")
+// would open /artikelen, which is a dashboard screen.
+test("[LANDING-AR] the Arabic homepage exists, is reachable, and never promises more than the Dutch", () => {
+  const paden = code("src/lib/public-paths.ts");
+  const sitemap = code("src/app/sitemap.ts");
+
+  assert.ok(existsSync("src/app/ar/page.tsx"), "the Arabic homepage is gone and /ar/blog links into a 404");
+  assert.match(paden, /EXACT_PUBLIC_PATHS = \["\/", "\/en", "\/ar"\]/,
+    "/ar is behind the login wall, or was moved to the prefix list where it also opens /artikelen");
+  assert.match(sitemap, /\$\{SITE_URL\}\/ar`/,
+    "/ar is not in the sitemap, so the smoke test's sweep cannot see it either — the exact hole /en fell through");
+
+  // The translation rule, mechanically: every promise on the page comes from the module, and the
+  // module has one counterpart per Dutch constant. A page that writes its own sentence is a
+  // second opinion, which is the one thing a translation may never become.
+  const pagina = code("src/app/ar/page.tsx");
+  const arabisch = code("src/lib/belofte-ar.ts");
+  const nederlands = code("src/lib/belofte.ts");
+  for (const naam of ["BELOFTE_KOP", "BELOFTE_KOP_2", "BELOFTE_UITLEG", "BELOFTE_GERUST",
+                      "BELOFTE_STAPPEN", "PROBLEEM_KOP", "PROBLEEM_1", "PROBLEEM_2_VET", "PROBLEEM_2"]) {
+    assert.match(nederlands, new RegExp(`export const ${naam}\\b`), `${naam} left belofte.ts`);
+    assert.match(arabisch, new RegExp(`export const ${naam}_AR\\b`),
+      `${naam} has no Arabic counterpart — the two files must move together`);
+    assert.match(pagina, new RegExp(`\\b${naam}_AR\\b`), `the page stopped rendering ${naam}_AR`);
+  }
+  // Three steps in Dutch is three steps in Arabic. A translation that drops one is a different
+  // promise about how much work the owner keeps.
+  const tel = (s: string) => (s.match(/\bkop: /g) ?? []).length;
+  assert.equal(tel(arabisch), tel(nederlands),
+    "the Arabic page offers a different number of steps than the Dutch one");
+
+  // [TAAL] Direction is set, and the Dutch legal words stay Dutch inside the Arabic — an owner
+  // reads btw, KVK and Belastingdienst on a letter, and a translated vocabulary appears nowhere
+  // they will ever look. btw is lowercase, one form, as [AR-TERMEN] requires everywhere else.
+  assert.match(pagina, /dir="rtl"/, "the Arabic page renders left-to-right");
+  assert.match(arabisch, /\bbtw\b/, "btw was translated away");
+  assert.doesNotMatch(arabisch, /\bBTW\b/, "btw is uppercase inside Arabic — one form, lowercase");
+  assert.match(arabisch, /Belastingdienst/);
+
+  // Only tools that EXIST in Arabic may be linked. None do yet, so the page links none — the same
+  // small honesty /en applies to its own three missing ones.
+  assert.doesNotMatch(pagina, /href="\/(factuur-maken|factuur-scannen|bankafschrift-naar-excel|btw-berekenen|uurtarief-berekenen)"/,
+    "the Arabic page sends its reader to a Dutch-only tool");
 });

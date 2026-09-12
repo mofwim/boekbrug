@@ -478,6 +478,27 @@ export const MESSAGES = {
   'start.klaar.ready': { nl: 'Klaar voor je boekhouder', ar: 'جاهز لمحاسبك', en: 'Ready for your accountant' },
   'start.klaar.almost': { nl: 'Bijna klaar — nog {count} punten', ar: 'شارف على الجاهزية — بقيت {count} نقاط', en: 'Almost ready — {count} points left' },
   'start.klaar.attention': { nl: '{count} punten hebben aandacht nodig', ar: '{count} نقاط تحتاج انتباهك', en: '{count} points need attention' },
+
+  // [AFREKENING-DEUR] Hoek 2 van de driehoek: de afrekening van de pinautomaat zelf. De route
+  // bestond sinds juli en geen scherm kon hem bereiken. De zin over zelf typen is GEEN noodgreep
+  // in een foutmelding maar een gelijkwaardige weg — een bon van een terminal is een handvol
+  // getallen, en die weg werkt ook als de lezer plat ligt ([LEZER-STIL]).
+  'afr.titel': { nl: 'Afrekening van je pinautomaat', ar: 'تسوية جهاز الدفع', en: 'Your card terminal settlement' },
+  'afr.uitleg': { nl: 'De bon die je automaat aan het eind van de dag uitdraait. Hiermee kunnen we je kassa, je automaat en je bank naast elkaar leggen.', ar: 'الإيصال الذي يطبعه جهازك في آخر اليوم. به نضع صندوقك وجهازك وبنكك جنباً إلى جنب.', en: 'The receipt your terminal prints at the end of the day. With it we can line up your till, your terminal and your bank.' },
+  'afr.kiesBestand': { nl: 'Foto of PDF kiezen', ar: 'اختر صورة أو PDF', en: 'Choose a photo or PDF' },
+  'afr.zelfTypen': { nl: 'Of typ de bon zelf over', ar: 'أو اكتب الإيصال بنفسك', en: 'Or type the receipt yourself' },
+  'afr.tekstLabel': { nl: 'Tekst van de bon', ar: 'نصّ الإيصال', en: 'Text of the receipt' },
+  'afr.lezen': { nl: 'Lezen', ar: 'اقرأ', en: 'Read' },
+  'afr.bezig': { nl: 'Bezig met lezen…', ar: 'جارٍ القراءة…', en: 'Reading…' },
+  'afr.fout.lezen': { nl: 'De afrekening kon niet worden gelezen. Je kunt de bon ook zelf overtypen.', ar: 'تعذّرت قراءة التسوية. يمكنك كتابة الإيصال بنفسك.', en: 'The settlement could not be read. You can also type the receipt yourself.' },
+  'afr.fout.bewaren': { nl: 'De afrekening kon niet worden bewaard.', ar: 'تعذّر حفظ التسوية.', en: 'The settlement could not be saved.' },
+  'afr.bewaard': { nl: 'Afrekening bewaard.', ar: 'حُفظت التسوية.', en: 'Settlement saved.' },
+  'afr.transacties': { nl: '{count} transacties op deze afrekening', ar: '{count} معاملة على هذه التسوية', en: '{count} transactions on this settlement' },
+  'afr.datum': { nl: 'Datum', ar: 'التاريخ', en: 'Date' },
+  'afr.terminal': { nl: 'Terminal-ID', ar: 'معرّف الجهاز', en: 'Terminal ID' },
+  'afr.periode': { nl: 'Periode-nummer', ar: 'رقم الفترة', en: 'Period number' },
+  'afr.bewaren': { nl: 'Bewaren', ar: 'احفظ', en: 'Save' },
+  'afr.annuleren': { nl: 'Annuleren', ar: 'إلغاء', en: 'Cancel' },
   'start.klaar': { nl: 'Ben ik klaar?', ar: 'هل أنا جاهز؟', en: 'Am I ready?' },
   'start.vraag': { nl: 'Bekijk de vraag en antwoord hier', ar: 'اطّلع على السؤال والجواب هنا', en: 'See the question and answer here' },
 
