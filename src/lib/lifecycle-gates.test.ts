@@ -46,6 +46,7 @@ import { decide as decideAutonomy } from "./autonomy-scope";
 // [WERK-GEDAAN] De weigering als WAARDE — een estimateMinutes die 42 teruggeeft haalt elke broncontrole.
 import { workDoneLedger as workDoneLedgerFor, estimateMinutes as estimateMinutesFor } from "./work-done";
 import { firstPaidBand, referralCeilingExclBtw, REFERRAL_RATE_HYPOTHESIS } from "./accountant-pricing";
+import { OFFICE_GETS as OFFICE_GETS_FOR, unavailableBenefits as unavailableBenefitsFor } from "./office-offer";
 import { PLUS_PRICE_EUR } from "./fair-use";
 import { round2 } from "./invoice-totals";
 // [SEGMENT-VOORDEUR] De drie deuren, en alles wat ze beloven.
@@ -32726,9 +32727,13 @@ test("[WERK-GEDAAN-DEUR] the accountant page answers what an office gets, in bot
     "the commercial half of the question is unanswered, which reads as 'negotiable'");
   assert.match(pagina, /geen commissie, geen marge en geen wederverkoop/);
 
-  // [KNOP-IN-ZIN] The new section points at that entry; the pointer and the target move together.
-  assert.match(pagina, /dat staat verderop bij wat BoekBrug\s*\n?\s*niet doet/,
-    "the section points at an answer further down the page — it must still be there");
+  // The section used to point further down the page for the commission answer. It no longer
+  // points: [GEEN-PROVISIE] renders the refusal inside this section, so a pointer would send a
+  // reader away from the answer he is standing on. What must hold is that the answer is HERE.
+  assert.doesNotMatch(pagina, /dat staat verderop bij wat BoekBrug\s*\n?\s*niet doet/,
+    "the retired pointer is back — the refusal is in this section now, not further down");
+  assert.match(pagina, /OFFICE_NEVER_GETS\.body/,
+    "the section no longer renders the refusal — 'what is my cut' is unanswered where it is asked");
 
   // The intro above the list may not count the list wrong. It said "Vier dingen" while the list
   // had eight, and adding the ninth is what surfaced it.
@@ -32799,4 +32804,91 @@ test("[PROVISIE-REKENSOM] the commission answer is computed from the price file,
   const zinnen = pagina.replace(/'\s*\+\s*'/g, "");
   assert.match(zinnen, /De rekensom staat onder "En wat levert het jou op\?" hierboven/,
     "[KNOP-IN-ZIN] the entry points at a section by name — the pointer and the heading move together");
+});
+
+
+// ─── [GEEN-PROVISIE] BoekBrug does not pay to be recommended, and that is enforced ────────────
+//
+// The decision: no commission per client, no margin on the client's subscription, no resale — and
+// not "not yet". An office gets a portal it is not billed for, a count of the work the app did,
+// and payment for work it actually performs. The three arguments are written out in
+// office-offer.ts; the shortest is that software which pays for its own distribution is priced as
+// a channel and never stops being one, in a product whose largest variable cost is reading
+// documents.
+//
+// A position stated in a paragraph is one edit away from being abandoned quietly, and quietly is
+// how it would happen: the first office that pushes hard gets a percentage, nobody writes it down,
+// and the answer stops being true for the other nine. So this gate makes the refusal structural
+// rather than editorial.
+//
+// It watches the two ways a commission arrives:
+//
+//   · through the SCREEN — /voor-boekhouders renders office-offer.ts rather than prose of its own,
+//     so the wording cannot drift away from the position while the position is unchanged;
+//   · through the CODE — a field, a column or a function that computes a cut. Those names may
+//     exist in exactly two places: the module that argues against them, and the arithmetic in
+//     accountant-pricing.ts that prices the refusal. Anywhere else, a percentage is being built,
+//     and it should have to change this gate — and read the reasons — to get in.
+test("[GEEN-PROVISIE] no commission can enter the product without arguing with the reason", () => {
+  const pagina = code("src/app/voor-boekhouders/page.tsx");
+
+  // The page renders the position; it does not restate it. A second copy is a copy that drifts.
+  assert.match(pagina, /OFFICE_GETS\.map/, "the page no longer renders what an office gets");
+  assert.match(pagina, /OFFICE_NEVER_GETS\.heading/);
+  assert.match(pagina, /REJECTED_MODELS\.map/,
+    "the closed shapes are no longer shown — an office reads the silence as room to negotiate");
+
+  // Every declared benefit reaches the screen. A benefit that exists only in the module is a
+  // promise nobody made and nobody can check.
+  assert.strictEqual(unavailableBenefitsFor().length, 0,
+    "a benefit was declared that an office cannot have today");
+  assert.ok(OFFICE_GETS_FOR.length >= 3, "the offer thinned out to almost nothing");
+
+  // ── The code half ──────────────────────────────────────────────────────────────────────────
+  // Names a REFERRAL cut would arrive under.
+  //
+  // Not on this list, and it cost a round to learn why: bare `commission`. It already means
+  // something else in this product and means it in twenty files — the fee a platform or a card
+  // terminal charges the OWNER (pos-commission.ts, the Thuisbezorgd and SumUp settlements, the
+  // result computation that must not book it as a cost). Watching that word makes this gate a
+  // false alarm that the next person switches off, and a gate that is switched off protects
+  // nothing. So it watches names that can only mean "we pay someone for bringing a client".
+  //
+  // Same reason the bare Dutch "provisie" is absent: it stands in the copy that refuses one.
+  const NAMEN =
+    /\b(referralFee|referral_fee|referralRate|referral_rate|referralCommission|affiliateRate|affiliate_rate|affiliateFee|affiliate_fee|kickback|revenueShare|revenue_share|accountantCommission|accountant_commission|kantoorprovisie|kantoor_provisie|provisiePercentage|provisie_percentage|aanbrengvergoeding)\b/;
+
+  // The two files that may hold them, each with the reason it may:
+  //   office-offer.ts        — states the refusal and names the shapes it refuses;
+  //   accountant-pricing.ts  — prices the refusal, so the page can show the sum.
+  const TOEGESTAAN = new Set(["src/lib/office-offer.ts", "src/lib/accountant-pricing.ts"]);
+
+  const bestanden: string[] = [];
+  const loop = (dir: string) => {
+    for (const entry of readdirSync(dir)) {
+      const pad = `${dir}/${entry}`;
+      if (statSync(pad).isDirectory()) loop(pad);
+      else if (/\.(ts|tsx)$/.test(pad) && !/\.test\./.test(pad)) bestanden.push(pad);
+    }
+  };
+  loop("src");
+
+  const gevonden: string[] = [];
+  for (const bestand of bestanden) {
+    if (TOEGESTAAN.has(bestand)) continue;
+    const treffer = readFileSync(bestand, "utf8").match(NAMEN);
+    if (treffer) gevonden.push(`${bestand}: ${treffer[0]}`);
+  }
+  assert.deepStrictEqual(gevonden, [],
+    "a commission is being built outside the module that refuses one — read office-offer.ts first, " +
+      "and if the decision has genuinely changed, change it THERE and here, not in a new file");
+
+  // And the database, where a percentage would outlive any of this code.
+  const migraties: string[] = [];
+  for (const entry of readdirSync("supabase/migrations")) {
+    if (!/\.sql$/.test(entry)) continue;
+    if (NAMEN.test(readFileSync(`supabase/migrations/${entry}`, "utf8"))) migraties.push(entry);
+  }
+  assert.deepStrictEqual(migraties, [],
+    "a migration adds a commission column — a rate in the database outlives every page that denies it");
 });

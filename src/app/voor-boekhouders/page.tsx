@@ -56,6 +56,7 @@ import Link from 'next/link'
 import PublicHeader from '@/components/public-header'
 import PublicFooter from '@/components/public-footer'
 import { ACCOUNTANT_FREE_CLIENTS } from '@/lib/fair-use'
+import { OFFICE_GETS, OFFICE_NEVER_GETS, REJECTED_MODELS } from '@/lib/office-offer'
 import {
   ACCOUNTANT_BANDS,
   ACCOUNTANT_PRICING_ACTIVE,
@@ -466,10 +467,16 @@ export default function VoorBoekhoudersPage() {
             anders ziet staan, gaat terecht twijfelen aan het getal ernaast. */}
         <section style={{ ...card, marginBottom: 32 }}>
           <h2 style={h2}>En wat levert het jou op?</h2>
-          <p style={body}>
-            Geen commissie en geen marge — die zijn er niet, en dat staat verderop bij wat BoekBrug
-            niet doet. Wat je terugkrijgt is tijd, en BoekBrug telt zelf hoeveel werk het per klant
-            heeft gedaan. Zes dingen, over een periode die jij kiest:
+          {OFFICE_GETS.map((voordeel) => (
+            <div key={voordeel.heading} style={{ marginTop: 16 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: '0 0 4px' }}>
+                {voordeel.heading}
+              </h3>
+              <p style={{ ...body, marginTop: 0 }}>{voordeel.body}</p>
+            </div>
+          ))}
+          <p style={{ ...body, marginTop: 18 }}>
+            De zes handelingen die geteld worden, over een periode die jij kiest:
           </p>
           <ul style={{ margin: '14px 0 0', paddingInlineStart: 20, fontSize: 15, lineHeight: 1.9, color: '#3c4043' }}>
             <li>facturen uit de e-mail gehaald</li>
@@ -492,11 +499,25 @@ export default function VoorBoekhoudersPage() {
               bedragen komen uit accountant-pricing.ts, zodat de pagina niet kan blijven staan op
               een tarief dat allang veranderd is — en de provisie is met opzet ruim gerekend: alsof
               élke klant Plus betaalt, terwijl Plus pas geldt boven het eerlijk gebruik. */}
+          <div style={{ marginTop: 20, borderTop: '1px solid #f1f3f4', paddingTop: 18 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: '#202124', margin: '0 0 4px' }}>
+              {OFFICE_NEVER_GETS.heading}
+            </h3>
+            <p style={{ ...body, marginTop: 0 }}>{OFFICE_NEVER_GETS.body}</p>
+            <ul style={{ margin: '10px 0 0', paddingInlineStart: 20, fontSize: 14, lineHeight: 1.8, color: '#5f6368' }}>
+              {REJECTED_MODELS.map((afgewezen) => (
+                <li key={afgewezen.model}>
+                  <strong style={{ fontWeight: 600, color: '#3c4043' }}>{afgewezen.model}</strong> —{' '}
+                  {afgewezen.reason}
+                </li>
+              ))}
+            </ul>
+          </div>
+
           {paidBand && paidBandClients > 0 && (
             <div style={{ marginTop: 20, borderTop: '1px solid #f1f3f4', paddingTop: 18 }}>
               <p style={{ ...body, marginTop: 0 }}>
-                En een provisie per klant? Reken hem na met onze eigen bedragen, bij{' '}
-                {paidBandClients} klanten:
+                En de som erachter, met onze eigen bedragen, bij {paidBandClients} klanten:
               </p>
               <table style={{ width: '100%', borderCollapse: 'collapse', margin: '12px 0 0', fontSize: 15 }}>
                 <tbody>
