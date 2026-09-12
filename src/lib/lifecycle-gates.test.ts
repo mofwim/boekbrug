@@ -31794,3 +31794,34 @@ test("[GEEN-KREDIET] an exhausted account holds the watermark, and is not the do
   // runs to the end of the file and reads the other one. That is the [UREN-EENMALIG] mistake, and
   // it cost a red gate here before this comment replaced it.
 });
+
+// ─── [WACHTER-EERST] The alarm about stopped tasks died with the task it watches ──────────────
+//
+// The morning cron carries the watchman: it reads the heartbeat and mails the operator when
+// another task has stopped. It ran at the END of the route, after the mail round — and the mail
+// round is by far the longest part of the function (one mail per owner, 300 ms between each), so
+// it is by far the most likely part to hit maxDuration.
+//
+// On 12 September 2026 that happened. The run stopped halfway, and the piece that never got its
+// turn was the alarm that reports stopped tasks. A watchman that falls over together with the
+// thing it watches guards nothing — and the failure is silent by construction: no reminders go
+// out, no payment terms are flagged, and every screen looks exactly as it always does.
+test("[WACHTER-EERST] the cron watchman runs before the long part, not after it", () => {
+  const route = code("src/app/api/cron/ochtend/route.ts");
+
+  const wachter = route.indexOf("meldGestopteCrons(pipeline)");
+  const mailronde = route.indexOf("for (const p of profielen)");
+  assert.ok(wachter > 0, "the watchman call is gone from the morning route");
+  assert.ok(mailronde > 0, "the mail round is gone — this gate is measuring the wrong file");
+  assert.ok(wachter < mailronde,
+    "the watchman is behind the mail round again, so it stays silent on exactly the morning the " +
+    "run dies — which is the morning it exists for");
+
+  // It must still be unable to break the morning: an alarm that throws is not worth a lost digest.
+  const rond = route.slice(wachter - 400, mailronde);
+  assert.match(rond, /catch \(e\) \{/, "the alarm is no longer best-effort, so it can fail the mail");
+
+  // And the run must still be finished honestly at the end, or a healthy morning reads as a
+  // stopped one to the very watchman above — on the next day's run.
+  assert.match(route, /await finishCronRun\(pipeline, cronRunId, \{/);
+});
