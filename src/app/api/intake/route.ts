@@ -46,6 +46,9 @@ import {
 import { supplierNameKey } from "@/lib/supplier-registry"
 import { resolveImportTarget, ensureImportedFolder } from "@/lib/bestanden"
 import { computeContentHash } from "@/lib/content-hash"
+// [BEWAAR-EERST] The label the skipped panel counts, so a file we could not read yet gets its
+// "Lees opnieuw" button — see skipped-import.ts and [TWEEDE-KANS].
+import { DOC_TYPE_COULD_NOT_READ } from "@/lib/skipped-import"
 import { buildFolderBreadcrumb } from "@/lib/documents"
 import { importBankStatement } from "@/lib/bank-ingest"
 import { logAuditAction, getClientIP } from "@/lib/audit"
@@ -500,15 +503,46 @@ async function runIntake(req: NextRequest) {
       lookupOwnInvoice: makeOwnInvoiceLookup(supabase, user.id),
     })
   } catch (aiErr) {
-    console.error("[AI-CONFIG-SAFE] intake AI read failed — filing nothing, asking for retry", aiErr)
+    // ── [BEWAAR-EERST] The file is kept BEFORE anything else is decided about it ──────────────
+    //
+    // This branch used to store nothing and answer 503 "probeer het zo meteen opnieuw", and the
+    // comment four lines up said so out loud: "Nothing is stored for the image/PDF path until
+    // AFTER this call, so returning here files nothing." That is a reader outage discarding a
+    // document the owner had already handed us. During an outage of hours it discards it again on
+    // every retry, and the only copy left is the one on their phone.
+    //
+    // The two doors into this app disagreed about that, and the weaker one was the one a HUMAN
+    // stands at: the e-mail sync keeps every attachment it cannot read (saveKeptAttachment) and
+    // holds the watermark so it is read again by itself. Upload threw it away.
+    //
+    // So the bytes are stored first, labelled could_not_read — which is exactly what the skipped
+    // panel counts, so the file arrives there WITH the "Lees opnieuw" button [TWEEDE-KANS] already
+    // on it. No new screen, no new state: the machinery for the second attempt was already built,
+    // it was simply never handed anything from this door.
+    console.error("[BEWAAR-EERST] intake AI read failed — keeping the file, asking nobody to upload it again", aiErr)
+    // ai_processed:false, because it was not. A row that claims a read that never happened is the
+    // kind of small lie the reader-quality panel then reports as a successful read.
+    const keptId = await storeRawIncoming(buffer, file, user.id, supabase, DOC_TYPE_COULD_NOT_READ, source, { aiProcessed: false })
     // [FAIR-USE] Mislukt = niet gelezen = niet geteld. /eerlijk-gebruik §3 belooft dat
     // letterlijk, en het is ook gewoon eerlijk: een storing van ons mag de gebruiker geen
     // document van zijn maandtegoed kosten.
     await gate.release()
-    return NextResponse.json(
-      { error: "We konden dit bestand nu niet lezen. Probeer het zo meteen opnieuw." },
-      { status: 503 },
-    )
+    // [NO-SILENT-EMPTY] And if the STORE failed too, then we really are empty-handed, and the
+    // owner must be told to keep the file — the one answer where "upload it again" is the truth.
+    if (!keptId) {
+      return NextResponse.json(
+        { error: "We konden dit bestand nu niet lezen én niet bewaren. Bewaar het zelf even en probeer het zo meteen opnieuw." },
+        { status: 503 },
+      )
+    }
+    return NextResponse.json({
+      ok: true,
+      destination: "document",
+      documentId: keptId,
+      // Not an error, because nothing went wrong for the owner: the file is in, and the app owes
+      // them the read. It says the one thing that saves them work — do not upload this again.
+      message: "Automatisch inlezen lukt op dit moment niet. Je bestand is bewaard — je hoeft het niet opnieuw te uploaden. Je vindt het bij Inkomend onder \u201eOvergeslagen bij import\u201d, met een knop om het opnieuw te laten lezen.",
+    })
   }
 
   // [FAIR-USE §3] Een oordeel dat vóór enige model-aanroep viel (ongeldige PDF) heeft geen
@@ -1667,6 +1701,10 @@ async function storeRawIncoming(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   aiDocType: string,
   source: IntakeSource,
+  // [BEWAAR-EERST] Default true, which is what every existing caller means: those branches DID run
+  // a reader. The outage branch passes false, because claiming a read that never happened would
+  // make the reader-quality panel count a failure as a success.
+  opts: { aiProcessed?: boolean } = {},
 ): Promise<string | null> {
   const hash = computeContentHash(buffer)
   try {
@@ -1692,7 +1730,7 @@ async function storeRawIncoming(
       user_id: userId, file_name: file.name, file_url: storagePath,
       file_size: buffer.length, file_type: file.type || "application/octet-stream",
       doc_type: "overig", folder_id: folderId, source,
-      ai_processed: true, ai_doc_type: aiDocType, content_hash: hash,
+      ai_processed: opts.aiProcessed ?? true, ai_doc_type: aiDocType, content_hash: hash,
     }).select("id").single()
     if (docErr || !doc) {
       console.error("[STORE-RAW] documents insert failed — the file is NOT kept", { userId, file: file.name, error: docErr?.message })

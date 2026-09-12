@@ -31879,3 +31879,85 @@ test("[WACHTER-EERST] the cron watchman runs before the long part, not after it"
   // stopped one to the very watchman above — on the next day's run.
   assert.match(route, /await finishCronRun\(pipeline, cronRunId, \{/);
 });
+
+// ─── [BEWAAR-EERST] The upload door threw the file away when the reader was down ──────────────
+//
+// The owner's own diagnosis, and the code agreed with him in writing. /api/intake called the
+// reader FIRST and stored nothing until after it answered — the comment above the call said so:
+// "Nothing is stored for the image/PDF path until AFTER this call, so returning here files
+// nothing." On an infra failure the route answered 503 "probeer het zo meteen opnieuw" and kept
+// nothing at all. During an outage of hours it discarded the same document on every retry.
+//
+// The two doors disagreed, and the weaker one was the one a HUMAN stands at: the e-mail sync keeps
+// every attachment it cannot read and holds the watermark so it is read again by itself.
+test("[BEWAAR-EERST] a reader outage never costs the owner the file they just handed over", () => {
+  const intake = code("src/app/api/intake/route.ts");
+
+  const cut = intake.indexOf("} catch (aiErr) {");
+  assert.ok(cut > 0, "the AI read is no longer wrapped — this gate is measuring the wrong branch");
+  // Cut on real code at BOTH ends, never on a comment: `code()` strips comments, and a window with
+  // no closing bound runs to the end of the file ([UREN-EENMALIG]).
+  const eind = intake.indexOf("const decision = decideFromAi(", cut);
+  assert.ok(eind > cut, "the end marker moved — the window would run to the end of the file");
+  const tak = intake.slice(cut, eind);
+
+  // The bytes are kept, labelled as the skipped panel counts them, so [TWEEDE-KANS] puts its
+  // "Lees opnieuw" button on the row without a single new screen.
+  assert.match(tak, /await storeRawIncoming\(buffer, file, user\.id, supabase, DOC_TYPE_COULD_NOT_READ, source/,
+    "the outage branch no longer keeps the file — the owner is being asked to upload it again");
+  assert.match(tak, /aiProcessed: false/,
+    "a row that claims a read which never happened makes the reader-quality panel count a failure " +
+    "as a success");
+
+  // [NO-SILENT-EMPTY] And when the STORE fails too, we really are empty-handed and must say so.
+  // That is the one answer where "upload it again" is the truth rather than a way of losing it.
+  assert.match(tak, /if \(!keptId\) \{/);
+  assert.match(tak, /niet lezen én niet bewaren/);
+
+  // The success answer must not read as an error, and must say the one thing that saves work.
+  assert.match(tak, /je hoeft het niet opnieuw te uploaden/);
+  // Cut on real code at both ends ([UREN-EENMALIG]): the kept-file answer is everything from its
+  // own destination onwards. The 503 ABOVE it is the empty-handed answer and belongs there, so a
+  // window that starts at `if (!keptId)` would contain the very thing it forbids — a gate that can
+  // only ever fail. What must never carry an error status is THIS answer.
+  const antwoordStart = tak.indexOf("destination: \"document\"");
+  assert.ok(antwoordStart > 0, "the kept-file answer moved — this gate is measuring nothing");
+  assert.doesNotMatch(tak.slice(antwoordStart), /status: \d/,
+    "the kept-file answer returns an error status, so every client renders a failure over a success");
+  assert.equal(tak.split("status: 503").length - 1, 1,
+    "there is more than one 503 in this branch — the kept-file path may have grown one");
+
+  // The quota is still returned: our outage may not cost the owner a document of their month.
+  assert.match(tak, /await gate\.release\(\)/);
+});
+
+// ─── [LEZER-STIL] Every job green while not one document is being read ───────────────────────
+//
+// The morning watchman ([BEHEER-GEZOND]) asks whether a job RAN. An app-wide reader refusal throws
+// nothing — it holds — so every per-mailbox sync "succeeds", the run is written ok:true, and the
+// machine reports itself healthy while nothing is read at all. Measured on 12 September 2026: all
+// crons ok:true, and the account was out of credit.
+//
+// The fix deliberately adds no second watchman. A held run is simply not a successful run, so the
+// alarm that already exists fires by itself.
+test("[LEZER-STIL] a run that read nothing because the reader was down is not a green run", () => {
+  const sync = code("src/lib/email-integration.ts");
+  const route = code("src/app/api/cron/email-sync/route.ts");
+
+  // The sync reports it, from exactly the four app-wide refusals the save loop already holds on.
+  assert.match(sync, /readerOutage: configOutageAny \|\| budgetOutageAny \|\| creditOutageAny \|\| transientOutage,/,
+    "the run no longer reports an app-wide reader refusal, so the cron cannot see it");
+  assert.match(sync, /readerOutage: boolean/, "the field is gone from the contract");
+
+  // The cron counts it and — the whole point — lets it fail the run.
+  assert.match(route, /if \(r\?\.readerOutage\) readerOutages \+= 1;/);
+  assert.match(route, /const gezond = failed === 0 && readerOutages === 0;/,
+    "a held run is green again, which is the silence this gate exists for");
+  assert.match(route, /ok: gezond,/);
+  // And the reason travels with it: "nothing was READ" is a different morning from "nothing arrived".
+  assert.match(route, /vastgehouden, niet overgeslagen/);
+
+  // Held is NOT the same as failed: a per-mailbox error throws, a hold does not. Folding them
+  // together would lose the distinction the message above depends on.
+  assert.doesNotMatch(route, /failed \+= 1;\s*\n\s*if \(r\?\.readerOutage\)/);
+});

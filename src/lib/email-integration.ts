@@ -2359,6 +2359,14 @@ export async function syncUserEmails(
   // voortgang": een bijlage die blijft hangen (opnieuw proberen helpt) en een MAANDgrens (opnieuw
   // proberen kan per definitie niets opleveren).
   heldByFairUse: number
+  // [LEZER-STIL] Did the READER refuse this run for a reason that is app-wide — an empty balance,
+  // a wrong key or model, our own spend fuse, or a capacity outage that took the whole batch?
+  //
+  // The cron needs this because a hold is INVISIBLE otherwise: an outage-hold throws nothing, so
+  // every per-user sync "succeeds", the run is written ok:true, and the heartbeat watchman —
+  // which only ever looks at whether a job RAN — reports a healthy morning while not one document
+  // is being read. That is the same silence [BEHEER-GEZOND] was built for, one layer in.
+  readerOutage: boolean
   skipped: number
   // [COULD-NOT-READ] Attachments kept in bestanden because we couldn't read them
   // (never asserted "not an invoice"). Surfaced so the owner can go check them.
@@ -2496,7 +2504,7 @@ export async function syncUserEmails(
   const accessToken = await refreshAccessToken(userId)
   if (!accessToken) {
     console.error('[BOEK-011] Could not obtain a fresh access_token', { userId })
-    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, autoAdvanced: 0, errors: 1, remaining: 0, heldByFairUse: 0, skipped: 0, couldNotRead: 0, keptForBooking: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, autoAdvanced: 0, errors: 1, remaining: 0, heldByFairUse: 0, readerOutage: false, skipped: 0, couldNotRead: 0, keptForBooking: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
   }
 
   // [H3] The per-message "already done" skip set was removed — it was prefix-matched on
@@ -2547,7 +2555,7 @@ export async function syncUserEmails(
     }
   } catch (error) {
     console.error('[BOEK-011] Fetch failed:', error)
-    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, autoAdvanced: 0, errors: 1, remaining: 0, heldByFairUse: 0, skipped: 0, couldNotRead: 0, keptForBooking: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
+    return { provider: tokens.provider, fetched: 0, verified: 0, saved: 0, autoAdvanced: 0, errors: 1, remaining: 0, heldByFairUse: 0, readerOutage: false, skipped: 0, couldNotRead: 0, keptForBooking: 0, balance: { fetched: 0, imported: 0, skipped: 0, couldNotRead: 0, duplicate: 0, pending: 0, balanced: true } }
   }
 
   // [MAILTEKST] The invoices that never had an attachment. A separate, bounded pass appended to
@@ -5200,6 +5208,9 @@ export async function syncUserEmails(
     // the no-progress guard still stops it if a round genuinely advances nothing.
     remaining: windowNarrowed ? Math.max(remainingAfterBatch, 1) : remainingAfterBatch,
     heldByFairUse: hold?.held ?? 0,
+    // [LEZER-STIL] Exactly the four app-wide refusals the save loop already holds on. Not the same
+    // thing as `errors`: those are per-mailbox failures, and a held run has none of them.
+    readerOutage: configOutageAny || budgetOutageAny || creditOutageAny || transientOutage,
     // [BOEK-011] Attachments registered as non-invoice this run — the client
     // counts (saved + skipped) as progress, so a pure-logo batch doesn't trip
     // the no-progress guard.
