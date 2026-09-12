@@ -15437,7 +15437,7 @@ export const MESSAGES = {
 
   'wacht.eigenKeuze': {
     nl: 'Wacht op jou omdat "Duidelijke facturen automatisch inboeken" uit staat. Zet het aan bij Instellingen als dit voortaan vanzelf mag.',
-    ar: 'ينتظرك لأن «قيد الفواتير الواضحة تلقائياً» متوقّف. فعّله في الإعدادات إن أردت أن يجري هذا من تلقاء نفسه.',
+    ar: 'ينتظرك لأن «قيد الفواتير الواضحة تلقائيًا» متوقّف. فعّله في الإعدادات إن أردت أن يجري هذا من تلقاء نفسه.',
     en: 'Waiting for you because "Book clear invoices automatically" is off. Turn it on in Settings if this may happen by itself from now on.',
   },
 
