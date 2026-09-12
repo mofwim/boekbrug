@@ -66,6 +66,34 @@ the application. *Open* means exactly that, and says who has to close it.
 | Every party that processes customer data is named in BOTH documents | `[SUBVERWERKER-ECHT]` — held against the code; this is what found Mollie, Enable Banking and SnelStart missing |
 | Our own identity on a legal document is never invented | `company.ts` + `company.test.ts` — reads `NEXT_PUBLIC_COMPANY_*`, and an unset value renders "(volgt)" rather than a plausible false KVK |
 
+## D2. What the production database actually says
+
+Not the repo — the live database, measured 12 September 2026 through the Supabase API.
+
+| Question | Answer |
+| --- | --- |
+| Do the repo's guard triggers exist in production? | **10 of 10.** Including `invoices_paid_money_frozen`, applied and proven the same day |
+| Do the repo's guard functions exist? | **33 of 34.** The one absence is `document_is_referenced`, scaffolding for a one-time dedup that the inventory already records as expected — its lasting result, `uq_documents_user_content_hash`, is there |
+| Is RLS on for every table? | **Yes, every one.** Six carry RLS with no policies at all, which is deny-all: `ai_spend_daily`, `cron_runs`, `intake_claims`, `mollie_payment_links`, `readiness_cache`, `system_events`. All six are touched only by the server |
+| Can a signed-in user pass someone else's id to a money RPC? | **No.** All nine `p_user_id` money functions check it against `auth.uid()`. The three that do not — the quota functions — are executable by neither `anon` nor `authenticated` |
+| Can a visitor with no account read anything? | **No rows, and no error.** Verified as `anon`: 0 from invoices, 0 from documents, 0 from invoice_lines. Two SECURITY DEFINER oracles ARE reachable by `anon` and must stay so — five policies are declared `TO public`, and a policy expression runs with the caller's privileges. Neither leaks: both derive from `auth.uid()`, NULL there. See `[ANON-ORAKEL]` |
+
+What the linter still reports, and why each is left:
+
+- **6× RLS enabled, no policy** — INFO, and deliberate: deny-all is the most restrictive state there is.
+- **`pg_trgm` in the public schema** — WARN. Moving it would need every fuzzy-search function's
+  `search_path` moved with it; the risk of breaking search outweighs a schema-hygiene warning.
+  Written down rather than done quietly.
+- **12× SECURITY DEFINER callable by signed-in users** — expected. These are the RPCs the app calls,
+  and the row above is the check that matters: every money one validates the caller.
+- **2× SECURITY DEFINER callable by anon** — a false positive for these two, and an expensive one
+  to learn. Revoking them was tried on production: the first attempt (`FROM anon`) applied cleanly
+  and changed nothing, because anon inherits EXECUTE from PUBLIC; the second (`FROM PUBLIC`) took
+  effect and turned an anonymous read of `invoices` into *permission denied for function* instead
+  of zero rows. Rolled back within minutes and verified. `[ANON-ORAKEL]` now fails the build for
+  anyone who tries it again — including the version that silently does nothing.
+- **Leaked-password protection off** — a dashboard toggle, on the owner's list.
+
 ## E. Getting the data back out
 
 | Requirement | Enforced by |

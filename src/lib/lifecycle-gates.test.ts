@@ -32576,3 +32576,81 @@ test("[VAST-IN-DE-DB] a paid outgoing invoice's money cannot be rewritten, by an
   assert.match(migratie, /pg_trigger WHERE tgname = 'invoices_paid_money_frozen'/,
     "no way to ask a live database whether this is actually installed");
 });
+
+// ─── [ANON-ORAKEL] These two oracles must STAY callable by anon, and here is why ───────────────
+//
+// The Supabase security linter flags two SECURITY DEFINER functions as callable by `anon`:
+//
+//     public.acting_for_owner()
+//     public.is_my_accountant_client(uuid)
+//
+// They look exactly like the ones rpc_anon_revoke.sql and anon_mandate_oracle_revoke.sql closed,
+// and revoking them is WRONG. This gate exists because that was tried — on production — and it
+// broke something, and the next reader will have the same good idea.
+//
+// ── WHAT HAPPENED, IN ORDER ──
+//
+//  1. `REVOKE EXECUTE … FROM anon` applied cleanly, reported success, and changed NOTHING.
+//     A function is granted to PUBLIC on creation unless someone says otherwise, and anon
+//     inherits from PUBLIC, so revoking the role removes a grant it never held directly.
+//     Measured right after: has_function_privilege('anon', …) was still true.
+//
+//  2. `REVOKE ALL … FROM PUBLIC, anon` + a re-grant to authenticated and service_role DID take
+//     effect. And it turned an anonymous read of `invoices` from "zero rows" into
+//     "permission denied for function is_my_accountant_client".
+//
+// ── WHY ──
+// Five policies use these functions and are declared TO public, not TO authenticated:
+// invoices_accountant_read, invoices_accountant_update_v2, invoice_lines_select_accountant,
+// documents_accountant_read and acc_status_owner_write. A policy TO public is evaluated by EVERY
+// role, anon included, and a policy expression runs with the CALLER's privileges. Take the grant
+// away and anon does not get "false" — it gets an error.
+//
+// anon_mandate_oracle_revoke.sql knew this: its own state check asserts, in as many words, that
+// is_my_accountant_client is still callable by anon. That line was the warning, and it was read
+// too late.
+//
+// ── AND NOTHING LEAKS ──
+// Both derive their answer from auth.uid(), which is NULL for anon, so a stranger gets NULL and
+// false for every input. Verified on production after the rollback: anon reads 0 rows from
+// invoices, documents and invoice_lines, with no error and no data. The linter finding is a
+// false positive for these two, and it is cheaper to record that here than to re-derive it.
+test("[ANON-ORAKEL] nothing revokes the two oracles that TO-public policies need", () => {
+  const dir = "supabase/migrations";
+  const bestanden = readdirSync(dir).filter((f) => f.endsWith(".sql"));
+
+  const BESCHERMD = ["acting_for_owner", "is_my_accountant_client"];
+  let revokes = 0;
+
+  for (const f of bestanden) {
+    for (const regel of readFileSync(`${dir}/${f}`, "utf8").split("\n")) {
+      const kaal = regel.trim();
+      if (kaal.startsWith("--") || !/^REVOKE\b/i.test(kaal)) continue;
+
+      // 1. The two that must never be revoked from the roles a TO-public policy is evaluated by.
+      for (const fn of BESCHERMD) {
+        if (!kaal.includes(fn)) continue;
+        assert.doesNotMatch(kaal, /\b(PUBLIC|anon)\b/,
+          `${f}: "${kaal}" takes ${fn} away from a role that TO-public policies are evaluated by. ` +
+          "An anonymous read then raises 'permission denied for function' instead of returning " +
+          "zero rows. Tried on production once; see the note above this test.");
+      }
+
+      // 2. The lesson that still stands for every OTHER function: revoking the role alone is a
+      //    no-op, because the grant comes from PUBLIC.
+      if (/\banon\b/.test(kaal)) {
+        revokes += 1;
+        assert.match(kaal, /FROM\s+PUBLIC/i,
+          `${f}: "${kaal}" revokes from anon without revoking from PUBLIC — anon inherits EXECUTE ` +
+          "from PUBLIC, so this line applies cleanly and changes nothing");
+      }
+    }
+  }
+  assert.ok(revokes >= 2, `only ${revokes} anon revokes found — the scan broke, and a broken scan passes`);
+
+  // The earlier migration's state check is the record that this is deliberate. If someone deletes
+  // that line, the reason disappears with it and the next attempt has nothing to run into.
+  assert.match(readFileSync("scripts/migration-inventory.ts", "utf8"),
+    /has_function_privilege\('anon', 'public\.is_my_accountant_client\(uuid\)', 'EXECUTE'\)/,
+    "the state check that records anon SHOULD still reach is_my_accountant_client is gone");
+});
