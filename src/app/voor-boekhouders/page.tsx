@@ -59,8 +59,11 @@ import { ACCOUNTANT_FREE_CLIENTS } from '@/lib/fair-use'
 import {
   ACCOUNTANT_BANDS,
   ACCOUNTANT_PRICING_ACTIVE,
+  REFERRAL_RATE_HYPOTHESIS,
   euro,
+  firstPaidBand,
   inclBtw,
+  referralCeilingExclBtw,
 } from '@/lib/accountant-pricing'
 
 export const metadata: Metadata = {
@@ -189,10 +192,9 @@ const NIET: ReadonlyArray<{ vraag: string; antwoord: string }> = [
     vraag: 'Krijg ik een vergoeding of marge als ik klanten aanbreng?',
     antwoord:
       'Nee. Er is geen commissie, geen marge en geen wederverkoop, en er is er ook geen in de maak — ' +
-      'noch gebouwd, noch geprijsd. Wat je terugkrijgt is tijd, en die telt de app voor je: zie ' +
-      '"En wat levert het jou op?" hierboven. Wat je klant betaalt gaat volledig naar het gebruik ' +
-      'van zijn eigen administratie, en jouw portaal is gratis — daar zit dus ook geen opslag in ' +
-      'die via jou zou lopen.',
+      'noch gebouwd, noch geprijsd. Twee redenen, en de tweede is de jouwe: een betaalde aanbeveling ' +
+      'is voor je klant minder waard dan een onbetaalde, en je zou hem moeten melden. De rekensom ' +
+      'staat onder "En wat levert het jou op?" hierboven.',
   },
   {
     vraag: 'Doet BoekBrug de aangifte?',
@@ -239,6 +241,13 @@ const NIET: ReadonlyArray<{ vraag: string; antwoord: string }> = [
 ]
 
 export default function VoorBoekhoudersPage() {
+  // [PROVISIE-REKENSOM] The band an office first pays for — the honest size to compare a
+  // commission against, and null-safe because a table of only free bands compares against nothing.
+  const paidBand = firstPaidBand()
+  // An open-ended first paid band (upTo null) has no size to name, so the block renders nothing
+  // rather than comparing "bij 0 klanten" — a sum with a made-up left-hand side.
+  const paidBandClients = paidBand?.upTo ?? 0
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f8f9fa', fontFamily: 'var(--font-sans), system-ui, sans-serif' }}>
       <PublicHeader />
@@ -477,6 +486,50 @@ export default function VoorBoekhoudersPage() {
             je van ons gelooft. Vul je eigen minuten per handeling in en de rekensom is van jou, en
             zichtbaar: jouw minuten × ons aantal.
           </p>
+
+          {/* ── [PROVISIE-REKENSOM] "En een provisie per klant dan?" ──────────────────
+              "Nee" op zichzelf leest als "nog niet", dus staat het antwoord er als som. Beide
+              bedragen komen uit accountant-pricing.ts, zodat de pagina niet kan blijven staan op
+              een tarief dat allang veranderd is — en de provisie is met opzet ruim gerekend: alsof
+              élke klant Plus betaalt, terwijl Plus pas geldt boven het eerlijk gebruik. */}
+          {paidBand && paidBandClients > 0 && (
+            <div style={{ marginTop: 20, borderTop: '1px solid #f1f3f4', paddingTop: 18 }}>
+              <p style={{ ...body, marginTop: 0 }}>
+                En een provisie per klant? Reken hem na met onze eigen bedragen, bij{' '}
+                {paidBandClients} klanten:
+              </p>
+              <table style={{ width: '100%', borderCollapse: 'collapse', margin: '12px 0 0', fontSize: 15 }}>
+                <tbody>
+                  <tr>
+                    <td style={{ padding: '8px 0', color: '#5f6368' }}>
+                      {Math.round(REFERRAL_RATE_HYPOTHESIS * 100)}% provisie, als ze állemaal Plus
+                      betalen
+                    </td>
+                    <td style={{ padding: '8px 0', textAlign: 'end', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                      {euro(referralCeilingExclBtw(paidBandClients))} p/m
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={{ padding: '8px 0', color: '#5f6368', borderTop: '1px solid #f1f3f4' }}>
+                      {ACCOUNTANT_PRICING_ACTIVE
+                        ? 'Wat het portaal je kost'
+                        : 'Wat je nu niet betaalt voor het portaal'}
+                    </td>
+                    <td style={{ padding: '8px 0', textAlign: 'end', fontWeight: 600, whiteSpace: 'nowrap', borderTop: '1px solid #f1f3f4' }}>
+                      {euro(paidBand.monthlyExclBtw)} p/m
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <p style={{ ...body, marginTop: 12 }}>
+                Bedragen excl. btw. De bovenste regel is een <em>plafond</em>: de meeste klanten
+                betalen niets, want Plus geldt pas boven het eerlijk gebruik.{' '}
+                {ACCOUNTANT_PRICING_ACTIVE
+                  ? 'De bovenste regel betalen wij uit de onderste — dat is geld rondpompen, en jij houdt het verschil niet over.'
+                  : 'Om je de bovenste regel te kunnen betalen, zouden we de onderste bij je in rekening moeten brengen. Dat is geen verdienmodel, dat is geld rondpompen.'}
+              </p>
+            </div>
+          )}
         </section>
 
         {/* ── [DPA-BEREIKBAAR] De vraag die elk kantoor als eerste stelt ──────────── */}

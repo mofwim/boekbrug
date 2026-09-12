@@ -45,6 +45,9 @@ import { workKey } from "../modules/accountant/work-grouping";
 import { decide as decideAutonomy } from "./autonomy-scope";
 // [WERK-GEDAAN] De weigering als WAARDE — een estimateMinutes die 42 teruggeeft haalt elke broncontrole.
 import { workDoneLedger as workDoneLedgerFor, estimateMinutes as estimateMinutesFor } from "./work-done";
+import { firstPaidBand, referralCeilingExclBtw, REFERRAL_RATE_HYPOTHESIS } from "./accountant-pricing";
+import { PLUS_PRICE_EUR } from "./fair-use";
+import { round2 } from "./invoice-totals";
 // [SEGMENT-VOORDEUR] De drie deuren, en alles wat ze beloven.
 import { SEGMENT_PAGES, claimedRoutes } from "./segment-pages";
 import { VAKWOORDEN, NOT_A_DOOR } from "./vakwoorden";
@@ -32731,4 +32734,69 @@ test("[WERK-GEDAAN-DEUR] the accountant page answers what an office gets, in bot
   // had eight, and adding the ninth is what surfaced it.
   assert.doesNotMatch(pagina, /(Vier|Vijf|Zes|Zeven|Acht|Negen) dingen waar je waarschijnlijk/,
     "the honest-limits intro states a number of items instead of just introducing them");
+});
+
+// ─── [PROVISIE-REKENSOM] "Nee" on a commission is only an answer with the sum beside it ───────
+//
+// Offices do not ask "do I get a cut" out of greed; they ask because every other platform in their
+// inbox offers one, and an answer of "no" alone reads as "not yet, keep asking". So the page
+// answers with two amounts out of our own price file: what a commission could be worth at its
+// most generous, and what the same office is not being billed for the portal.
+//
+// What this gate protects is the thing that makes those two amounts worth printing — that they are
+// COMPUTED, both of them, from the constants that also drive the Terms and the billing code. A
+// euro amount typed into the page is a number that keeps standing after the price under it moved,
+// and this page is read by professionals who will check it against /voorwaarden.
+//
+// The ceiling is deliberately generous to the argument it loses to: it assumes every linked client
+// pays Plus, while Plus is only charged above the fair-use boundary. If a later edit makes it
+// stingy instead — a rate of nothing, a count of nothing — the comparison stops being honest, so
+// the arithmetic itself is asserted here and not only in accountant-pricing.test.ts.
+test("[PROVISIE-REKENSOM] the commission answer is computed from the price file, never typed", () => {
+  const pagina = code("src/app/voor-boekhouders/page.tsx");
+
+  const sectie = pagina.slice(pagina.indexOf("En wat levert het jou op?"));
+  assert.ok(sectie.length > 0 && pagina.includes("En wat levert het jou op?"),
+    "the section that answers what an office gets is gone");
+
+  // Both sides of the comparison, and both out of the same module.
+  assert.match(sectie, /referralCeilingExclBtw\(paidBandClients\)/,
+    "the commission side is no longer computed — a typed amount outlives the price under it");
+  assert.match(sectie, /euro\(paidBand\.monthlyExclBtw\)/,
+    "the portal side is no longer read from the band table");
+  assert.match(sectie, /Math\.round\(REFERRAL_RATE_HYPOTHESIS \* 100\)/,
+    "the percentage is typed instead of rendered from the constant it argues about");
+
+  // No euro amount of its own anywhere in that section. euro() renders "€ 49,00"; a literal is a
+  // second copy of a price, which is exactly how /voorwaarden and this page drifted apart before.
+  const bedrag = sectie.match(/€\s?\d/);
+  assert.strictEqual(bedrag, null,
+    `the section prints a hard-coded amount (${bedrag?.[0]}) instead of rendering one`);
+
+  // The claim under the table only holds while the portal is free. Both wordings must be present,
+  // each behind the switch: an activated price with "wat je nu niet betaalt" above it is a lie
+  // that no test outside this one would catch, because the numbers would still be right.
+  assert.match(sectie, /ACCOUNTANT_PRICING_ACTIVE/,
+    "the wording no longer follows the master switch — it claims the portal is free unconditionally");
+  assert.match(sectie, /Wat je nu niet betaalt voor het portaal/);
+  assert.match(sectie, /Wat het portaal je kost/);
+
+  // And the sum itself, at the size the page compares: generous to the commission, or the page is
+  // arguing against a straw figure.
+  const klanten = firstPaidBand()?.upTo ?? 0;
+  assert.ok(klanten > 0, "there is no sized paid band to compare against");
+  const plafond = referralCeilingExclBtw(klanten);
+  assert.ok(plafond > 0, "the commission ceiling computes to nothing — the comparison is empty");
+  assert.strictEqual(plafond, round2(klanten * round2(PLUS_PRICE_EUR / 1.21) * REFERRAL_RATE_HYPOTHESIS),
+    "the ceiling is no longer clients × the ex-btw Plus price × the rate");
+
+  // The honest limits list carries the same "no" in words, and points here for the sum.
+  assert.match(pagina, /Krijg ik een vergoeding of marge als ik klanten aanbreng\?/);
+  assert.match(pagina, /geen commissie, geen marge en geen wederverkoop/);
+  // The pointer is one sentence that the source happens to write as two joined literals, so the
+  // joins are closed before matching. A gate that only passes while a paragraph is wrapped one
+  // particular way goes red on a reflow that changed nothing a reader can see.
+  const zinnen = pagina.replace(/'\s*\+\s*'/g, "");
+  assert.match(zinnen, /De rekensom staat onder "En wat levert het jou op\?" hierboven/,
+    "[KNOP-IN-ZIN] the entry points at a section by name — the pointer and the heading move together");
 });
