@@ -112,3 +112,42 @@ right of that line. Feed known-WRONG extraction results through the real auto-bo
 are auto-booked instead of held. That measures the guard, not the reader, and it needs no corpus.
 
 Measuring the reader still needs the corpus. Both are real work; only one is blocked on documents.
+
+### Built: `src/lib/escape-rate.test.ts`
+
+Sixteen known-wrong reads, phrased as the signals the pipeline actually carries, handed to the real
+`shouldAutoAdvanceInvoice`. All sixteen are held. The clean invoice still advances — asserted
+separately, because a gate that refuses everything has an escape rate of zero and is worthless.
+
+Negative-controlled: removing the zero-btw veto lets the silently-zeroed voorbelasting through,
+removing the grounding veto lets a total the document never contained through, and a
+refuse-everything gate fails the hold-rate half. Each surfaces by name.
+
+### The coverage map, and it is not all green
+
+| critical field | witnesses outside the reader | a confidently-wrong read |
+|---|---|---|
+| amount | text grounding · placement on the page · e-invoice · arithmetic | **held** |
+| btw | printed split · explicit-rate rule · arithmetic | **held** |
+| document type | four independent flags + tax-kind | **held** |
+| invoice number | placeholder detection | **held** |
+| **date** | **none** — only the reader's own confidence | **auto-books** |
+| **supplier** | **none** — only the reader's own confidence | **auto-books** |
+
+The money field has three witnesses from outside the reader. The date and the supplier have none:
+they are checked against the reader's confidence in itself, and a reader that turns 01-02-2026 into
+02-01-2026 is not unsure — it is confident and wrong. Nothing downstream contradicts it either,
+because no amount changes.
+
+A wrong date moves the cost and its voorbelasting into the wrong quarter, which surfaces as a
+correction to an aangifte that was already filed. A wrong supplier lands it on the wrong crediteur.
+
+Both gaps are **pinned by a test that asserts they currently escape**, not asserted away — so they
+appear in the coverage map instead of being found by an accountant. When a witness is added, that
+test goes red and says so.
+
+**What a date witness would look like**, by analogy with the amount: the same three questions.
+Is the date literally printed in the document's text? Is it where a date is printed (labelled
+`factuurdatum`, not a delivery or payment-term date)? Does the supplier's e-invoice agree? The
+machinery for all three already exists for the total — it is the questions that were never asked
+of the date.
