@@ -15,7 +15,10 @@ import { verifyInvoiceFromPdf } from "@/lib/ai";
 // [BEWAAR-EERST] The one keep-the-file path, shared with /api/intake and the bank door.
 import { storeRawIncoming } from "@/lib/store-raw-incoming";
 import { DOC_TYPE_COULD_NOT_READ } from "@/lib/skipped-import";
-import { resolveSupplierForImport } from "@/lib/supplier-registry";
+// [LEVERANCIER-INTAKE] The shared step, not the bare registry. The order is the rule:
+// the IBAN-change check runs BEFORE resolution, because resolution may attach the very
+// number printed on this invoice to the supplier and then the check answers itself.
+import { mergeSafecore, resolveSupplierAtIntake } from "@/lib/intake-supplier";
 import { resolveImportTarget } from "@/lib/bestanden";
 // [BRIDGE-EXTRACT] byte-hash dedup — één bestand → één hash → één record
 import { computeContentHash } from "@/lib/content-hash";
@@ -39,6 +42,7 @@ import { trashedDuplicateCleared } from "@/lib/trashed-dedup";
 import { supplierBtwForInvoice } from "@/lib/vendor-identity"
 // [NUL-GRONDSLAG] What may be stored when the split was not read — see read-amounts.ts.
 import { amountsToStore, markUnexplainedZeroBtw } from "@/lib/read-amounts";
+import { removeOriginals, storeOriginal } from "@/lib/document-storage";
 
 export async function POST(req: NextRequest) {
   return withCrashNet(
@@ -407,9 +411,7 @@ const dup = await findSemanticDuplicate(
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   const storagePath = `${user.id}/incoming/${Date.now()}-${safeName}`;
 
-  const { error: uploadError } = await supabase.storage
-    .from("documents")
-    .upload(storagePath, buffer, { contentType: file.type, upsert: false });
+  const { error: uploadError } = await storeOriginal(supabase, storagePath, buffer, { contentType: file.type, upsert: false });
   // [R7] A swallowed upload error used to let the flow insert an invoice with
   // pdf_url/document_id = null — a counted invoice whose evidence is UNRETRIEVABLE (the
   // closing package resolves an incoming invoice's PDF via document_id). Fail loudly so
@@ -460,7 +462,7 @@ const dup = await findSemanticDuplicate(
   // [R7] The document row IS the evidence link. If it fails to write, roll back the
   // stored file and stop — never create an evidence-less invoice.
   if (docErr || !doc) {
-    await supabase.storage.from("documents").remove([storagePath]);
+    await removeOriginals(supabase, [storagePath]);
     // [DEDUP-ATOMIC] A concurrent double-submit that raced past the byte-hash SELECT above trips the
     // (user_id, content_hash) UNIQUE index here (23505). Treat it like the SELECT-found duplicate so
     // no second invoice is created — return a duplicate, not a 500 that invites a retry.
@@ -492,7 +494,14 @@ const dup = await findSemanticDuplicate(
   // [SUPPLIER-REGISTRY] Same canonical-supplier resolution as the email-sync path, so a manually
   // uploaded invoice unifies under the same supplier (and adopts its canonical name) instead of
   // creating yet another name variant. Best-effort: null → raw name + null supplier_id.
-  const uploadedSupplier = await resolveSupplierForImport(pipeline, user.id, {
+  //
+  // [LEVERANCIER-INTAKE] Through the SHARED step, which does the IBAN-change check first. This door
+  // called the bare registry and never checked at all, so a bill uploaded from the camera roll —
+  // the one an owner is most likely to pay by hand, off the paper — was the single incoming path
+  // with no answer to "is this account number the one we know for this supplier". Silence and
+  // "unchanged" are indistinguishable to the person about to pay, which is why the flags below are
+  // written even when nothing changed.
+  const uploadedSupplier = await resolveSupplierAtIntake(pipeline, user.id, {
     name: verification.vendor,
     iban: verification.vendor_iban ?? null,
     kvk: verification.vendor_kvk ?? null,
@@ -507,6 +516,35 @@ const dup = await findSemanticDuplicate(
     totalIncBtw: verification.total_inc_btw, amount: verification.amount,
   });
 
+  // [BRIDGE-EXTRACT] per-field AI confidence → the modal flags weak fields.
+  // [DEDUP-SOFT] Merge the possible-duplicate signal so the verify queue shows "mogelijk dubbel
+  // met X" and the invoice is held out of auto-confirm.
+  // [NUL-GRONDSLAG] …and the fallback's zero BTW says so, wrapped around whatever the dedup
+  // markers left, so no existing note is dropped to make room for it.
+  let fieldConfidence = markUnexplainedZeroBtw(
+    (dedupCheckFailed
+      ? markDuplicateCheckUnavailable(mergePossibleDuplicate(verification.field_confidence ?? null, possibleDup))
+      : mergePossibleDuplicate(verification.field_confidence ?? null, possibleDup)) as typeof verification.field_confidence,
+    storedAmounts,
+    {
+      btwRate: verification.btw_rate,
+      shifted: (verification.field_confidence as { _btw_verlegd?: unknown } | null)?._btw_verlegd != null,
+    },
+  );
+
+  // [LEVERANCIER-INTAKE] The IBAN-check verdict, onto the SAME object the health classifier reads.
+  // Only when there is something to say: writing an empty `_safecore` where there was none turns
+  // "nothing to report" into a value that is truthy everywhere else.
+  // A `null` field_confidence is the common case for a clean read, and it is exactly the case that
+  // must still carry this verdict — so the object is REPLACED, not mutated in place. Mutating
+  // `(fieldConfidence ?? {})` edits a throwaway and writes null, which is the same shape of defect
+  // this whole change is closing.
+  if (Object.keys(uploadedSupplier.safecore).length > 0) {
+    const base = (fieldConfidence ?? {}) as Record<string, unknown>;
+    base._safecore = mergeSafecore(base, uploadedSupplier.safecore);
+    fieldConfidence = base as typeof fieldConfidence;
+  }
+
   const { data: invoice, error: dbError } = await pipeline
     .from("invoices")
     .insert({
@@ -517,8 +555,8 @@ const dup = await findSemanticDuplicate(
       // verifies. 'processing' is excluded from the `shared` GENERATED expression.
       status: "processing",
       source: "upload",
-      supplier_id: uploadedSupplier?.id ?? null,
-      client_name: uploadedSupplier?.name || verification.vendor || "Onbekende afzender",
+      supplier_id: uploadedSupplier.supplierId,
+      client_name: uploadedSupplier.supplierName || verification.vendor || "Onbekende afzender",
       // [BTW-NUMMER-BEWAARD] Op een inkoopfactuur is client_btw_number het nummer van de
       // LEVERANCIER — dezelfde rij draagt zijn naam in client_name. Het werd gelezen en nergens
       // opgeslagen, waardoor de EU-inkopenlijst (icp.ts, rubriek 4b) voor iedereen leeg bleef.
@@ -554,16 +592,7 @@ const dup = await findSemanticDuplicate(
       // dubbel met X" and the invoice is held out of auto-confirm.
       // [NUL-GRONDSLAG] …and the fallback's zero BTW says so, wrapped around whatever the dedup
       // markers left, so no existing note is dropped to make room for it.
-      field_confidence: markUnexplainedZeroBtw(
-        (dedupCheckFailed
-          ? markDuplicateCheckUnavailable(mergePossibleDuplicate(verification.field_confidence ?? null, possibleDup))
-          : mergePossibleDuplicate(verification.field_confidence ?? null, possibleDup)) as typeof verification.field_confidence,
-        storedAmounts,
-        {
-          btwRate: verification.btw_rate,
-          shifted: (verification.field_confidence as { _btw_verlegd?: unknown } | null)?._btw_verlegd != null,
-        },
-      ),
+      field_confidence: fieldConfidence,
       // [DEDUP-CREDITNOTA / I3] A creditnota keeps NEGATIVE amounts (numSigned) and must be
       // TYPED as one, exactly like the email-sync and intake paths — otherwise the read-time
       // health classifier picks the positive-expecting arithmetic gate and a legitimately
@@ -579,7 +608,7 @@ const dup = await findSemanticDuplicate(
     // its content_hash would otherwise make the byte-hash dedup BLOCK a re-upload (409),
     // trapping the owner with a file they can neither re-add nor see as an invoice.
     await pipeline.from("documents").delete().eq("id", documentId);
-    await supabase.storage.from("documents").remove([storagePath]);
+    await removeOriginals(supabase, [storagePath]);
     return NextResponse.json({ error: dbError.message }, { status: 500 });
   }
 

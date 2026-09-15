@@ -62,17 +62,19 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit
 import { gateFairUse, type FairUseGate } from '@/lib/fair-use-gate'
 import { logAuditAction, getClientIP } from '@/lib/audit'
 import { getActingFor, getActingForClient } from '@/lib/acting-for-server'
-import { invoiceOwnerId, isActingForOther, canSendInvoice } from '@/lib/acting-for'
+import { invoiceOwnerId, isActingForOther } from '@/lib/acting-for'
+import { contextFromActing } from '@/lib/access/context'
+import { authorize } from '@/lib/access/decision'
 import { runBankAutoConfirm } from '@/lib/bank-auto-confirm'
 // [BETAALBLOK] De betaalgegevens die in de mail horen — zie stap 13c en src/lib/pay-block.ts.
 import { payBlockForInvoice } from '@/lib/pay-link'
 import * as Sentry from '@sentry/nextjs'
+import { getOriginal, storeOriginal } from '@/lib/document-storage'
 
 // [FACTUUR-A] Storage bucket for generated invoice PDFs.
 // TODO(M): verify this bucket name in Supabase Storage before deploy —
 // upload is best-effort and never blocks legal delivery, but pdf_url
 // storage only works once the name is right.
-const PDF_BUCKET = 'documents'
 
 // [SEND-DURATION] This route had no ceiling, and it is the heaviest — and legally the most
 // consequential — request in the app: mint the number, commit it, render the PDF (with a retry),
@@ -214,7 +216,16 @@ export async function POST(request: NextRequest) {
     // Dubbel? Ja. Maar dit is het moment waarop een geraden invoiceId binnenkomt, en de
     // gevolgen van hier doorlopen zijn onomkeerbaar: een nummer uitgeven, een PDF versturen
     // naar de klant van iemand anders. Voor die prijs is één extra if goedkoop.
-    if (!canSendInvoice(acting, invoice)) {
+    //
+    // [EEN-POORT] That second lock is now the CANONICAL decision and names the capability:
+    // `invoice.send`, out of the one catalogue, instead of a role test only this file can read.
+    // It is the same rule — authorize() and canSendInvoice() are asserted equal for all three
+    // roles in access/decision.test.ts — and deliberately the same ANSWER: a 404, not a 403,
+    // because a guessed id must not learn that the row exists.
+    if (!authorize(contextFromActing(acting), 'invoice.send', {
+      ownerId: invoice.sender_id,
+      createdBy: invoice.created_by,
+    }).allowed) {
       return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
     }
 
@@ -583,7 +594,7 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         )
       }
-      const { data: blob, error: dlErr } = await createPipelineClient().storage.from('documents').download(pad)
+      const { data: blob, error: dlErr } = await getOriginal(createPipelineClient(), pad)
       if (dlErr || !blob) {
         return NextResponse.json(
           { error: 'De bijlage kon niet worden gelezen. Er is nog niets verstuurd — probeer het zo meteen opnieuw of kies een ander bestand.' },
@@ -607,6 +618,17 @@ export async function POST(request: NextRequest) {
     // van de eigenaar is voor de sessie van een medewerker onleesbaar, en een mislukte
     // plandetectie zou het bedrijf stilzwijgend op het gratis plan zetten.
     if (!resend) {
+      // [EEN-POORT] Issuing the number is `invoice.finalize`, and that is a different capability
+      // from sending: art. 35 makes a number irreversible, so the line that mints one asks for
+      // itself by name rather than riding on the permission checked at step 4. Today the two
+      // answers coincide for all three roles; the day they stop coinciding, this is the line that
+      // has to notice.
+      if (!authorize(contextFromActing(acting), 'invoice.finalize', {
+        ownerId: invoice.sender_id,
+        createdBy: invoice.created_by,
+      }).allowed) {
+        return NextResponse.json({ error: 'Factuur niet gevonden' }, { status: 404 })
+      }
       gate = await gateFairUse({
         client: isActingForOther(acting) ? createPipelineClient() : supabase,
         userId: ownerId,
@@ -920,9 +942,7 @@ export async function POST(request: NextRequest) {
       // zou zijn: een verstuurde factuur ligt vast ([ISSUED-STAYS]), dus de PDF die onder dit
       // nummer staat hoort nooit te veranderen. Bestaat het object al, dan is dat de JUISTE
       // eindtoestand en niet een mislukking — pdf_url wijst er al naar sinds de eerste verzending.
-      const { error: uploadError } = await supabase.storage
-        .from(PDF_BUCKET)
-        .upload(pdfPath, pdfBuffer, { contentType: 'application/pdf', upsert: false })
+      const { error: uploadError } = await storeOriginal(supabase, pdfPath, pdfBuffer, { contentType: 'application/pdf' })
 
       if (!uploadError) {
         await supabase

@@ -6,7 +6,9 @@
 // environment). They match the applied migrations column for column:
 //
 //   · company_members            — supabase/migrations/company_members_sales_role.sql
-//   · company_member_invites     — same migration
+//   · company_member_invites     — same migration; `token` is GONE and `token_hash` took its
+//                                 place (acting_for_hardening.sql, [ACTING-FOR]) — het geheim
+//                                 staat alleen nog in de mail, de tabel draagt de hash
 //   · invoices.created_by        — same migration (uuid, nullable, FK → profiles.id)
 //   · clients.created_by         — same migration
 //   · invoice_lines.unit         — supabase/migrations/invoice_line_unit.sql (text, nullable)
@@ -112,6 +114,7 @@ export type Database = {
           created_at: string
           office_name: string
           published: boolean
+          languages: string[]
           specialisms: string[]
           updated_at: string
           website: string | null
@@ -124,6 +127,7 @@ export type Database = {
           created_at?: string
           office_name?: string
           published?: boolean
+          languages?: string[]
           specialisms?: string[]
           updated_at?: string
           website?: string | null
@@ -136,6 +140,7 @@ export type Database = {
           created_at?: string
           office_name?: string
           published?: boolean
+          languages?: string[]
           specialisms?: string[]
           updated_at?: string
           website?: string | null
@@ -1217,7 +1222,7 @@ export type Database = {
           owner_id: string
           role: string
           status: string
-          token: string
+          token_hash: string | null
         }
         Insert: {
           created_at?: string
@@ -1227,7 +1232,7 @@ export type Database = {
           owner_id: string
           role?: string
           status?: string
-          token?: string
+          token_hash?: string | null
         }
         Update: {
           created_at?: string
@@ -1237,7 +1242,7 @@ export type Database = {
           owner_id?: string
           role?: string
           status?: string
-          token?: string
+          token_hash?: string | null
         }
         Relationships: [
           {

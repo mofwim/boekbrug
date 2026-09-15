@@ -33,6 +33,8 @@ import {
 import { applyConfidenceVeto } from "./bank-match-confidence";
 import { rowToTransaction, type BankTransactionDbRow } from "./bank-import";
 import { planBatchAutoConfirm, type BatchCandidateInvoice } from "./bank-batch-reconcile";
+// [STORNO-GEEN-BETALING] The bank's own word for "this money came back" — see direct-debit.ts.
+import { readDirectDebit, isBankStatedReversal } from "./direct-debit";
 import { recordPaymentLinks } from "./bank-tx-links";
 import { logAuditAction } from "./audit";
 import { createNotification } from "./notifications";
@@ -188,7 +190,11 @@ export async function runBankAutoConfirm(args: {
   const txRows = await fetchAllRows((from, to) => {
     const q = pipeline
       .from("bank_transactions")
-      .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, invoice_id, status")
+      // [DD-NAAR-MATCHER] type_code / mandate_id / creditor_id ride along, and on THIS pass they
+      // matter most: it is the one that books without anyone watching. Without them scorePair
+      // cannot see that a credit is a returned collection, and the measured case — a bounced
+      // incasso booking an open sales invoice to the same company as PAID — happens here.
+      .select("id, date, amount, description, counterpart_name, counterpart_iban, reference, invoice_id, status, type_code, mandate_id, creditor_id")
       .eq("user_id", userId)
       .eq("status", "pending");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -263,6 +269,20 @@ export async function runBankAutoConfirm(args: {
   for (const row of txRows as BankTransactionDbRow[]) {
     const txId = row.id;
     if (!txId || row.status !== "pending" || row.invoice_id || bookedTxIds.has(txId)) continue;
+
+    // [STORNO-GEEN-BETALING] The BATCH pass never asks scorePair, so the cap that holds a returned
+    // collection back on the 1:1 path does not exist here — this loop goes straight from "the
+    // printed numbers sum to the amount" to book_bank_batch, all-or-nothing and silent.
+    //
+    // Refused rather than lowered, and that is the opposite choice from the 1:1 path on purpose:
+    // there a cap leaves the pair LISTED for the owner, which is the whole value. Here there is no
+    // dial and no listing — there is a silent multi-invoice booking or nothing — so the only
+    // honest lowering is to leave it for the human. /bank still shows the line, its numbers and
+    // its storno card.
+    if (isBankStatedReversal(readDirectDebit({
+      typeCode: row.type_code, mandateId: row.mandate_id, creditorId: row.creditor_id,
+      text: `${row.description ?? ""} ${row.reference ?? ""}`, amount: row.amount,
+    }))) continue;
 
     // Candidates exclude anything already booked this run, so two batches can't claim one invoice.
     // [PARTIAL-PAY] The batch pass draws from allInvoices, NOT the 1:1 pool: that pool drops every
@@ -566,12 +586,49 @@ export async function runBankAutoConfirm(args: {
       [invoiceId]: Math.abs(Number(inv.total_inc_btw ?? 0)),
     });
     if (!linksRecorded) {
+      // [KOPPELRIJ-OF-NIETS] The paragraph above states the consequence exactly — «geld dat binnen
+      // is, als schuld» — and this branch used to REPORT it and then fall through to the success
+      // push below. So the one outcome that paragraph calls unacceptable was counted as a
+      // successful booking, told to the owner as one, and written to the logbook as one.
+      //
+      // (The name of that push is deliberately NOT written here. A check that reads this file raw
+      // rather than through code() would cut its window on this comment and measure the wrong
+      // thing — which is exactly what happened to the first re-measurement of this very fix.)
+      //
+      // Step (b) already rolls back when ITS write fails. This is the same fault one step later,
+      // and it gets the same answer: undo both writes and leave the line for a human. Two writes
+      // to undo now, not one, because the tx link DID land.
+      //
+      // Rolling back is the safe direction for an additional reason: this pass only books
+      // fully-open invoices, so nothing is lost by refusing — the line comes back next run, or the
+      // owner confirms it with one tap. Booking with no reversal index is what cannot be undone.
+      const rollbackTx: Record<string, unknown> = { status: "pending", invoice_id: null };
+      if (tier === "amount_only") rollbackTx.auto_match_reason = null;
+      const { error: txRbErr } = await pipeline
+        .from("bank_transactions")
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .update(rollbackTx as any)
+        .eq("id", txId)
+        .eq("user_id", userId)
+        .eq("status", "matched");
+      const { error: invRbErr } = await payClient
+        .from("invoices")
+        .update({ status: inv.status, amount_paid: inv.amount_paid ?? 0, payment_method: null, marked_paid_at: null, payment_date: null })
+        .eq("id", invoiceId)
+        .eq("status", "paid");
       reportHandledFailure({
         tag: "BANK-TX-INVOICES",
-        message: "payment link not recorded for an auto-confirmed invoice — the reversal index is incomplete",
+        message: txRbErr || invRbErr
+          ? "payment link not recorded AND the rollback failed — invoice may be paid with no reversal index"
+          : "payment link not recorded for an auto-confirmed invoice — booking rolled back, the line stays for a human",
         severity: "data-integrity",
-        context: { userId, invoiceId, txId },
+        context: {
+          userId, invoiceId, txId,
+          txRollback: txRbErr ? txRbErr.message : "ok",
+          invoiceRollback: invRbErr ? invRbErr.message : "ok",
+        },
       });
+      continue;
     }
 
     confirmed.push({ transactionId: txId, invoiceId, invoiceNumber: inv.invoice_number, amount: m.transaction.amount ?? 0, tier, paymentDate: m.transaction.date || null });

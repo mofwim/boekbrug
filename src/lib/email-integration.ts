@@ -54,7 +54,7 @@ import { makeOwnInvoiceLookup } from '@/lib/own-invoice-lookup'
 // [ZELF-EERST] The owner's grip on the autopilot — see the helper for the fail matrix.
 import { autoBoekenAllowed } from '@/lib/auto-boeken'
 import { loadReadingMemory } from '@/lib/reading-memory-source'
-import { shouldAutoAdvanceInvoice } from '@/lib/auto-advance'
+import { shouldAutoAdvanceInvoice, type Candidacy } from '@/lib/auto-advance'
 // [MULTI-INVOICE] / [ONE-INVOICE-UNVERIFIED] The same two questions /api/intake asks before it
 // lets anything auto-book — one file can hold several invoices, and a scanned stack cannot be
 // checked at all. Same module, same mergers, so the queue reads identically on both doors.
@@ -119,6 +119,7 @@ import { reportHandledFailure } from '@/lib/report-handled'
 import { supplierBtwForInvoice } from "./vendor-identity"
 // [NUL-GRONDSLAG] What may be stored when the split was not read — see read-amounts.ts.
 import { amountsToStore, markUnexplainedZeroBtw } from './read-amounts'
+import { removeOriginals, storeOriginal } from './document-storage'
 type InvoiceFieldConfidence =
   Database['public']['Tables']['invoices']['Insert']['field_confidence']
 
@@ -3204,8 +3205,7 @@ export async function syncUserEmails(
       {
         const safeName = att.filename.replace(/[^a-zA-Z0-9._-]/g, '_')
         const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
-        const { error: upErr } = await supabase.storage
-          .from('documents').upload(storagePath, buf, { contentType: att.mimeType, upsert: false })
+        const { error: upErr } = await storeOriginal(supabase, storagePath, buf, { contentType: att.mimeType, upsert: false })
         if (!upErr) {
           const folderId = await resolveImportTarget(userId, null, 'facturen', 'pipeline')
           const { data: docRow, error: docErr } = await supabase.from('documents').insert({
@@ -3226,7 +3226,7 @@ export async function syncUserEmails(
             ai_doc_type: aiDocType,
             content_hash: hash,
           }).select('id').single()
-          if (docErr) await supabase.storage.from('documents').remove([storagePath])
+          if (docErr) await removeOriginals(supabase, [storagePath])
           else return (docRow as { id: string } | null)?.id ?? null
         }
       }
@@ -4197,9 +4197,7 @@ export async function syncUserEmails(
         const safeName = attachment.filename.replace(/[^a-zA-Z0-9._-]/g, '_')
         const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
 
-        const { error: uploadErr } = await supabase.storage
-          .from('documents')
-          .upload(storagePath, fileBuffer, {
+        const { error: uploadErr } = await storeOriginal(supabase, storagePath, fileBuffer, {
             contentType: attachment.mimeType,
             upsert: false,
           })
@@ -4268,7 +4266,7 @@ export async function syncUserEmails(
           }
 
           if (recovered) {
-            await supabase.storage.from('documents').remove([storagePath])
+            await removeOriginals(supabase, [storagePath])
             documentId = recovered.id
             pdfUrl = recovered.file_url
           } else if (docErr || !doc) {
@@ -4277,7 +4275,7 @@ export async function syncUserEmails(
             // the closing package). Remove the file; the invoice still saves (the sync
             // deliberately never loses extracted invoice data), but without a broken link.
             console.error('[BOEK-011] Document insert failed:', docErr?.message)
-            await supabase.storage.from('documents').remove([storagePath])
+            await removeOriginals(supabase, [storagePath])
             documentId = null
             pdfUrl = null
           } else {
@@ -4297,9 +4295,7 @@ export async function syncUserEmails(
                 const ingesloten = extractEmbeddedPdf(Buffer.from(attachment.data, 'base64').toString('utf8'))
                 if (ingesloten) {
                   const pdfPad = `${storagePath.replace(/\.[^./]*$/, '')}.pdf`
-                  const { error: pdfErr } = await supabase.storage
-                    .from('documents')
-                    .upload(pdfPad, ingesloten.bytes, { contentType: 'application/pdf', upsert: false })
+                  const { error: pdfErr } = await storeOriginal(supabase, pdfPad, ingesloten.bytes, { contentType: 'application/pdf', upsert: false })
                   if (!pdfErr) pdfUrl = pdfPad
                 }
               } catch (e) {
@@ -4612,18 +4608,26 @@ export async function syncUserEmails(
         shifted: (fieldConfidenceValue as { _btw_verlegd?: unknown } | null)?._btw_verlegd != null,
       })
 
-      const autoAdv = !magAutoBoeken
-        ? { advance: false, reason: 'owner_reviews_everything' }
-        : attachment.fromBody === true
-        ? { advance: false, reason: 'from_email_body' }
-        // [WAAROM-VASTGEHOUDEN] Twee oorzaken, twee redenen. Deze regel gaf ze allebei de naam
-        // 'uncertain', en de zin die de eigenaar daarbij leest is "de lezer was niet zeker genoeg
-        // over deze bijlage" — over een factuur die perfect gelezen is en alleen een betaalspoor
-        // draagt. Dat is niet vaag maar onwaar, en het stuurt hem het verkeerde veld in.
-        : pay.suggestPaid && !settlePlan.settle
-        ? { advance: false, reason: 'paid_mark_not_settled' }
-        : !classification.uncertain
-        ? shouldAutoAdvanceInvoice({
+      // [REGEL-BESLIST] De FEITEN die deze deur kent, doorgegeven; het besluit is van de regel.
+      //
+      // [WAAROM-VASTGEHOUDEN] Twee oorzaken, twee redenen. Deze regel gaf ze allebei de naam
+      // 'uncertain', en de zin die de eigenaar daarbij leest is "de lezer was niet zeker genoeg
+      // over deze bijlage" — over een factuur die perfect gelezen is en alleen een betaalspoor
+      // draagt. Dat is niet vaag maar onwaar, en het stuurt hem het verkeerde veld in. Dat
+      // onderscheid blijft; wat verdwijnt is dat deze deur het zelf uitsprak en de cameradeur
+      // hetzelfde feit anders noemde.
+      const candidacy: Candidacy =
+        attachment.fromBody === true
+          ? 'from_email_body'
+          : pay.suggestPaid && !settlePlan.settle
+            ? 'paid_mark_not_settled'
+            : 'ok'
+      const autoAdv = shouldAutoAdvanceInvoice({
+            ownerReviewsEverything: !magAutoBoeken,
+            candidacy,
+            // Alleen deze deur heeft dit vlaggetje; het kortsluit vóór de kwaliteitscontroles,
+            // precies zoals hier gebeurde toen deze deur het besluit nog zelf nam.
+            readerUncertain: classification.uncertain === true,
             is_invoice: classification.isInvoice,
             is_statement: classification.isStatement,
             is_reminder: classification.isReminder,
@@ -4666,7 +4670,6 @@ export async function syncUserEmails(
               field_confidence: fieldConfidenceValue,
             },
           })
-        : { advance: false, reason: 'uncertain' }
       // [OVERALL-BEWAARD] Zie de gelijknamige noot in intake/route.ts — op élke rij, beide paden.
       fieldConfidenceValue = {
         ...(fieldConfidenceValue ?? {}),
@@ -4816,7 +4819,7 @@ export async function syncUserEmails(
             // bucket policy, and this call DELETES. An unattributable key is left alone: an
             // orphaned object is reclaimable by the retention sweep, another tenant's bill is not.
             const teVerwijderen = ownedStoragePath(pdfUrl, userId)
-            if (teVerwijderen) await supabase.storage.from('documents').remove([teVerwijderen])
+            if (teVerwijderen) await removeOriginals(supabase, [teVerwijderen])
           }
           // [XML-PDF] Sinds een e-factuur ook een uitgepakte PDF kan opleveren, is `pdfUrl` niet
           // meer altijd hetzelfde object als het bestand dat hierboven is geüpload. Zonder deze
@@ -4824,7 +4827,7 @@ export async function syncUserEmails(
           // — precies de wees die het blok hierboven komt opruimen, één bestand verderop.
           if (uploadedPath && pdfUrl !== uploadedPath) {
             const xmlWees = ownedStoragePath(uploadedPath, userId)
-            if (xmlWees) await supabase.storage.from('documents').remove([xmlWees])
+            if (xmlWees) await removeOriginals(supabase, [xmlWees])
           }
           // [watermark] NOT complete — a genuine save failure; the mark stops here so the next
           // sync re-fetches and retries this email … unless this attachment has now failed

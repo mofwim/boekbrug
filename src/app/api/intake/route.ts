@@ -72,7 +72,7 @@ import { planSpreadsheetIngest, ledgerKindLabel } from "@/lib/spreadsheet-ingest
 import { looksLikeDailySalesReport, parseDailySalesReport } from "@/lib/daily-sales-report"
 import { bookTurnoverRows, bookLedgerRows } from "@/lib/turnover-book"
 import { escapeLikeValue } from "@/lib/sanitize"
-import { shouldAutoAdvanceInvoice } from "@/lib/auto-advance"
+import { shouldAutoAdvanceInvoice, type Candidacy } from "@/lib/auto-advance"
 // [BON-AUTO] Mag een kassabon zichzelf afboeken? Alleen als het PAPIER de tenderregel afdrukt.
 import { planReceiptSettlement, settleNoticeText } from "@/lib/receipt-auto-settle"
 // [MULTI-INVOICE] "Eén PDF = één factuur" stond onder elke uploadknop en werd nergens
@@ -124,6 +124,7 @@ import { supplierBtwForInvoice } from "@/lib/vendor-identity"
 import { telWoord, vervoeg } from "@/lib/nl-plural";
 // [NUL-GRONDSLAG] What may be stored when the split was not read — see read-amounts.ts.
 import { amountsToStore, markUnexplainedZeroBtw } from "@/lib/read-amounts";
+import { removeOriginals, storeOriginal } from "@/lib/document-storage"
 type InvoiceFieldConfidence =
   Database["public"]["Tables"]["invoices"]["Insert"]["field_confidence"]
 
@@ -345,8 +346,7 @@ async function runIntake(req: NextRequest) {
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
     const storagePath = `${user.id}/incoming/${Date.now()}-${safeName}`
     const contentType = file.type || "application/octet-stream"
-    const { error: upErr } = await supabase.storage
-      .from("documents").upload(storagePath, buffer, { contentType, upsert: false })
+    const { error: upErr } = await storeOriginal(supabase, storagePath, buffer, { contentType, upsert: false })
     if (upErr) {
       return NextResponse.json({ error: "Bestand kon niet worden opgeslagen — probeer het opnieuw." }, { status: 502 })
     }
@@ -361,7 +361,7 @@ async function runIntake(req: NextRequest) {
       })
       .select("id").single()
     if (docErr || !doc) {
-      await supabase.storage.from("documents").remove([storagePath])
+      await removeOriginals(supabase, [storagePath])
       // [DEDUP-ATOMIC] Same race the invoice and UBL inserts already handle: a concurrent
       // double-submit slips past the SELECT above and trips the (user_id, content_hash) UNIQUE
       // index (23505). This path alone still turned that into a generic 500. It is the same
@@ -971,9 +971,7 @@ async function runIntake(req: NextRequest) {
   // ── Store the file in Storage (shared by all destinations) ──────────────────
   const safeName = upload.fileName.replace(/[^a-zA-Z0-9._-]/g, "_")
   const storagePath = `${user.id}/incoming/${Date.now()}-${safeName}`
-  const { error: uploadError } = await supabase.storage
-    .from("documents")
-    .upload(storagePath, upload.buffer, { contentType: uploadType, upsert: false })
+  const { error: uploadError } = await storeOriginal(supabase, storagePath, upload.buffer, { contentType: uploadType, upsert: false })
   // [R1] A swallowed storage failure was the silent-loss bug: the flow continued and
   // wrote a documents/invoice row whose file_url points at a file that was NEVER stored,
   // while telling the owner "opgeslagen" / "factuur herkend". The evidence is then gone
@@ -1028,7 +1026,7 @@ async function runIntake(req: NextRequest) {
     // [R1] Don't report success on a failed write. Roll back the stored file so it isn't
     // orphaned in Storage (a leaked object with no row), and tell the owner to retry.
     if (docErr || !doc) {
-      await supabase.storage.from("documents").remove([storagePath])
+      await removeOriginals(supabase, [storagePath])
       // [23505] De drie zuster-inserts vertalen een verloren race al naar een nette 409 — dit was
       // de enige zonder. Een dubbelklik op uploaden kreeg hier een 500 "probeer opnieuw" over een
       // bestand dat er net wél in kwam, vermomd als opslagfout.
@@ -1173,7 +1171,7 @@ async function runIntake(req: NextRequest) {
   // to write, an invoice with document_id=null has unreachable evidence. Stop and roll
   // back the stored file rather than create a half-linked, evidence-less invoice.
   if (docErr || !doc) {
-    await supabase.storage.from("documents").remove([storagePath])
+    await removeOriginals(supabase, [storagePath])
     // [DEDUP-ATOMIC] A concurrent double-submit that raced past the byte-hash SELECT above trips the
     // (user_id, content_hash) UNIQUE index here (23505). Treat it like the SELECT-found duplicate —
     // the other request already stored the document + created its invoice, so returning a duplicate
@@ -1368,14 +1366,28 @@ async function runIntake(req: NextRequest) {
   Object.assign(fieldConfidence, markUnexplainedZeroBtw({}, storedAmounts, {
     btwRate: v.btw_rate, shifted: (v.field_confidence as { _btw_verlegd?: unknown } | null)?._btw_verlegd != null,
   }));
-  const autoAdv = !magAutoBoeken
-    ? // Its own reason string, ahead of every quality check: "waiting because you asked to see
-      // everything" must never read as "the read was weak" — the audit row and the queue both
-      // show this reason, and an owner testing the app deserves to see their own switch working.
-      { advance: false as const, reason: "owner_reviews_everything" }
-    : (decision.destination === "invoice" || (decision.destination === "receipt" && settlePlan.settle)) &&
+  // [REGEL-BESLIST] The FACTS this door knows, handed over; the decision is the rule's.
+  //
+  // These three used to be refusals this route built for itself — and the e-mail door built its
+  // own, differently, so the same document could be held for one reason here and another there.
+  // The precedence that used to live in the comment below now lives in the rule, where both doors
+  // inherit it instead of each restating it.
+  const candidacy: Candidacy =
+    (decision.destination === "invoice" || (decision.destination === "receipt" && settlePlan.settle)) &&
     (!decision.suggestPaid || settlePlan.settle) && !multiInvoice && !oneInvoiceUnverified
-      ? shouldAutoAdvanceInvoice({
+      ? "ok"
+      : multiInvoice
+        ? "multiple_invoices_in_file"
+        // [WAAROM-VASTGEHOUDEN] A pay mark this pass could not settle is exactly what the e-mail
+        // door has called `paid_mark_not_settled` since it fixed this for itself. Folding it into
+        // `not_eligible` told the owner the read was unusable about an invoice that was read
+        // perfectly and merely carries a betaalspoor. Same fact, same name, both doors.
+        : decision.suggestPaid && !settlePlan.settle
+          ? "paid_mark_not_settled"
+          : "not_eligible";
+  const autoAdv = shouldAutoAdvanceInvoice({
+          ownerReviewsEverything: !magAutoBoeken,
+          candidacy,
           is_invoice: v.is_invoice,
           is_statement: v.is_statement,
           is_reminder: v.is_reminder,
@@ -1415,8 +1427,7 @@ eInvoiceContradicts: eInvoiceContradictsRead(v.field_confidence),
             invoice_type: v.is_credit_note === true ? "creditnota" : "factuur",
             field_confidence: fieldConfidence,
           },
-        })
-      : { advance: false, reason: multiInvoice ? "multiple_invoices_in_file" : "not_eligible" };
+        });
   // [OVERALL-BEWAARD] De overall zekerheid van de lezer, op de rij — bij ELKE inkomende factuur,
   // niet alleen bij een weigering. Hij bestond tot nu toe alleen in het geheugen tijdens de import:
   // gate-yield.ts zegt in zijn slotalinea letterlijk dat twee poorten daardoor niet te beoordelen
@@ -1535,7 +1546,7 @@ eInvoiceContradicts: eInvoiceContradictsRead(v.field_confidence),
     // make the byte-hash dedup BLOCK a re-upload (409), trapping the owner with a file
     // they can neither re-add nor see as an invoice. Best-effort; then surface the error.
     await pipeline.from("documents").delete().eq("id", documentId)
-    await supabase.storage.from("documents").remove([storagePath])
+    await removeOriginals(supabase, [storagePath])
     return NextResponse.json({ error: dbError.message }, { status: 500 })
   }
 
@@ -1875,8 +1886,7 @@ async function handleUblInvoice(
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
   const storagePath = `${userId}/incoming/${Date.now()}-${safeName}`
   const contentType = file.type || "application/xml"
-  const { error: upErr } = await supabase.storage
-    .from("documents").upload(storagePath, buffer, { contentType, upsert: false })
+  const { error: upErr } = await storeOriginal(supabase, storagePath, buffer, { contentType, upsert: false })
   if (upErr) {
     return NextResponse.json({ error: "E-factuur kon niet worden opgeslagen — probeer het opnieuw." }, { status: 502 })
   }
@@ -1894,7 +1904,7 @@ async function handleUblInvoice(
     })
     .select("id").single()
   if (docErr || !doc) {
-    await supabase.storage.from("documents").remove([storagePath])
+    await removeOriginals(supabase, [storagePath])
     // [DEDUP-ATOMIC] A concurrent double-submit racing past the byte-hash SELECT trips the
     // (user_id, content_hash) UNIQUE index (23505) — treat it as the duplicate it is, not a 500,
     // so a second invoice is never created for the same file (the race the old path allowed).
@@ -1935,8 +1945,7 @@ async function handleUblInvoice(
     if (ingesloten) {
       const pdfNaam = ingesloten.filename ?? `${(v.invoiceNumber || "e-factuur").replace(/[^A-Za-z0-9._-]/g, "_")}.pdf`
       const pdfPath = `${userId}/incoming/${Date.now()}-${pdfNaam.replace(/\.pdf$/i, "")}.pdf`
-      const { error: pdfErr } = await supabase.storage
-        .from("documents").upload(pdfPath, ingesloten.bytes, { contentType: "application/pdf", upsert: false })
+      const { error: pdfErr } = await storeOriginal(supabase, pdfPath, ingesloten.bytes, { contentType: "application/pdf", upsert: false })
       if (!pdfErr) openUrl = pdfPath
     }
   } catch {
@@ -2052,7 +2061,7 @@ async function handleUblInvoice(
   if (dbError) {
     // Roll back OUR document row + stored blob (never a pre-existing row — this file was fresh).
     await pipeline.from("documents").delete().eq("id", documentId)
-    await supabase.storage.from("documents").remove([storagePath])
+    await removeOriginals(supabase, [storagePath])
     return NextResponse.json({ error: dbError.message }, { status: 500 })
   }
   if (invoice?.id) {

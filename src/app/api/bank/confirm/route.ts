@@ -42,7 +42,7 @@ import { createNotification } from "@/lib/notifications";
 // [BANK-MULTI-LINK-PERSIST] Coverage logic (parseReferenceNumbers + isFullyCovered)
 // now lives in bank-matching.ts so this confirm path and the match path share ONE
 // definition — no drift between "is this tx done?" answered in two places.
-import { isEligible, normalizeRef, isFullyCovered, bankLineFullyApplied, parseReferenceNumbers } from "@/lib/bank-matching";
+import { isEligible, isPayableInvoiceState, normalizeRef, isFullyCovered, bankLineFullyApplied, parseReferenceNumbers } from "@/lib/bank-matching";
 import { recordPaymentLinks } from "@/lib/bank-tx-links";
 import { fetchAllRows } from "@/lib/supabase-paginate";
 import { resolveAllocation, openBalanceFromAmounts, paymentExceedsOpenBalance } from "@/lib/partial-payment";
@@ -52,6 +52,7 @@ import { readOverApplied, overAppliedNotice } from "@/lib/bank-overapplied";
 import { undeclaredMissingInvoices } from "@/lib/bank-batch-reconcile";
 import { logAuditAction, getClientIP } from "@/lib/audit";
 import { round2 } from "@/lib/invoice-totals";
+import { requirePermission } from "@/lib/access/context";
 
 export async function POST(req: NextRequest) {
   // 1. Auth
@@ -61,6 +62,15 @@ export async function POST(req: NextRequest) {
   } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  // [EEN-POORT] Booking a bank line against an invoice is `bank.match` — it moves amount_paid and
+  // decides what the quarter will say. Until now this door asked only "is somebody logged in",
+  // which is exactly the shape §38 of the specification calls insufficient for a protected
+  // operation. The administration is this session's own: a sales member reaching here would act
+  // for their employer everywhere else in the app, and bank matching is not theirs to do.
+  {
+    const gate = await requirePermission("bank.match", { ownerId: user.id });
+    if (gate.response) return gate.response;
   }
 
   // 2. Body
@@ -121,6 +131,49 @@ export async function POST(req: NextRequest) {
   }
 
   if (invoiceIds) {
+    // [BUNDEL-DREMPEL] The payability sweep the single-invoice door has always done, done here
+    // too. Not the WHOLE of isEligible: a bundle the owner confirms by sum names no invoice
+    // numbers, and isEligible's direction rule only lets a netted creditnota through when the
+    // payment names it — so asking the whole question here would refuse exactly the credit notes
+    // [CREDIT-VERREKEN] exists to settle. What is asked is the half that holds on every door:
+    // paid, draft, archived, processing, verwerkt. book_bank_batch re-asks it under the row lock
+    // (that is the real guard); this one turns a raised exception into a plain 409 and keeps a
+    // database on which the newer migration is not yet applied exactly as safe as this route.
+    // [IN-CHUNK] The id list travels in the URL — chunked, like every other id read here.
+    let batchInvs: { id: string; invoice_number: string | null; status: string | null; accountant_status: string | null }[] = [];
+    try {
+      batchInvs = await fetchAllRowsForIds(invoiceIds, (chunk, from, to) =>
+        pipeline
+          .from("invoices")
+          .select("id, invoice_number, status, accountant_status")
+          .in("id", chunk)
+          .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+    } catch (e) {
+      return NextResponse.json(
+        { error: "invoice_lookup_failed", detail: e instanceof Error ? e.message : String(e) },
+        { status: 500 },
+      );
+    }
+    if (batchInvs.length !== invoiceIds.length) {
+      // Fewer rows than ids means at least one id is missing or belongs to someone else. Never a
+      // partial book: the whole batch is refused, exactly as the RPC would.
+      return NextResponse.json({ error: "invoice_not_found" }, { status: 404 });
+    }
+    const notPayable = batchInvs.filter((i) => !isPayableInvoiceState(i));
+    if (notPayable.length > 0) {
+      const verwerkt = notPayable.find((i) => i.accountant_status === "verwerkt");
+      if (verwerkt) {
+        return NextResponse.json({ error: "verwerkt", invoiceNumber: verwerkt.invoice_number }, { status: 409 });
+      }
+      if (notPayable.some((i) => i.status === "paid")) {
+        return NextResponse.json({ error: "invoice_already_paid" }, { status: 409 });
+      }
+      return NextResponse.json({ error: "not_eligible" }, { status: 409 });
+    }
+
     // [SOM-KLOPT-ÉÉN] The batch door. Everything the function checks — ownership, payability,
     // the 'verwerkt' guard, the cent-exact tie on the CURRENT open amounts with a creditnota
     // signed negative — it checks under the line's lock, and nothing half-books.
@@ -138,6 +191,36 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "batch_tie_broken", detail: batchErr.message }, { status: 409 });
       }
       if (msg.includes("no longer payable")) {
+        // [BOEKHOUDER-DEUR] book_bank_batch counts FOUR disjoint conditions into one number and
+        // raises one string carrying only that count — not owned, already paid, a draft/archived/
+        // processing row, or the accountant's lock. None of the four words it can raise contains
+        // "verwerkt", so the test above is dead on this path, and the accountant lock was reported
+        // to the owner as "already paid": the wrong sentence, and the dedicated dialog never opened.
+        //
+        // The pre-check twenty lines up tells these four apart perfectly when it reads the rows
+        // itself; this branch only runs when the state MOVED between that read and the RPC's lock.
+        // So read again and say which it was. A failed re-read falls through to the old answer —
+        // being unable to explain a refusal may never turn it into a success.
+        let locked: { invoice_number: string | null } | undefined;
+        try {
+          const after = await fetchAllRowsForIds<{ invoice_number: string | null; accountant_status: string | null }, string>(
+            invoiceIds,
+            (chunk, from, to) =>
+              pipeline
+                .from("invoices")
+                .select("invoice_number, accountant_status")
+                .in("id", chunk)
+                .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+                .order("id", { ascending: true })
+                .range(from, to),
+          );
+          locked = after.find((i) => i.accountant_status === "verwerkt");
+        } catch {
+          locked = undefined;
+        }
+        if (locked) {
+          return NextResponse.json({ error: "verwerkt", invoiceNumber: locked.invoice_number }, { status: 409 });
+        }
         return NextResponse.json({ error: "invoice_already_paid", detail: batchErr.message }, { status: 409 });
       }
       console.error("[SOM-KLOPT-ÉÉN] book_bank_batch refused", { userId: user.id, transactionId, error: batchErr.message });
@@ -162,7 +245,7 @@ export async function POST(req: NextRequest) {
     .from("invoices")
     // [PARTIAL-PAY] amount_paid decides what this invoice still has OPEN — the guard below
     // refuses to call a payment "full" when it cannot cover that balance.
-    .select("id, invoice_number, status, accountant_status, sender_id, receiver_id, direction, total_inc_btw, amount_paid")
+    .select("id, invoice_number, status, accountant_status, sender_id, receiver_id, direction, total_inc_btw, amount_paid, invoice_date")
     .eq("id", invoiceId)
     .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
     .maybeSingle();
@@ -221,7 +304,15 @@ export async function POST(req: NextRequest) {
       // guard then refused it. Auto-confirm passes the full row and worked; only the human
       // path was blocked.
       total_inc_btw: inv.total_inc_btw ?? null,
-      invoice_date: null,
+      // [BANK-MATCH-STRICT] The third field, and the same defect twice over. isEligible refuses a
+      // payment dated more than ten days BEFORE its invoice — a real guard against pairing this
+      // month's line with next month's bill — and it is written `if (tx.date && inv.invoice_date)`,
+      // so a null here does not soften the rule, it DELETES it. The automatic pass hands over the
+      // full row and is held to it; this door, the one a human presses, was held to less. A guard
+      // whose whole claim is "the SAME invariants the matcher used" may not be handed a smaller
+      // invoice than the matcher had — that is what the two notes above already say about
+      // description/reference and about total_inc_btw, one field at a time.
+      invoice_date: inv.invoice_date ?? null,
       due_date: null,
       client_name: null,
       direction: (inv.direction ?? null) as "outgoing" | "incoming" | null,

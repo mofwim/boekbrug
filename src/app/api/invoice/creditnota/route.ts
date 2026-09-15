@@ -45,7 +45,9 @@ import * as Sentry from '@sentry/nextjs'
 import { getActingFor, getActingForClient } from '@/lib/acting-for-server'
 // [CREDIT-NAMENS] De klant hoort het te weten van een correctie op zijn eigen naam.
 import { createNotification } from '@/lib/notifications'
-import { invoiceOwnerId, invoiceCreatedBy, isActingForOther, canAccessInvoice } from '@/lib/acting-for'
+import { invoiceOwnerId, invoiceCreatedBy, isActingForOther } from '@/lib/acting-for'
+import { contextFromActing } from '@/lib/access/context'
+import { authorize } from '@/lib/access/decision'
 // [ACTING-FOR] created_by bestaat pas ná de migratie — zonder terugval faalt de creditnota, en dat
 // is de enige wettelijke weg terug bij een fout in een verstuurde factuur.
 import { writeWithTrail } from '@/lib/created-by'
@@ -69,6 +71,7 @@ import {
   type LineSelection,
 } from '@/lib/partial-credit'
 import { creditedTotalsFrom } from '@/lib/credited-invoices'
+import { storeOriginal } from '@/lib/document-storage'
 
 // ── [CREDIT-NAMENS] De boekhouder corrigeert wat hij zelf heeft uitgereikt ──────────────────────
 //
@@ -102,7 +105,6 @@ import { creditedTotalsFrom } from '@/lib/credited-invoices'
 // use. A creditnota's PDF MUST be stored here and its path written to
 // invoices.pdf_url, or the correction document is missing from the accountant's
 // closing package (the package resolves an outgoing invoice's PDF via pdf_url).
-const PDF_BUCKET = 'documents'
 
 export async function POST(request: NextRequest) {
   try {
@@ -175,7 +177,15 @@ export async function POST(request: NextRequest) {
     // [BOEK-031] Alleen de eigenaar mag een creditnota aanmaken
     // [ACTING-FOR] ...of de medewerker die de oorspronkelijke factuur ZELF maakte. canAccessInvoice() dekt
     // beide gevallen in één regel: het bedrijf moet kloppen, en bij een medewerker ook created_by.
-    if (!canAccessInvoice(acting, original)) {
+    // [EEN-POORT] Both cases, through the one catalogue: `invoice.credit` is scoped
+    // `administration` for the owner and `own` for a medewerker AND for a mandated boekhouder —
+    // a mandate is permission to write invoices in someone's name, never to credit the ones the
+    // client wrote themselves. Same rule as canAccessInvoice(), asserted equal in
+    // access/decision.test.ts, and now named.
+    if (!authorize(contextFromActing(acting), 'invoice.credit', {
+      ownerId: original.sender_id,
+      createdBy: original.created_by,
+    }).allowed) {
       return NextResponse.json({ error: 'Geen toegang' }, { status: 403 })
     }
 
@@ -643,9 +653,7 @@ export async function POST(request: NextRequest) {
         // storage.objects, dus een overschrijving kan niet slagen. Hier is dat sowieso nooit aan
         // de orde — creditnotaNumber komt vers uit de reeks, dus het pad is per definitie nieuw —
         // maar `upsert: true` suggereerde een mogelijkheid die niet bestaat.
-        const { error: uploadError } = await (boekhouder ? createPipelineClient() : supabase).storage
-          .from(PDF_BUCKET)
-          .upload(pdfPath, pdfBuffer, { contentType: 'application/pdf', upsert: false })
+        const { error: uploadError } = await storeOriginal(boekhouder ? createPipelineClient() : supabase, pdfPath, pdfBuffer, { contentType: 'application/pdf' })
         if (!uploadError) {
           await db
             .from('invoices')

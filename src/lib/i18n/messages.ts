@@ -117,6 +117,7 @@ export const MESSAGES = {
   'chrome.openstaand': { nl: 'Openstaande facturen', ar: 'الفواتير غير المسدَّدة', en: 'Outstanding invoices' },
   'chrome.opvragen': { nl: 'Stukken opvragen', ar: 'طلب المستندات', en: 'Request documents' },
   'chrome.kantoorgids': { nl: 'Kantoorgids', ar: 'دليل المكاتب', en: 'Office directory' },
+  'chrome.control': { nl: 'Control Center', ar: 'مركز التحكم', en: 'Control Center' },
   'chrome.bevestigen': { nl: 'Bevestigen', ar: 'تأكيد', en: 'Confirm' },
   // "Mijn", omdat de boekhouder hiernaast ook de facturen van zijn KLANTEN ziet.
   'chrome.mijnFacturen': { nl: 'Mijn facturen', ar: 'فواتيري', en: 'My invoices' },
@@ -4515,6 +4516,12 @@ export const MESSAGES = {
   },
   'bank.why.partialAmount': {
     nl: 'kleiner dan het openstaande bedrag', ar: 'أقل من المبلغ المتبقّي', en: 'smaller than the open amount', tr: 'açık tutardan küçük',
+  },
+  // [STORNO-GEEN-BETALING] Niet waarom deze factuur wordt aangeboden, maar waarom hij niet
+  // voorgeselecteerd staat: de bank boekte dit geld terug. [AR-TERMEN] «خصم مباشر» en «استرجاع»
+  // zijn de woorden die bank.storno.uitleg al gebruikt; hier niet opnieuw beslist.
+  'bank.why.reversal': {
+    nl: 'je bank boekte dit terug', ar: 'استرجاع لخصم مباشر', en: 'your bank reversed this', tr: 'bankanız bunu geri aldı',
   },
   // [WAAROM-DEZE] En de kop van de kiezer, als GEEN kandidaat op bedrag matcht. "Meerdere facturen
   // passen bij deze betaling" is dan onwaar: ze staan open bij dezelfde partij, meer niet.
@@ -13492,6 +13499,125 @@ export const MESSAGES = {
   'log.bank.connect_started': { nl: 'Bankkoppeling gestart', en: 'Bank connection started', ar: 'بدأ ربط البنك' },
   'log.bank.connected': { nl: 'Bank gekoppeld', en: 'Bank connected', ar: 'رُبط البنك' },
   'log.bank.disconnected': { nl: 'Bank ontkoppeld', en: 'Bank disconnected', ar: 'فُصل البنك' },
+  // [TOEKENNING-DEUR] Een beheerder gaf dit account ruimere grenzen, of stopte ze. De reden staat
+  // in de regel zelf; deze zin zegt alleen WAT er is gebeurd. [AR-TERMEN] «توسيع» voor ruimere
+  // grenzen en niet «ترقية»: er is geen ander plan gekocht, er is meer ruimte gegeven.
+  'log.control.grant_created': { nl: 'Ruimere grenzen toegekend', en: 'Wider limits granted', ar: 'مُنحت حدود أوسع', tr: 'Daha geniş sınırlar verildi' },
+  'log.control.grant_revoked': { nl: 'Ruimere grenzen ingetrokken', en: 'Wider limits withdrawn', ar: 'سُحبت الحدود الأوسع', tr: 'Daha geniş sınırlar geri alındı' },
+  // [TERUGBETALING] «استرجاع» is het woord dat bank.storno.uitleg en bank.why.reversal al gebruiken
+  // voor teruggeboekt geld; hier niet opnieuw beslist ([AR-TERMEN]).
+  'log.mollie.refund_reversed': { nl: 'Betaling teruggedraaid na terugbetaling', en: 'Payment reversed after a refund', ar: 'أُلغيت الدفعة بعد استرجاع', tr: 'İade sonrası ödeme geri alındı' },
+  'log.mollie.refund_answered': { nl: 'Terugbetaling beantwoord', en: 'Refund answered', ar: 'تمت الإجابة عن الاسترجاع', tr: 'İade yanıtlandı' },
+
+  // ── [PRIJS-MOMENT] De afspraak naast het aanbod ─────────────────────────────────────────────
+  // Twee regels die alleen verschijnen voor wie ECHT betaalt: één als wij het bedrag niet konden
+  // vastleggen, één als het afwijkt van wat wij vandaag publiceren. Voor iedereen anders is de
+  // prijsregel een aanbod en verandert er niets. [RUSTIG]: geen van beide staat er in rust.
+  'plan.prijsOpFactuur': {
+    nl: 'staat op je factuur van Stripe',
+    en: 'on your Stripe invoice',
+    ar: 'مذكور في فاتورتك من Stripe',
+    tr: "Stripe faturanızda",
+  },
+  'plan.eigenTarief': {
+    nl: 'Dit is het tarief waarop je abonnement is aangegaan. Nieuw is het {prijs} per maand.',
+    en: 'This is the rate your subscription started on. A new one costs {prijs} a month.',
+    ar: 'هذا هو السعر الذي بدأ عليه اشتراكك. الاشتراك الجديد يكلّف {prijs} شهرياً.',
+    tr: 'Aboneliğinizin başladığı tarife budur. Yeni bir abonelik ayda {prijs} tutar.',
+  },
+
+  // ── [TERUGBETALING] Geld dat via Mollie terugging ───────────────────────────────────────────
+  // De kaart verschijnt alleen als er iets te beslissen valt ([RUSTIG]: niets in rust). De drie
+  // knoppen zijn de drie antwoorden; de app kiest er geen van, want een chargeback hoort van de
+  // factuur af en een terugbetaling is normaal een creditnota — zie mollie-refund.ts.
+  // [AR-TERMEN] «استرجاع» is teruggeboekt geld (bank.why.reversal gebruikt het al) en «رد المبلغ»
+  // is het teruggeven zelf; «إشعار دائن» is de creditnota, zoals overal elders in deze app.
+  'terugbetaling.titel': { nl: 'Geld terug via Mollie', en: 'Money refunded via Mollie', ar: 'أموال أُعيدت عبر Mollie', tr: "Mollie üzerinden iade edilen para" },
+  'terugbetaling.uitleg': {
+    nl: 'Dit geld ging terug naar de klant. Zeg wat er met de factuur moet gebeuren.',
+    en: 'This money went back to the customer. Say what should happen to the invoice.',
+    ar: 'عاد هذا المبلغ إلى العميل. حدّد ما يجب أن يحدث للفاتورة.',
+    tr: 'Bu para müşteriye geri gitti. Faturaya ne olması gerektiğini belirtin.',
+  },
+  'terugbetaling.soort.refund': { nl: 'Terugbetaling', en: 'Refund', ar: 'رد المبلغ', tr: 'İade' },
+  'terugbetaling.soort.chargeback': { nl: 'Chargeback', en: 'Chargeback', ar: 'ردّ قسري', tr: 'Ters ibraz' },
+  'terugbetaling.opFactuur': { nl: 'op factuur {number}', en: 'on invoice {number}', ar: 'على الفاتورة {number}', tr: '{number} numaralı faturada' },
+  'terugbetaling.geenFactuur': {
+    nl: 'Geen factuur van BoekBrug bij deze betaling',
+    en: 'No BoekBrug invoice behind this payment',
+    ar: 'لا توجد فاتورة من BoekBrug خلف هذه الدفعة',
+    tr: 'Bu ödemenin arkasında BoekBrug faturası yok',
+  },
+  'terugbetaling.knop.terugdraaien': { nl: 'Haal de betaling van de factuur', en: 'Take the payment off the invoice', ar: 'أزل الدفعة من الفاتورة', tr: 'Ödemeyi faturadan kaldır' },
+  'terugbetaling.knop.creditnota': { nl: 'Ik maak een creditnota', en: 'I will issue a credit note', ar: 'سأصدر إشعار دائن', tr: 'Bir iade faturası keseceğim' },
+  'terugbetaling.knop.nietVanMij': { nl: 'Hoort niet bij een factuur', en: 'Not about an invoice', ar: 'لا يخص فاتورة', tr: 'Bir faturayla ilgili değil' },
+  'terugbetaling.bezig': { nl: 'Bezig…', en: 'Working…', ar: 'جارٍ التنفيذ…', tr: 'Çalışıyor…' },
+  // [SERVER-ZIN] De route geeft codes; dit zijn de zinnen. [KNOP-IN-ZIN] de eerste noemt de knop
+  // zoals hij er nu staat — verandert dat woord, dan verandert deze zin mee.
+  'terugbetaling.fout.partial_refund': {
+    nl: 'Er kwam minder terug dan er is betaald. Kies «Ik maak een creditnota».',
+    en: 'Less came back than was paid. Choose «I will issue a credit note».',
+    ar: 'المبلغ العائد أقل مما دُفع. اختر «سأصدر إشعار دائن».',
+    tr: 'Geri gelen tutar ödenenden az. «Bir iade faturası keseceğim» seçin.',
+  },
+  'terugbetaling.fout.no_invoice': {
+    nl: 'Deze terugbetaling hoort bij geen enkele factuur van BoekBrug.',
+    en: 'This refund belongs to no BoekBrug invoice.',
+    ar: 'هذا الاسترجاع لا يخص أي فاتورة من BoekBrug.',
+    tr: 'Bu iade hiçbir BoekBrug faturasına ait değil.',
+  },
+  'terugbetaling.fout.payment_gone': {
+    nl: 'De betaling staat niet meer op de factuur.',
+    en: 'The payment is no longer on the invoice.',
+    ar: 'لم تعد الدفعة على الفاتورة.',
+    tr: 'Ödeme artık faturada değil.',
+  },
+  'terugbetaling.fout.not_found': {
+    nl: 'Deze terugbetaling staat er niet meer. Herlaad de pagina.',
+    en: 'This refund is no longer there. Reload the page.',
+    ar: 'لم يعد هذا الاسترجاع موجوداً. أعد تحميل الصفحة.',
+    tr: 'Bu iade artık mevcut değil. Sayfayı yenileyin.',
+  },
+  // Kan alleen ontstaan als een aanroeper iets anders dan de drie antwoorden stuurt — de route
+  // laat dat niet toe. Toch een zin, want de deur kan hem teruggeven en dan hoort er iets te staan.
+  'terugbetaling.fout.invalid_answer': {
+    nl: 'Dat is geen antwoord dat hier kan. Herlaad de pagina.',
+    en: 'That is not an answer this can take. Reload the page.',
+    ar: 'هذه ليست إجابة مقبولة هنا. أعد تحميل الصفحة.',
+    tr: 'Bu, burada geçerli bir yanıt değil. Sayfayı yenileyin.',
+  },
+  // [TERUGBETALING-DEUR] De waardepin sloeg aan: tussen wat het scherm liet zien en het slot in de
+  // database is de betaling veranderd. Geen fout — een reden om opnieuw te kijken.
+  'terugbetaling.fout.payment_changed': {
+    nl: 'De betaling is intussen veranderd. Herlaad de pagina en kijk opnieuw.',
+    en: 'The payment has changed in the meantime. Reload the page and look again.',
+    ar: 'تغيّرت الدفعة في هذه الأثناء. أعد تحميل الصفحة وانظر مرة أخرى.',
+    tr: 'Ödeme bu arada değişti. Sayfayı yenileyip tekrar bakın.',
+  },
+  'terugbetaling.fout.accountant_lock': {
+    nl: 'Je boekhouder heeft deze factuur verwerkt. Vraag hem dat eerst terug te draaien.',
+    en: 'Your accountant has processed this invoice. Ask them to undo that first.',
+    ar: 'قام محاسبك بمعالجة هذه الفاتورة. اطلب منه التراجع عن ذلك أولاً.',
+    tr: 'Muhasebeciniz bu faturayı işledi. Önce bunu geri almasını isteyin.',
+  },
+  'terugbetaling.fout.has_bank_line': {
+    nl: 'Deze betaling heeft een bankregel — draai hem terug op de bankpagina.',
+    en: 'This payment has a bank line — reverse it on the bank page.',
+    ar: 'لهذه الدفعة سطر بنكي — تراجع عنها في صفحة البنك.',
+    tr: 'Bu ödemenin bir banka satırı var — banka sayfasından geri alın.',
+  },
+  'terugbetaling.fout.already_answered': {
+    nl: 'Deze vraag is al beantwoord.',
+    en: 'This question has already been answered.',
+    ar: 'تمت الإجابة عن هذا السؤال بالفعل.',
+    tr: 'Bu soru zaten yanıtlandı.',
+  },
+  'terugbetaling.fout.algemeen': {
+    nl: 'Dit lukte niet. Probeer het opnieuw.',
+    en: 'That did not work. Try again.',
+    ar: 'لم ينجح ذلك. حاول مرة أخرى.',
+    tr: 'Bu işe yaramadı. Tekrar deneyin.',
+  },
 
   // [LOGBOEK] The screen's own words. `log.onbekend` is the one that matters most: an action with
   // no sentence is still SHOWN, phrased neutrally and carrying its raw name — an audit trail that
@@ -15845,6 +15971,49 @@ export const MESSAGES = {
   'beh.vast.vooralBij': { nl: 'Vooral bij', ar: 'غالبًا عند', en: 'Mostly at' },
   'beh.vast.verspreid': { nl: 'verspreid', ar: 'متفرّق', en: 'spread out' },
   'beh.vast.geen': { nl: 'Geen enkele vastgelegde reden in deze periode.', ar: 'لا أسباب مسجّلة في هذه الفترة.', en: 'No recorded reason at all in this period.' },
+
+  // ── [KANTOORGIDS] Het kantoor vult zijn eigen vermelding in ────────────────────────────────
+  // De boekhouder is een ingelogde gebruiker met een eigen taalinstelling: wat hij op ZIJN scherm
+  // leest volgt zijn eigen keuze, niet die van een ondernemer. Zie AGENTS.md.
+  'gids.titel': { nl: 'Je kantoor in de gids', ar: 'مكتبك في الدليل', en: 'Your office in the directory' },
+  'gids.uitleg': { nl: 'Je staat er alleen in als je hem aanzet, en je kunt hem altijd weer uitzetten.', ar: 'لا تظهر في الدليل إلا إذا شغّلته بنفسك، ويمكنك إيقافه متى شئت.', en: 'You only appear once you switch it on, and you can switch it off again at any time.' },
+  'gids.uitleg.volgorde': { nl: 'Er is geen betaalde plek: kantoren met ruimte eerst, daarna op naam.', ar: 'لا مكان مدفوع: المكاتب التي لديها متّسع أولًا، ثم بالاسم.', en: 'There is no paid place: offices with room first, then by name.' },
+  'gids.staat.laden': { nl: 'Bezig met laden…', ar: 'جارٍ التحميل…', en: 'Loading…' },
+  'gids.staat.in': { nl: 'Je staat in de gids', ar: 'أنت مُدرَج في الدليل', en: 'You are in the directory' },
+  'gids.staat.uit': { nl: 'Je staat niet in de gids', ar: 'لست مُدرَجًا في الدليل', en: 'You are not in the directory' },
+  'gids.veld.naam': { nl: 'Naam van je kantoor', ar: 'اسم مكتبك', en: 'Your office name' },
+  'gids.veld.plaats': { nl: 'Plaats', ar: 'المدينة', en: 'Town' },
+  'gids.veld.specialisaties': { nl: 'Waar ben je aan gewend? (maximaal zes, komma ertussen)', ar: 'ما الذي اعتدت عليه؟ (ستة كحدّ أقصى، بينها فاصلة)', en: 'What are you used to? (six at most, comma between)' },
+  'gids.veld.specialisaties.hint': { nl: 'Dit is geen keurmerk en wordt door ons niet gecontroleerd — het staat er zoals jij het typt.', ar: 'هذه ليست شهادة اعتماد ولا نتحقّق منها — تظهر كما تكتبها أنت.', en: 'This is not a certification and we do not check it — it appears exactly as you type it.' },
+  'gids.veld.specialisaties.voorbeeld': { nl: 'zzp, transport, horeca', ar: 'zzp، نقل، مطاعم', en: 'zzp, transport, hospitality' },
+  'gids.veld.talen': { nl: 'In welke talen kun je een ondernemer helpen?', ar: 'بأي اللغات يمكنك مساعدة صاحب عمل؟', en: 'Which languages can you help an entrepreneur in?' },
+  'gids.veld.talen.hint': { nl: 'Ondernemers filteren hierop. Wij controleren het niet: er staat dat jij dit zegt.', ar: 'أصحاب الأعمال يصفّون بها. نحن لا نتحقّق منها: مكتوب أنك أنت من يقول ذلك.', en: 'Entrepreneurs filter on this. We do not check it: it says that you say so.' },
+  'gids.veld.mail': { nl: 'E-mailadres waarop ondernemers je mogen benaderen', ar: 'بريد إلكتروني يجوز لأصحاب الأعمال مراسلتك عليه', en: 'E-mail address entrepreneurs may approach you on' },
+  'gids.veld.mail.hint': { nl: 'Dit adres staat openbaar op de gids. Gebruik je kantooradres, niet je inlogadres.', ar: 'هذا العنوان يظهر علنًا في الدليل. استخدم عنوان مكتبك، لا عنوان تسجيل دخولك.', en: 'This address is public on the directory. Use your office address, not your login address.' },
+  'gids.veld.site': { nl: 'Website (mag leeg)', ar: 'الموقع الإلكتروني (يجوز تركه فارغًا)', en: 'Website (may be left empty)' },
+  'gids.veld.ruimte': { nl: 'Ik neem nieuwe klanten aan. Kantoren die dit aanvinken staan bovenaan.', ar: 'أقبل عملاء جددًا. المكاتب التي تحدّد هذا تظهر في الأعلى.', en: 'I take on new clients. Offices that tick this appear at the top.' },
+  'gids.knop.bijwerken': { nl: 'Bijwerken', ar: 'تحديث', en: 'Update' },
+  'gids.knop.aanzetten': { nl: 'Zet mij in de gids', ar: 'أدرجني في الدليل', en: 'Put me in the directory' },
+  'gids.knop.uitzetten': { nl: 'Haal mij uit de gids', ar: 'أخرجني من الدليل', en: 'Take me out of the directory' },
+  'gids.knop.opslaan': { nl: 'Alleen opslaan', ar: 'حفظ فقط', en: 'Save only' },
+  'gids.knop.verwijderen': { nl: 'Alles verwijderen', ar: 'حذف الكل', en: 'Delete everything' },
+  'gids.fout.lezen': { nl: 'Je vermelding is niet te lezen.', ar: 'تعذّرت قراءة إدراجك.', en: 'Your listing cannot be read.' },
+  'gids.fout.opslaan': { nl: 'Opslaan is niet gelukt.', ar: 'لم ينجح الحفظ.', en: 'Saving did not work.' },
+  'gids.fout.verwijderen': { nl: 'Verwijderen is niet gelukt.', ar: 'لم ينجح الحذف.', en: 'Deleting did not work.' },
+  'gids.opgeslagen.in': { nl: 'Je kantoor staat in de gids.', ar: 'مكتبك مُدرَج في الدليل.', en: 'Your office is in the directory.' },
+  'gids.opgeslagen.uit': { nl: 'Opgeslagen. Je staat niet in de gids.', ar: 'تم الحفظ. لست مُدرَجًا في الدليل.', en: 'Saved. You are not in the directory.' },
+  'gids.weg': { nl: 'Je vermelding is weggehaald.', ar: 'تمت إزالة إدراجك.', en: 'Your listing has been removed.' },
+  // Wat het kantoor moet aanpassen — de zin staat bij het veld, nooit als "er klopt iets niet".
+  'gids.eis.naam': { nl: 'Vul de naam van je kantoor in', ar: 'أدخل اسم مكتبك', en: 'Fill in your office name' },
+  'gids.eis.naamLang': { nl: 'Naam van het kantoor is te lang', ar: 'اسم المكتب طويل جدًا', en: 'The office name is too long' },
+  'gids.eis.plaats': { nl: 'Vul de plaats in', ar: 'أدخل المدينة', en: 'Fill in the town' },
+  'gids.eis.plaatsLang': { nl: 'Plaats is te lang', ar: 'اسم المدينة طويل جدًا', en: 'The town is too long' },
+  'gids.eis.mail': { nl: 'Vul een e-mailadres in waarop ondernemers je mogen benaderen', ar: 'أدخل بريدًا إلكترونيًا يجوز لأصحاب الأعمال مراسلتك عليه', en: 'Fill in an e-mail address entrepreneurs may approach you on' },
+  'gids.eis.mailFout': { nl: 'Dat e-mailadres klopt niet', ar: 'هذا البريد الإلكتروني غير صحيح', en: 'That e-mail address is not right' },
+  'gids.eis.site': { nl: 'Een website begint met https://', ar: 'الموقع الإلكتروني يبدأ بـ https://', en: 'A website starts with https://' },
+  'gids.eis.specialisatieLang': { nl: 'Eén specialisatie is te lang', ar: 'أحد التخصصات طويل جدًا', en: 'One specialism is too long' },
+  'gids.eis.specialisatiesMax': { nl: 'Kies er maximaal zes', ar: 'اختر ستة كحدّ أقصى', en: 'Pick six at most' },
+  'gids.eis.taal': { nl: 'Kies minstens één taal waarin je een ondernemer kunt helpen', ar: 'اختر لغة واحدة على الأقل يمكنك مساعدة صاحب عمل بها', en: 'Pick at least one language you can help an entrepreneur in' },
 
 } satisfies Record<string, Message>
 
