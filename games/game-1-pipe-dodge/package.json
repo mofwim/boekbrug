@@ -1,0 +1,22 @@
+{
+  "name": "pipe-dodge",
+  "version": "1.0.0",
+  "description": "Hyper-casual arcade game: dodge pipes",
+  "scripts": {
+    "dev": "next dev",
+    "build:web": "npm run build -- --no-portal",
+    "build:portal": "NEXT_PUBLIC_GD_GAME_ID=${GD_GAME_ID} npm run build",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "^15.1.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.6.0"
+  }
+}
